@@ -1,0 +1,73 @@
+<Window x:Class="UsbAtlas.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="USB Atlas" Width="1500" Height="940" MinWidth="1050" MinHeight="650" Background="{DynamicResource WindowSurface}" FontFamily="{StaticResource UiFont}" FontSize="12" WindowStartupLocation="CenterScreen" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+ <Grid>
+  <Grid.RowDefinitions><RowDefinition Height="44"/><RowDefinition Height="42"/><RowDefinition/><RowDefinition Height="30"/></Grid.RowDefinitions>
+  <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="16,0">
+   <DockPanel>
+    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+     <CheckBox x:Name="CompactDensity" Content="Compact" IsChecked="True" Click="DensityClick" Margin="0,0,12,0"/>
+     <Button x:Name="InspectorButton" Content="Hide inspector" Click="InspectorClick" Margin="0,0,6,0" Padding="8,4"/>
+     <Button x:Name="ThemeButton" Content="Dark mode" Click="ThemeClick" Margin="0,0,6,0" Padding="8,4" Background="Transparent" BorderBrush="Transparent"/>
+     <Button x:Name="DemoButton" Content="Sample" Click="DemoClick" Margin="0,0,6,0" Padding="8,4" Background="Transparent" BorderBrush="Transparent"/>
+     <Button Content="Export…" Click="ExportClick" Margin="0,0,6,0" Padding="8,4"/>
+     <Button x:Name="RefreshButton" Click="RefreshClick" Padding="10,4" Style="{StaticResource PrimaryButton}"><TextBlock Text="Refresh" Foreground="White"/></Button>
+    </StackPanel>
+    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+     <TextBlock Text="USB Atlas" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center" Margin="0,0,20,0"/>
+     <TextBlock x:Name="DeviceCount" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Text=" devices" Foreground="{DynamicResource TextMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/>
+     <TextBlock x:Name="HubCount" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Text=" hubs / hosts" Foreground="{DynamicResource TextMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/>
+     <TextBlock x:Name="PortCount" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Text=" empty" Foreground="{DynamicResource TextMuted}" FontSize="11" VerticalAlignment="Center" ToolTip="Empty logical USB ports"/>
+    </StackPanel>
+   </DockPanel>
+  </Border>
+  <Border Grid.Row="1" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Background="{DynamicResource Surface}" Padding="16,6">
+   <DockPanel>
+    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+     <Button x:Name="OrientationButton" Content="Vertical" Click="OrientationClick" ToolTip="Switch tree direction" Margin="0,0,8,0" Padding="8,4"/>
+     <Button x:Name="LocateButton" Content="Locate" Click="LocateClick" Padding="8,4" Margin="0,0,12,0" ToolTip="Center selection at 100%"/>
+     <Button Content="−" Click="ZoomOut" Padding="10,3" ToolTip="Zoom out"/>
+     <Button Click="ActualSizeClick" Padding="0" BorderBrush="Transparent" Background="Transparent" ToolTip="Reset to 100%"><TextBlock x:Name="ZoomLabel" FontFamily="{StaticResource MonoFont}" Text="100%" Width="52" TextAlignment="Center"/></Button>
+     <Button Content="+" Click="ZoomIn" Padding="10,3" ToolTip="Zoom in"/>
+     <Button Content="Readable" Click="FitClick" Padding="10,3" Margin="8,0,0,0"/>
+     <Button Content="Overview" Click="OverviewClick" Padding="10,3" Margin="8,0,0,0"/>
+    </StackPanel>
+    <Grid Width="220" DockPanel.Dock="Left" Margin="0,0,16,0">
+     <TextBox x:Name="Search" TextChanged="SearchChanged" KeyDown="SearchKeyDown" ToolTip="Search names, IDs, serials, types, paths or issues. Enter: next; Shift+Enter: previous; Escape: clear." Padding="9,5" AutomationProperties.Name="Search devices"/>
+     <TextBlock Text="Find a device…" Foreground="{DynamicResource TextMuted}" Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=Search}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+    </Grid>
+    <CheckBox x:Name="EmptyPorts" Content="Empty slots" Click="FilterClick"/>
+   </DockPanel>
+  </Border>
+  <Grid Grid.Row="2">
+   <Grid.ColumnDefinitions><ColumnDefinition MinWidth="390"/><ColumnDefinition x:Name="SplitterColumn" Width="5"/><ColumnDefinition x:Name="InspectorColumn" Width="310" MinWidth="260" MaxWidth="520"/></Grid.ColumnDefinitions>
+   <Grid Background="{DynamicResource CanvasSurface}">
+    <Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition/><RowDefinition Height="26"/></Grid.RowDefinitions>
+    <DockPanel Margin="16,0">
+     <TextBlock Text="TOPOLOGY" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+      <TextBlock x:Name="MatchCount" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0"/>
+      <Button x:Name="NextMatchButton" Content="Next ↓" Click="NextMatchClick" Padding="6,1" Visibility="Collapsed"/>
+      <Button x:Name="IssuesButton" Content="No issues" Click="IssuesClick" Padding="6,1" Margin="8,0,0,0"/>
+     </StackPanel>
+    </DockPanel>
+    <ScrollViewer Grid.Row="1" x:Name="GraphScroll" SizeChanged="GraphSizeChanged" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" PreviewMouseWheel="GraphWheel" PreviewMouseDown="PanStart" PreviewMouseMove="PanMove" PreviewMouseUp="PanEnd" LostMouseCapture="PanCaptureLost" Background="Transparent">
+     <Border Background="Transparent" HorizontalAlignment="Center" VerticalAlignment="Top"><Border.RenderTransform><TranslateTransform x:Name="PanTransform"/></Border.RenderTransform>
+      <Canvas x:Name="Graph" Width="900" Height="600" VerticalAlignment="Top" HorizontalAlignment="Center" UseLayoutRounding="False" TextOptions.TextFormattingMode="Ideal" TextOptions.TextRenderingMode="Grayscale"><Canvas.LayoutTransform><ScaleTransform x:Name="GraphScale" ScaleX="1" ScaleY="1"/></Canvas.LayoutTransform></Canvas>
+     </Border>
+    </ScrollViewer>
+    <TextBlock Grid.Row="1" x:Name="EmptyMessage" Text="Reading your USB connections…" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="14" IsHitTestVisible="False"/>
+    <TextBlock Grid.Row="2" Text="Drag to pan · Scroll to zoom · Tab / arrows to navigate" Margin="16,0" FontSize="11" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+   </Grid>
+   <GridSplitter x:Name="InspectorSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext"/>
+   <Border x:Name="InspectorPanel" Grid.Column="2" Background="{DynamicResource Surface}">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition/></Grid.RowDefinitions>
+     <Border BorderBrush="{DynamicResource Divider}" BorderThickness="0,0,0,1" Padding="14,0"><TextBlock Text="INSPECTOR" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></Border>
+     <ScrollViewer x:Name="DetailsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="Details" Margin="14,12,14,16"/></ScrollViewer>
+    </Grid>
+   </Border>
+  </Grid>
+  <Border Grid.Row="3" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Background="{DynamicResource Surface}" Padding="16,0">
+   <DockPanel><CheckBox x:Name="AutoRefresh" DockPanel.Dock="Right" Content="Auto-refresh · 10 s" FontSize="11" Margin="15,0,0,0"/><TextBlock x:Name="StatusText" Text="Starting…" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="11" TextTrimming="CharacterEllipsis"/></DockPanel>
+  </Border>
+ </Grid>
+</Window>

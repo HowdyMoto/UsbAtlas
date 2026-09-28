@@ -1,0 +1,370 @@
+using System.IO;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
+using System.Windows.Threading;
+using Microsoft.Win32;
+
+namespace UsbAtlas;
+
+public partial class MainWindow : Window
+{
+    private Snapshot snapshot = new();
+    private UsbNode? selected;
+    private readonly HashSet<string> folded = [];
+    private readonly Dictionary<string, (Border Card, Point Point)> cards = [];
+    private bool busy, demo, render, fitNext = true;
+    private MouseButton? panButton;
+    private Point panStart, panOrigin;
+    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(10) };
+    private static Brush Brush(string hex) => Theme.Brush(hex);
+    public MainWindow(bool demo, bool render, bool verifyUi = false, bool horizontal = false)
+    {
+        InitializeComponent(); this.demo = demo; this.render = render;
+        horizontalTree = horizontal;
+        OrientationButton.Content = horizontalTree ? "Horizontal" : "Vertical";
+        ThemeButton.Content = Theme.IsDark ? "Light mode" : "Dark mode";
+        Loaded += async (_, _) =>
+        {
+            await Refresh();
+            if (verifyUi)
+            {
+                try { VerifyUi(); VerifyCompactUi(); File.WriteAllText("ui-test.txt", "UI checks passed: layout, filtering, folding, focus, fit, compact/comfortable density, empty slots, search navigation, issues, inspector and selection reuse."); }
+                catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
+            }
+            if (render) await RenderPreview();
+        };
+        timer.Tick += async (_, _) => { if (AutoRefresh.IsChecked == true && !demo && !busy) await Refresh(); };
+        searchTimer.Tick += (_, _) => ApplySearch();
+        timer.Start(); Closed += (_, _) => { timer.Stop(); searchTimer.Stop(); };
+    }
+    private async Task Refresh()
+    {
+        if (busy) return;
+        busy = true; RefreshButton.IsEnabled = false; DemoButton.IsEnabled = false;
+        StatusText.Text = "Scanning controllers, hubs and device descriptors…";
+        try
+        {
+            var next = demo ? DemoData.Create() : await Task.Run(() => new UsbScanner().Scan());
+            var id = selected?.Id;
+            bool changed = JsonSerializer.Serialize(snapshot.Controllers) != JsonSerializer.Serialize(next.Controllers) || !snapshot.Diagnostics.SequenceEqual(next.Diagnostics);
+            snapshot = next;
+            selected = snapshot.Nodes.FirstOrDefault(x => x.Id == id) ?? snapshot.Nodes.FirstOrDefault(x => x.Kind == "Hub") ?? snapshot.Controllers.FirstOrDefault();
+            DeviceCount.Text = snapshot.Nodes.Count(x => x.Kind == "Device").ToString();
+            HubCount.Text = $"{snapshot.Nodes.Count(x => x.Kind is "Hub" or "Root hub")} / {snapshot.Controllers.Count}";
+            PortCount.Text = snapshot.Nodes.Count(x => x.Kind == "Empty port").ToString();
+            DemoButton.Content = demo ? "My devices" : "Sample";
+            StatusText.Text = (demo ? "Sample topology  ·  " : "Local snapshot  ·  ") + $"Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(x => x.Kind == "Unavailable")} port errors";
+            if (snapshot.Diagnostics.Count > 0) StatusText.Text += " · " + string.Join(" · ", snapshot.Diagnostics);
+            UpdateIssues();
+            if (changed) { Draw(); ShowDetails(); }
+            if (fitNext) { GraphScroll.UpdateLayout(); FitClick(this, new RoutedEventArgs()); fitNext = false; }
+        }
+        catch (Exception ex) { StatusText.Text = "Scan failed: " + ex.Message; EmptyMessage.Text = "Could not read USB devices. See status below; refresh to retry."; EmptyMessage.Visibility = Visibility.Visible; }
+        finally { busy = false; RefreshButton.IsEnabled = true; DemoButton.IsEnabled = true; }
+    }
+    private static string ShortSpeed(UsbNode n) => n.LinkMbps switch { 5000 => "5 Gb/s", 480 => "480 Mb/s", 12 => "12 Mb/s", 1.5 => "1.5 Mb/s", _ => n.Speed.StartsWith("SuperSpeedPlus") ? "≥10 Gb/s" : "Rate unknown" };
+    private void ShowDetails()
+    {
+        Details.Children.Clear();
+        if (selected is not UsbNode node) { Text("Select a device", 22); Text("Inspect a connection to see its link, power and path through your hardware.", 12, "TextMuted"); return; }
+        if (appliedQuery.Length > 0 && !Matches(node, appliedQuery)) Text("Selection is outside the search results.", 11, "Warning");
+        if (!cards.ContainsKey(node.Id) && !portSlots.ContainsKey(node.Id)) Text("Selection is hidden by a collapsed branch or filter.", 11, "TextMuted");
+        var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        var symbol = NodeVisuals.Icon(node, 26); symbol.Margin = new Thickness(0, 0, 8, 0); DockPanel.SetDock(symbol, Dock.Left); heading.Children.Add(symbol);
+        heading.Children.Add(new TextBlock { Text = node.Name, FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap }); Details.Children.Add(heading);
+        Text(NodeVisuals.Label(node) + " · " + (node.ScanIncomplete ? "Scan incomplete" : node.Status), 11, node.ScanIncomplete || node.Kind == "Unavailable" ? "Warning" : "TextSecondary");
+        if (Issue(node).Length > 0)
+        {
+            Text("⚠ " + Issue(node), 12, "Warning");
+            if (node.SpeedLimited) Text("A faster link is supported. Check the upstream port, hub and cable.", 11, "Warning");
+            if (node.ScanIncomplete) Text("Enumeration is incomplete; counts may omit downstream devices. See Detection details.", 11, "Warning");
+        }
+        var copy = new Button { Content = "Copy details", Padding = new Thickness(8, 3, 8, 3), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 8) };
+        copy.Click += (_, _) => { try { Clipboard.SetText(JsonSerializer.Serialize(node, new JsonSerializerOptions { WriteIndented = true })); StatusText.Text = "Device details copied."; } catch (Exception ex) { StatusText.Text = "Clipboard unavailable: " + ex.Message; } }; Details.Children.Add(copy);
+        if (node.VendorId.Length > 0) Field("VID / PID", $"{node.VendorId} : {node.ProductId}");
+        if (node.Manufacturer.Length > 0) Field("Manufacturer", node.Manufacturer);
+        if (node.Serial.Length > 0) Field("Serial", node.Serial);
+        var metrics = new Grid { Margin = new Thickness(0, 5, 0, 4) };
+        metrics.ColumnDefinitions.Add(new ColumnDefinition()); metrics.ColumnDefinitions.Add(new ColumnDefinition());
+        void Metric(string value, string label, int column)
+        {
+            var stack = new StackPanel(); Grid.SetColumn(stack, column);
+            stack.Children.Add(new TextBlock { Text = value, FontSize = 19, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary") });
+            stack.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 0, 0) });
+            metrics.Children.Add(stack);
+        }
+        Metric(node.Kind is "Controller" or "Root hub" || ShortSpeed(node) == "Rate unknown" ? "—" : ShortSpeed(node), "Negotiated link", 0);
+        Metric(node.MaxPowerMa is int ma ? $"{ma} mA" : "—", "Declared maximum", 1);
+        Details.Children.Add(metrics);
+        Section("Connection");
+        var connector = NodeVisuals.Connector(node); connector.Margin = new Thickness(0, 0, 0, 12); Details.Children.Add(connector);
+        if (node.Kind is "Controller" or "Root hub") Field("Location", "Host hardware");
+        else
+        {
+            Field("Location", node.Location == "Unknown" ? "Not reported" : node.Location + " · inferred");
+            Field("Upstream port", node.Port.ToString("00"));
+        }
+        if (node.Kind is "Hub" or "Root hub" or "Controller")
+        {
+            Field("End devices", node.Walk().Count(n => n.Kind == "Device").ToString());
+            if (node.Kind != "Controller") Field("Logical ports", node.PortCount.ToString());
+        }
+        Field("Power source", node.PowerSource);
+        if (node.MaxPowerMa is int draw) Field("At nominal 5 V", $"{draw * 0.005:0.##} W declared");
+        Section("Upstream path");
+        var chain = FindPath(node.Id);
+        var pathRow = new WrapPanel();
+        foreach (var ancestor in chain)
+        {
+            var row = new Button { Content = ancestor.Kind == "Controller" ? pathLabels.GetValueOrDefault(ancestor.Id, "Host") : ancestor.Kind == "Root hub" ? "Root" : ancestor.Port.ToString("00"), Padding = new Thickness(7, 3, 7, 3), Margin = new Thickness(0, 0, 4, 4), ToolTip = ancestor.Name, Foreground = Brush(ancestor.Id == node.Id ? "Accent" : "TextSecondary") };
+            row.Click += (_, _) => { SelectNode(ancestor); LocateClick(this, new RoutedEventArgs()); };
+            pathRow.Children.Add(row);
+            if (ancestor != chain.Last()) pathRow.Children.Add(new TextBlock { Text = "›", Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 4, 0) });
+        }
+        Details.Children.Add(pathRow);
+        Field("USB revision", node.UsbVersion);
+        var evidence = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+        var notes = new List<string> { node.LocationEvidence };
+        if (node.Kind == "Device") notes.Add(node.TypeEvidence);
+        if (node.InterfaceFunctions.Count > 0) notes.Add("Reported functions: " + string.Join(", ", node.InterfaceFunctions));
+        var knownLinks = chain.Where(n => n.LinkMbps.HasValue).ToList();
+        if (knownLinks.Count > 0) notes.Add($"Known path ceiling: {knownLinks.Min(n => n.LinkMbps):0.##} Mb/s, shared and before overhead.");
+        if (node.Kind is "Hub" or "Root hub")
+        {
+            var attached = node.Children.Where(n => n.Status == "Connected").ToList();
+            notes.Add($"Direct children's declared draw: {attached.Sum(n => n.MaxPowerMa ?? 0)} mA known; {attached.Count(n => n.MaxPowerMa == null)} unknown. Excludes devices behind child hubs; not a supply measurement.");
+        }
+        notes.Add("Port protocols: " + node.Protocols);
+        notes.Add("Connector graphics identify the upstream socket. The cable and device-end plug are unknown.");
+        notes.AddRange(node.Notes);
+        foreach (var note in notes) evidence.Children.Add(new TextBlock { Text = note, FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 0, 0, 10) });
+        Details.Children.Add(new Expander { Header = "Detection details", Content = evidence, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 16, 0, 0), FontSize = 12 });
+        Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 20, 0, 16) });
+        Text("Link rates are shared signaling limits. Power is device-declared, not live draw. Available bandwidth and power budgets are not measured.", 11, "TextMuted");
+
+    }
+    private List<UsbNode> FindPath(string id)
+    {
+        List<UsbNode>? SearchPath(UsbNode n) { if (n.Id == id) return [n]; foreach (var c in n.Children) { var path = SearchPath(c); if (path != null) { path.Insert(0, n); return path; } } return null; }
+        return snapshot.Controllers.Select(SearchPath).FirstOrDefault(x => x != null) ?? [];
+    }
+    private void Text(string value, double size = 13, string color = "TextPrimary") => Details.Children.Add(new TextBlock { Text = value, FontSize = size, Foreground = Brush(color), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 9) });
+    private void Section(string title)
+    {
+        Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 9, 0, 8) });
+        Details.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary"), Margin = new Thickness(0, 0, 0, 7) });
+    }
+    private void Field(string label, string value)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 5) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) }); row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Brush("TextMuted"), TextWrapping = TextWrapping.Wrap });
+        var text = new TextBlock { Text = value, FontSize = 12, Foreground = Brush("TextPrimary"), TextWrapping = TextWrapping.Wrap }; Grid.SetColumn(text, 1); row.Children.Add(text);
+        Details.Children.Add(row);
+    }
+    private void ActualSizeClick(object sender, RoutedEventArgs e) => ZoomAt(1, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
+    private void ThemeClick(object sender, RoutedEventArgs e)
+    {
+        ApplyAppearance(!Theme.IsDark);
+        if (!Theme.Save()) StatusText.Text = "Appearance changed; preference could not be saved.";
+    }
+    private void ApplyAppearance(bool dark)
+    {
+        var x = GraphScroll.HorizontalOffset; var y = GraphScroll.VerticalOffset;
+        Theme.Apply(dark);
+        ThemeButton.Content = dark ? "Light mode" : "Dark mode";
+        Draw(); ShowDetails(); UpdateIssues(); GraphScroll.UpdateLayout();
+        GraphScroll.ScrollToHorizontalOffset(x); GraphScroll.ScrollToVerticalOffset(y); GraphScroll.UpdateLayout();
+    }
+    private void LocateClick(object sender, RoutedEventArgs e)
+    {
+        if (selected == null) return;
+        var targetId = selected.Kind == "Empty port" ? FindPath(selected.Id).SkipLast(1).LastOrDefault()?.Id : selected.Id;
+        if (targetId == null || !cards.TryGetValue(targetId, out var item)) return;
+        ResetPan();
+        SetZoom(1); GraphScroll.UpdateLayout();
+        GraphScroll.ScrollToHorizontalOffset(Math.Max(0, item.Point.X + CardWidth / 2 - GraphScroll.ViewportWidth / 2));
+        GraphScroll.ScrollToVerticalOffset(Math.Max(0, item.Point.Y + item.Card.Height / 2 - GraphScroll.ViewportHeight / 2));
+        GraphScroll.UpdateLayout();
+    }
+    private async void RefreshClick(object sender, RoutedEventArgs e) => await Refresh();
+    private async void DemoClick(object sender, RoutedEventArgs e) { demo = !demo; folded.Clear(); fitNext = true; await Refresh(); }
+    private void SearchChanged(object sender, TextChangedEventArgs e) { searchTimer.Stop(); searchTimer.Start(); }
+    private void FilterClick(object sender, RoutedEventArgs e) { Draw(); ShowDetails(); }
+    private void SetZoom(double value) { readableView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; ZoomLabel.Text = $"{value:P0}"; }
+    private void ZoomIn(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX * 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
+    private void ZoomOut(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX / 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
+    private void FitClick(object sender, RoutedEventArgs e)
+    {
+        if (arranging) return;
+        arranging = true;
+        try
+        {
+            ResetPan();
+            double scale = ReadingScale;
+            layoutWidth = Math.Max(CardWidth + 48, (GraphScroll.ActualWidth - 32) / scale);
+            Draw(); SetZoom(scale); readableView = true;
+            GraphScroll.UpdateLayout(); GraphScroll.ScrollToHorizontalOffset(0);
+        }
+        finally { arranging = false; }
+    }
+    private void OverviewClick(object sender, RoutedEventArgs e)
+    {
+        ResetPan();
+        SetZoom(Math.Min(1, Math.Min((GraphScroll.ViewportWidth - 32) / Graph.Width, (GraphScroll.ViewportHeight - 32) / Graph.Height)));
+        GraphScroll.ScrollToHorizontalOffset(0); GraphScroll.ScrollToVerticalOffset(0);
+    }
+    private void OrientationClick(object sender, RoutedEventArgs e)
+    {
+        horizontalTree = !horizontalTree;
+        OrientationButton.Content = horizontalTree ? "Horizontal" : "Vertical";
+        FitClick(this, new RoutedEventArgs());
+        GraphScroll.ScrollToVerticalOffset(0);
+    }
+    private void GraphSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (readableView && !arranging && snapshot.Controllers.Count > 0 && (Math.Abs(e.NewSize.Width - e.PreviousSize.Width) > 24 || horizontalTree && Math.Abs(e.NewSize.Height - e.PreviousSize.Height) > 24))
+            FitClick(this, new RoutedEventArgs());
+    }
+    private void ZoomAt(double zoom, Point pointer)
+    {
+        var anchor = GraphScroll.TranslatePoint(pointer, Graph);
+        SetZoom(zoom); GraphScroll.UpdateLayout();
+        var after = Graph.TranslatePoint(anchor, GraphScroll);
+        PanTransform.X += pointer.X - after.X;
+        PanTransform.Y += pointer.Y - after.Y;
+    }
+    private void GraphWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (panButton == null) ZoomAt(GraphScale.ScaleX * Math.Pow(1.12, e.Delta / 120.0), e.GetPosition(GraphScroll));
+        e.Handled = true;
+    }
+    private void PanStart(object sender, MouseButtonEventArgs e)
+    {
+        if (panButton != null || e.ChangedButton is not (MouseButton.Left or MouseButton.Right or MouseButton.Middle)) return;
+        for (var hit = e.OriginalSource as DependencyObject; hit != null && hit != GraphScroll;
+             hit = hit is Visual ? VisualTreeHelper.GetParent(hit) : LogicalTreeHelper.GetParent(hit))
+        {
+            if (hit is System.Windows.Controls.Primitives.ScrollBar) return;
+            if (e.ChangedButton == MouseButton.Left && hit is FrameworkElement { Tag: UsbNode }) return;
+        }
+        if (!GraphScroll.CaptureMouse()) return;
+        panButton = e.ChangedButton; panStart = e.GetPosition(GraphScroll);
+        panOrigin = new Point(PanTransform.X, PanTransform.Y);
+        readableView = false; GraphScroll.Cursor = Cursors.SizeAll; e.Handled = true;
+    }
+    private void PanMove(object sender, MouseEventArgs e)
+    {
+        if (panButton == null) return;
+        var current = e.GetPosition(GraphScroll);
+        PanTransform.X = panOrigin.X + current.X - panStart.X;
+        PanTransform.Y = panOrigin.Y + current.Y - panStart.Y;
+        e.Handled = true;
+    }
+    private void PanEnd(object sender, MouseButtonEventArgs e)
+    {
+        if (panButton != e.ChangedButton) return;
+        FinishPan(); e.Handled = true;
+    }
+    private void PanCaptureLost(object sender, MouseEventArgs e) => FinishPan();
+    private void FinishPan()
+    {
+        panButton = null; GraphScroll.Cursor = null;
+        if (GraphScroll.IsMouseCaptured) GraphScroll.ReleaseMouseCapture();
+    }
+    private void ResetPan() { FinishPan(); PanTransform.X = PanTransform.Y = 0; }
+    private void ExportClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog { Filter = "JSON snapshot|*.json", FileName = $"usb-atlas-{DateTime.Now:yyyyMMdd-HHmmss}.json" };
+        if (dialog.ShowDialog() != true) return;
+        try { File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true })); StatusText.Text = "Snapshot exported to " + dialog.FileName; }
+        catch (Exception ex) { StatusText.Text = "Export failed: " + ex.Message; }
+    }
+    private void VerifyUi()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        foreach (var (key, weight) in new[] { ("UiFont", FontWeights.Normal), ("UiFont", FontWeights.SemiBold), ("UiFont", FontWeights.Bold), ("MonoFont", FontWeights.Normal) })
+        {
+            var face = new Typeface((FontFamily)FindResource(key), FontStyles.Normal, weight, FontStretches.Normal);
+            Check(face.TryGetGlyphTypeface(out var glyph) && glyph.FontUri.ToString().Contains("Assets/Fonts/", StringComparison.OrdinalIgnoreCase), $"{key} {weight} did not load the bundled font.");
+            Check(glyph.Weight == weight, $"{key} {weight} did not resolve the intended font weight.");
+        }
+        var visible = cards.Values.ToList();
+        for (int i = 0; i < visible.Count; i++)
+        {
+            var rect = new Rect(visible[i].Point, new Size(CardWidth, visible[i].Card.Height));
+            Check(rect.Right <= Graph.Width && rect.Bottom <= Graph.Height, "Card extends outside graph bounds.");
+            for (int j = i + 1; j < visible.Count; j++)
+                Check(!rect.IntersectsWith(new Rect(visible[j].Point, new Size(CardWidth, visible[j].Card.Height))), "Hardware cards overlap.");
+        }
+        foreach (var node in snapshot.Nodes.Where(n => cards.ContainsKey(n.Id)))
+            foreach (var child in Children(node))
+                Check(horizontalTree ? cards[child.Id].Point.X > cards[node.Id].Point.X + CardWidth : cards[child.Id].Point.Y > cards[node.Id].Point.Y + cards[node.Id].Card.Height, "Child must follow its parent's flow direction.");
+        var target = snapshot.Nodes.FirstOrDefault(n => n.Kind == "Device");
+        if (target != null)
+        {
+            Search.Text = target.Name; ApplySearch();
+            Check(cards.ContainsKey(target.Id), "Search lost the matching device.");
+            Check(FindPath(target.Id).All(n => cards.ContainsKey(n.Id)), "Search lost a matching device's ancestors.");
+            Search.Text = "__usb_atlas_no_match__"; ApplySearch();
+            Check(cards.Count == 0 && EmptyMessage.Visibility == Visibility.Visible, "Empty search state is not visible.");
+            Search.Text = ""; ApplySearch();
+        }
+        var root = snapshot.Controllers.FirstOrDefault();
+        if (root != null)
+        {
+            folded.Add(root.Id); Draw();
+            Check(cards.ContainsKey(root.Id) && root.Children.All(n => !cards.ContainsKey(n.Id)), "Collapsed branch still shows descendants.");
+            folded.Remove(root.Id); Draw();
+        }
+        if (selected != null)
+        {
+            LocateClick(this, new RoutedEventArgs());
+            Check(GraphScale.ScaleX == 1, "Locate should restore readable zoom.");
+            var position = cards[selected.Id].Point;
+            Check(position.X + CardWidth > GraphScroll.HorizontalOffset && position.X < GraphScroll.HorizontalOffset + GraphScroll.ViewportWidth, "Selected card is horizontally outside the viewport.");
+            Check(position.Y + cards[selected.Id].Card.Height > GraphScroll.VerticalOffset && position.Y < GraphScroll.VerticalOffset + GraphScroll.ViewportHeight, "Selected card is vertically outside the viewport.");
+        }
+        OverviewClick(this, new RoutedEventArgs()); GraphScroll.UpdateLayout();
+        Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ViewportWidth + 1 && Graph.Height * GraphScale.ScaleY <= GraphScroll.ViewportHeight + 1, "Fit all leaves graph outside viewport.");
+        FitClick(this, new RoutedEventArgs()); GraphScroll.UpdateLayout();
+        Check(GraphScale.ScaleX >= 1, "Readable view must not shrink device text.");
+        if (!horizontalTree) Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ActualWidth + 1, "Readable layout overflows the available width.");
+        PanTransform.X = 87; PanTransform.Y = 53;
+        var pointer = new Point(GraphScroll.ViewportWidth * 0.4, GraphScroll.ViewportHeight * 0.4);
+        var anchored = GraphScroll.TranslatePoint(pointer, Graph);
+        ZoomAt(GraphScale.ScaleX * 1.15, pointer);
+        Check((Graph.TranslatePoint(anchored, GraphScroll) - pointer).Length < 1, "Wheel zoom moved the point under the pointer.");
+        ZoomAt(0.25, pointer);
+        Check((Graph.TranslatePoint(anchored, GraphScroll) - pointer).Length < 1, "Zooming out moved the point under the pointer.");
+        FitClick(this, new RoutedEventArgs());
+        Check(PanTransform.X == 0 && PanTransform.Y == 0, "Readable view must reset free panning.");
+        var selection = selected?.Id;
+        var collapsed = folded.ToHashSet();
+        OrientationClick(this, new RoutedEventArgs());
+        Check(selected?.Id == selection && folded.SetEquals(collapsed), "Changing direction lost selection or folded branches.");
+        var switched = cards.Values.ToList();
+        for (int i = 0; i < switched.Count; i++)
+            for (int j = i + 1; j < switched.Count; j++)
+                Check(!new Rect(switched[i].Point, new Size(CardWidth, switched[i].Card.Height)).IntersectsWith(new Rect(switched[j].Point, new Size(CardWidth, switched[j].Card.Height))), "Cards overlap after changing direction.");
+        foreach (var node in snapshot.Nodes.Where(n => cards.ContainsKey(n.Id)))
+            foreach (var child in Children(node))
+                Check(horizontalTree ? cards[child.Id].Point.X > cards[node.Id].Point.X + CardWidth : cards[child.Id].Point.Y > cards[node.Id].Point.Y + cards[node.Id].Card.Height, "Changed direction has incorrect parent-child placement.");
+        OrientationClick(this, new RoutedEventArgs());
+    }
+    private async Task RenderPreview()
+    {
+        await Task.Delay(400);
+        FitClick(this, new RoutedEventArgs()); UpdateLayout();
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+        var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(this);
+        var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var stream = File.Create("preview.png")) png.Save(stream);
+        Close();
+    }
+}

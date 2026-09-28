@@ -1,0 +1,4 @@
+device_hub from Google Material Icons, Copyright Google, licensed under Apache License 2.0.
+Source: https://github.com/google/material-design-icons/blob/master/src/hardware/device_hub/materialicons/24px.svg
+The filled SVG path is converted to WPF PathGeometry and colored using the app theme.
+See LICENSE.txt in this directory.
