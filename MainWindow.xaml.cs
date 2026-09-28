@@ -1,10 +1,12 @@
 using System.IO;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -18,6 +20,9 @@ public partial class MainWindow : Window
     private readonly HashSet<string> folded = [];
     private readonly Dictionary<string, (Border Card, Point Point)> cards = [];
     private bool busy, demo, render, fitNext = true;
+    private long refreshStarted;
+    private int refreshIndicatorVersion;
+    private DeviceLabels deviceLabels = new();
     private MouseButton? panButton;
     private Point panStart, panOrigin;
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(10) };
@@ -33,7 +38,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { VerifyUi(); VerifyCompactUi(); File.WriteAllText("ui-test.txt", "UI checks passed: layout, filtering, folding, focus, fit, compact/comfortable density, empty slots, search navigation, issues, inspector and selection reuse."); }
+                try { VerifyUi(); VerifyCompactUi(); VerifyIdentityUi(); await VerifyRefreshUi(); File.WriteAllText("ui-test.txt", "UI checks passed: layout, filtering, folding, focus, fit, compact/comfortable density, empty slots, search navigation, issues, inspector, saved labels, host capabilities, selection reuse and refresh feedback."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -46,10 +51,14 @@ public partial class MainWindow : Window
     {
         if (busy) return;
         busy = true; RefreshButton.IsEnabled = false; DemoButton.IsEnabled = false;
+        ShowRefreshProgress();
         StatusText.Text = "Scanning controllers, hubs and device descriptors…";
         try
         {
+            // Let WPF paint the indicator even when a scan completes synchronously.
+            await Dispatcher.Yield(DispatcherPriority.Background);
             var next = demo ? DemoData.Create() : await Task.Run(() => new UsbScanner().Scan());
+            deviceLabels.Apply(next);
             var id = selected?.Id;
             bool changed = JsonSerializer.Serialize(snapshot.Controllers) != JsonSerializer.Serialize(next.Controllers) || !snapshot.Diagnostics.SequenceEqual(next.Diagnostics);
             snapshot = next;
@@ -61,11 +70,46 @@ public partial class MainWindow : Window
             StatusText.Text = (demo ? "Sample topology  ·  " : "Local snapshot  ·  ") + $"Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(x => x.Kind == "Unavailable")} port errors";
             if (snapshot.Diagnostics.Count > 0) StatusText.Text += " · " + string.Join(" · ", snapshot.Diagnostics);
             UpdateIssues();
+            if (deviceLabels.LoadError != null) StatusText.Text += " · Saved labels unavailable";
             if (changed) { Draw(); ShowDetails(); }
             if (fitNext) { GraphScroll.UpdateLayout(); FitClick(this, new RoutedEventArgs()); fitNext = false; }
         }
         catch (Exception ex) { StatusText.Text = "Scan failed: " + ex.Message; EmptyMessage.Text = "Could not read USB devices. See status below; refresh to retry."; EmptyMessage.Visibility = Visibility.Visible; }
-        finally { busy = false; RefreshButton.IsEnabled = true; DemoButton.IsEnabled = true; }
+        finally { busy = false; RefreshButton.IsEnabled = true; DemoButton.IsEnabled = true; FadeRefreshProgress(); }
+    }
+    private void ShowRefreshProgress()
+    {
+        refreshIndicatorVersion++;
+        refreshStarted = Stopwatch.GetTimestamp();
+        RefreshProgress.BeginAnimation(OpacityProperty, null);
+        RefreshProgress.Opacity = 1;
+        RefreshProgress.Visibility = Visibility.Visible;
+        RefreshProgress.IsIndeterminate = true;
+    }
+    private void FadeRefreshProgress()
+    {
+        int version = refreshIndicatorVersion;
+        // Keep very fast refreshes perceptible without delaying the scan or controls.
+        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(180))
+        {
+            BeginTime = TimeSpan.FromMilliseconds(Math.Max(0, 120 - Stopwatch.GetElapsedTime(refreshStarted).TotalMilliseconds)),
+            FillBehavior = FillBehavior.Stop
+        };
+        fade.Completed += (_, _) =>
+        {
+            if (version != refreshIndicatorVersion) return;
+            RefreshProgress.Visibility = Visibility.Collapsed;
+            RefreshProgress.IsIndeterminate = false;
+            RefreshProgress.BeginAnimation(OpacityProperty, null);
+            RefreshProgress.Opacity = 0;
+        };
+        RefreshProgress.BeginAnimation(OpacityProperty, fade);
+    }
+    private async void WindowKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.F5 || Keyboard.Modifiers != ModifierKeys.None) return;
+        e.Handled = true;
+        if (!e.IsRepeat) await Refresh();
     }
     private static string ShortSpeed(UsbNode n) => n.LinkMbps switch { 5000 => "5 Gb/s", 480 => "480 Mb/s", 12 => "12 Mb/s", 1.5 => "1.5 Mb/s", _ => n.Speed.StartsWith("SuperSpeedPlus") ? "≥10 Gb/s" : "Rate unknown" };
     private void ShowDetails()
@@ -76,7 +120,9 @@ public partial class MainWindow : Window
         if (!cards.ContainsKey(node.Id) && !portSlots.ContainsKey(node.Id)) Text("Selection is hidden by a collapsed branch or filter.", 11, "TextMuted");
         var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
         var symbol = NodeVisuals.Icon(node, 26); symbol.Margin = new Thickness(0, 0, 8, 0); DockPanel.SetDock(symbol, Dock.Left); heading.Children.Add(symbol);
-        heading.Children.Add(new TextBlock { Text = node.Name, FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap }); Details.Children.Add(heading);
+        heading.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap }); Details.Children.Add(heading);
+        if (node.UserLabel.Length > 0) Text("Detected: " + node.Name, 11, "TextSecondary");
+        if (node.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase)) Text(node.NameSource + " · component identity", 11, "TextSecondary");
         Text(NodeVisuals.Label(node) + " · " + (node.ScanIncomplete ? "Scan incomplete" : node.Status), 11, node.ScanIncomplete || node.Kind == "Unavailable" ? "Warning" : "TextSecondary");
         if (Issue(node).Length > 0)
         {
@@ -86,6 +132,7 @@ public partial class MainWindow : Window
         }
         var copy = new Button { Content = "Copy details", Padding = new Thickness(8, 3, 8, 3), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 8) };
         copy.Click += (_, _) => { try { Clipboard.SetText(JsonSerializer.Serialize(node, new JsonSerializerOptions { WriteIndented = true })); StatusText.Text = "Device details copied."; } catch (Exception ex) { StatusText.Text = "Clipboard unavailable: " + ex.Message; } }; Details.Children.Add(copy);
+        AddLabelEditor(node);
         if (node.VendorId.Length > 0) Field("VID / PID", $"{node.VendorId} : {node.ProductId}");
         if (node.Manufacturer.Length > 0) Field("Manufacturer", node.Manufacturer);
         if (node.Serial.Length > 0) Field("Serial", node.Serial);
@@ -98,16 +145,23 @@ public partial class MainWindow : Window
             stack.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 0, 0) });
             metrics.Children.Add(stack);
         }
-        Metric(node.Kind is "Controller" or "Root hub" || ShortSpeed(node) == "Rate unknown" ? "—" : ShortSpeed(node), "Negotiated link", 0);
-        Metric(node.MaxPowerMa is int ma ? $"{ma} mA" : "—", "Declared maximum", 1);
-        Details.Children.Add(metrics);
+        bool host = node.Kind is "Controller" or "Root hub";
+        if (!host && node.Kind != "Empty port")
+        {
+            Metric(ShortSpeed(node) == "Rate unknown" ? "Unknown" : ShortSpeed(node), "Negotiated link", 0);
+            Metric(node.MaxPowerMa is int ma ? $"{ma} mA" : "Unknown", "Declared max draw", 1);
+            Details.Children.Add(metrics);
+        }
+        Field(host ? "Port support" : "Upstream port", host ? ProtocolSummary(node) : node.Protocols);
+        if (node.Kind == "Hub") Field("Downstream", ProtocolSummary(node));
+        if (node.Kind is "Controller" or "Root hub" or "Hub" or "Empty port") Field("Supply capacity", "Unknown · not measured");
         Section("Connection");
         var connector = NodeVisuals.Connector(node); connector.Margin = new Thickness(0, 0, 0, 12); Details.Children.Add(connector);
         if (node.Kind is "Controller" or "Root hub") Field("Location", "Host hardware");
         else
         {
             Field("Location", node.Location == "Unknown" ? "Not reported" : node.Location + " · inferred");
-            Field("Upstream port", node.Port.ToString("00"));
+            Field("Port number", node.Port.ToString("00"));
         }
         if (node.Kind is "Hub" or "Root hub" or "Controller")
         {
@@ -121,15 +175,24 @@ public partial class MainWindow : Window
         var pathRow = new WrapPanel();
         foreach (var ancestor in chain)
         {
-            var row = new Button { Content = ancestor.Kind == "Controller" ? pathLabels.GetValueOrDefault(ancestor.Id, "Host") : ancestor.Kind == "Root hub" ? "Root" : ancestor.Port.ToString("00"), Padding = new Thickness(7, 3, 7, 3), Margin = new Thickness(0, 0, 4, 4), ToolTip = ancestor.Name, Foreground = Brush(ancestor.Id == node.Id ? "Accent" : "TextSecondary") };
+            var row = new Button { Content = ancestor.Kind == "Controller" ? pathLabels.GetValueOrDefault(ancestor.Id, "Host") : ancestor.Kind == "Root hub" ? "Root" : ancestor.Port.ToString("00"), Padding = new Thickness(7, 3, 7, 3), Margin = new Thickness(0, 0, 4, 4), ToolTip = ancestor.DisplayName, Foreground = Brush(ancestor.Id == node.Id ? "Accent" : "TextSecondary") };
             row.Click += (_, _) => { SelectNode(ancestor); LocateClick(this, new RoutedEventArgs()); };
             pathRow.Children.Add(row);
             if (ancestor != chain.Last()) pathRow.Children.Add(new TextBlock { Text = "›", Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 4, 0) });
         }
         Details.Children.Add(pathRow);
-        Field("USB revision", node.UsbVersion);
+        if (!host && node.Kind != "Empty port") Field("USB revision", node.UsbVersion);
         var evidence = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
         var notes = new List<string> { node.LocationEvidence };
+        notes.Add("Name source: " + node.NameSource + ".");
+        if (node.ReportedProduct.Length > 0) notes.Add("USB product string: " + node.ReportedProduct);
+        if (node.WindowsName.Length > 0) notes.Add("Windows name: " + node.WindowsName);
+        if (node.WindowsManufacturer.Length > 0) notes.Add("Windows INF manufacturer: " + node.WindowsManufacturer + " (may identify the driver supplier).");
+        if (node.LookupVendor.Length > 0) notes.Add("USB ID vendor: " + node.LookupVendor);
+        if (node.LookupProduct.Length > 0) notes.Add("USB ID product: " + node.LookupProduct);
+        if (node.LookupVendor.Length > 0) notes.Add("Community USB ID matches may identify an internal chip rather than the retail brand or enclosure.");
+        if (host) notes.Add("Port support summarizes reported logical-port capabilities, including empty ports. USB revision and a single negotiated upstream link do not apply to this host summary.");
+        if (node.Kind is "Controller" or "Root hub" or "Hub" or "Empty port") notes.Add("Supply capacity, USB-C charging limits and Power Delivery contracts are not queried. Device-declared draw is not the hub's available supply.");
         if (node.Kind == "Device") notes.Add(node.TypeEvidence);
         if (node.InterfaceFunctions.Count > 0) notes.Add("Reported functions: " + string.Join(", ", node.InterfaceFunctions));
         var knownLinks = chain.Where(n => n.LinkMbps.HasValue).ToList();

@@ -4,6 +4,15 @@ public sealed class UsbNode
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
+    public string ReportedProduct { get; set; } = "";
+    public string WindowsName { get; set; } = "";
+    public string WindowsManufacturer { get; set; } = "";
+    public string LookupVendor { get; set; } = "";
+    public string LookupProduct { get; set; } = "";
+    public string NameSource { get; set; } = "Reported name";
+    public string UserLabel { get; set; } = "";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DisplayName => UserLabel.Length > 0 ? UserLabel : Name;
     public string Kind { get; set; } = "Device";
     public int Port { get; set; }
     public int PortCount { get; set; }
@@ -12,6 +21,8 @@ public sealed class UsbNode
     public string Speed { get; set; } = "Not reported";
     public double? LinkMbps { get; set; }
     public string Protocols { get; set; } = "Not reported";
+    public string DownstreamProtocols { get; set; } = "Not reported";
+    public bool ProtocolSummaryPartial { get; set; }
     public string PowerSource { get; set; } = "Not reported";
     public int? MaxPowerMa { get; set; }
     public string VendorId { get; set; } = "";

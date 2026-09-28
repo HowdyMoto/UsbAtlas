@@ -22,13 +22,14 @@ public partial class MainWindow
     private string appliedQuery = "";
     private bool Compact => CompactDensity.IsChecked == true;
     private static string Issue(UsbNode n) => string.Join(" · ", new[] { n.ScanIncomplete ? "Scan incomplete" : null, n.Kind == "Unavailable" ? "Port error" : null, n.SpeedLimited ? "Reduced speed" : null }.Where(x => x != null));
-    private bool Matches(UsbNode n, string q) => $"{n.Name} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
+    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
     private bool Visible(UsbNode n) => visibleIds.Contains(n.Id);
     private List<UsbNode> Children(UsbNode n) => folded.Contains(n.Id) && appliedQuery.Length == 0 ? [] : n.Children.Where(c => c.Kind != "Empty port" && Visible(c)).ToList();
     private bool ShowPorts(UsbNode n) => EmptyPorts.IsChecked == true || expandedPorts.Contains(n.Id) || appliedQuery.Length > 0 && n.Children.Any(c => c.Kind == "Empty port" && Matches(c, appliedQuery));
     private double HeightFor(UsbNode n)
     {
-        double height = n.Kind is "Controller" or "Root hub" ? (Compact ? 66 : 82) : Compact ? 110 : 138;
+        double height = n.Kind is "Controller" or "Root hub" ? (Compact ? 84 : 100) : Compact ? CardHeight : 138;
+        if (n.UserLabel.Length > 0 || n.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase)) height += 18;
         if (Issue(n).Length > 0) height += 22;
         int empty = n.Children.Count(c => c.Kind == "Empty port");
         if (empty > 0) height += 24 + (ShowPorts(n) ? Math.Ceiling(empty / 8.0) * 27 : 0);
@@ -132,16 +133,17 @@ public partial class MainWindow
         DockPanel.SetDock(path, Dock.Right); header.Children.Add(path);
         header.Children.Add(new TextBlock { Text = NodeVisuals.Label(node) + (node.Kind == "Root hub" ? $" · {node.Children.Count(c => c.Kind != "Empty port")}/{node.PortCount} occupied" : ""), FontSize = 11, Foreground = Brush(NodeVisuals.Color(node)), TextTrimming = TextTrimming.CharacterEllipsis });
         panel.Children.Add(header);
-        var identity = new DockPanel { Height = host ? 24 : Compact ? 39 : 54 };
+        var identity = new DockPanel { Height = host ? 24 : Compact ? 46 : 54 };
         var icon = NodeVisuals.Icon(node, host ? 18 : 23); icon.Margin = new Thickness(0, 0, 7, 0); DockPanel.SetDock(icon, Dock.Left); identity.Children.Add(icon);
-        identity.Children.Add(new TextBlock { Text = node.Name, FontSize = host ? 13 : 16, FontWeight = FontWeights.SemiBold, TextWrapping = host ? TextWrapping.NoWrap : TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = host ? 24 : Compact ? 38 : 52, VerticalAlignment = VerticalAlignment.Center });
+        identity.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = host ? 13 : 16, FontWeight = FontWeights.SemiBold, TextWrapping = host ? TextWrapping.NoWrap : TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = host ? 24 : Compact ? 46 : 52, VerticalAlignment = VerticalAlignment.Center });
         panel.Children.Add(identity);
+        if (node.UserLabel.Length > 0 || node.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase))
+            panel.Children.Add(new TextBlock { Text = node.UserLabel.Length > 0 ? "Detected: " + node.Name : "USB ID lookup · component identity", FontSize = 10, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 2, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
         int occupied = node.Children.Count(c => c.Kind != "Empty port");
         string occupancy = $"{occupied}/{node.PortCount} occupied";
         string metric = node.Kind switch { "Controller" => $"{node.Children.Count} root buses", "Root hub" => occupancy, "Hub" => $"{occupancy} · {ShortSpeed(node)}", "Unavailable" => node.Status, _ => ShortSpeed(node) + (node.MaxPowerMa is int ma ? $" · {ma} mA declared" : "") };
-        // Host metrics share the tooltip; their short cards keep the logical hierarchy visible.
         if (!host) panel.Children.Add(new TextBlock { Text = metric + (node.PortConnectorIsTypeC == true ? " · USB-C" : ""), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 4, 0, 0), ToolTip = metric });
-        else path.ToolTip = path.ToolTip + "\n" + metric;
+        else panel.Children.Add(new TextBlock { Text = "Ports: " + ProtocolSummary(node), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0), ToolTip = ProtocolSummary(node) + "\nSupply capacity: unknown; charging limits are not queried.\n" + metric });
         if (Issue(node).Length > 0) panel.Children.Add(new TextBlock { Text = "⚠ " + Issue(node), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Brush("Warning"), Margin = new Thickness(0, 4, 0, 0) });
         var empties = node.Children.Where(c => c.Kind == "Empty port").ToList();
         if (empties.Count > 0)
@@ -162,7 +164,7 @@ public partial class MainWindow
             }
         }
         var card = new Border { Width = CardWidth, Height = height, Padding = new Thickness(11, 7, 11, 7), CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush("Surface"), BorderBrush = Brush("Border"), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.Name + "\n" + metric + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
-        System.Windows.Automation.AutomationProperties.SetName(card, node.Name + ", " + NodeVisuals.Label(node) + ", " + metric + ", " + Issue(node));
+        System.Windows.Automation.AutomationProperties.SetName(card, node.DisplayName + ", " + NodeVisuals.Label(node) + ", " + metric + ", " + Issue(node));
         card.MouseLeftButtonDown += (_, e) => { card.Focus(); SelectNode(node); if (e.ClickCount == 2 && node.Children.Count > 0 && appliedQuery.Length == 0) { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); } e.Handled = true; };
         card.KeyDown += (_, e) =>
         {
@@ -254,7 +256,7 @@ public partial class MainWindow
         var menu = new ContextMenu { Background = Brush("Surface"), Foreground = Brush("TextPrimary"), BorderBrush = Brush("Border") };
         foreach (var node in snapshot.Nodes.Where(n => Issue(n).Length > 0))
         {
-            var item = new MenuItem { Header = $"{Issue(node)} — {node.Name} ({pathLabels.GetValueOrDefault(node.Id)})" };
+            var item = new MenuItem { Header = $"{Issue(node)} — {node.DisplayName} ({pathLabels.GetValueOrDefault(node.Id)})" };
             item.Click += (_, _) => { Search.Clear(); searchTimer.Stop(); foreach (var ancestor in FindPath(node.Id)) folded.Remove(ancestor.Id); Draw(); SelectNode(node); LocateClick(this, new RoutedEventArgs()); };
             menu.Items.Add(item);
         }

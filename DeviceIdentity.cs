@@ -2,6 +2,53 @@ namespace UsbAtlas;
 
 internal static class DeviceIdentity
 {
+    internal static bool IsGenericName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return true;
+        var remaining = System.Text.RegularExpressions.Regex.Replace(name.ToLowerInvariant(),
+            @"\b(?:usb\s*\d*(?:\.\d+)*|generic|standard|unknown|superspeed(?:plus)?|high|speed|root|hub|composite|device|manufacturer|hid|compliant|keyboard|mouse|mass|storage|host|controller|xhci|ehci)\b|[\s\p{P}\d]+", "");
+        return remaining.Length == 0;
+    }
+    internal static void ResolveName(UsbNode node, UsbIdDatabase? database = null)
+    {
+        (node.LookupVendor, node.LookupProduct) = (database ?? UsbIdDatabase.Default).Lookup(node.VendorId, node.ProductId);
+        string WithVendor(string vendor, string product) => IsGenericName(vendor) || product.Contains(vendor, StringComparison.OrdinalIgnoreCase) ? product : vendor + " " + product;
+        string fallback = node.ReportedProduct.Length > 0 ? node.ReportedProduct : node.WindowsName.Length > 0 ? node.WindowsName : $"USB {node.Kind.ToLowerInvariant()} {node.VendorId}:{node.ProductId}";
+        if (!IsGenericName(node.ReportedProduct))
+        {
+            node.Name = WithVendor(node.Manufacturer, node.ReportedProduct); node.NameSource = "USB product / manufacturer descriptors";
+        }
+        else if (!IsGenericName(node.WindowsName))
+        {
+            node.Name = node.WindowsName; node.NameSource = "Windows device name";
+        }
+        else if (!IsGenericName(node.LookupProduct))
+        {
+            node.Name = WithVendor(node.LookupVendor, node.LookupProduct); node.NameSource = "USB ID lookup";
+        }
+        else if (!IsGenericName(node.Manufacturer))
+        {
+            node.Name = WithVendor(node.Manufacturer, fallback); node.NameSource = "USB manufacturer descriptor";
+        }
+        else if (!IsGenericName(node.LookupVendor))
+        {
+            node.Name = WithVendor(node.LookupVendor, fallback); node.NameSource = "USB vendor ID lookup";
+        }
+        else { node.Name = fallback; node.NameSource = "Generic reported name"; }
+    }
+    internal static string MergeProtocols(IEnumerable<string> values)
+    {
+        var protocols = values.SelectMany(v => v.Split(" / ", StringSplitOptions.RemoveEmptyEntries)).ToHashSet(StringComparer.Ordinal);
+        var result = new[] { "USB 1.x", "USB 2.0", "USB 3.x" }.Where(protocols.Contains).ToArray();
+        return result.Length == 0 ? "Not reported" : string.Join(" / ", result);
+    }
+    internal static void SummarizeProtocols(UsbNode node)
+    {
+        node.DownstreamProtocols = MergeProtocols(node.Children.Select(c => node.Kind == "Controller" ? c.DownstreamProtocols : c.Protocols));
+        node.ProtocolSummaryPartial = node.ScanIncomplete || node.Children.Any(c => node.Kind == "Controller"
+            ? c.ProtocolSummaryPartial || c.DownstreamProtocols == "Not reported" : c.Protocols == "Not reported");
+        if (node.Kind is "Controller" or "Root hub") node.Protocols = node.DownstreamProtocols;
+    }
     internal static void ApplyPortProperties(UsbNode node, uint flags)
     {
         node.PortIsUserConnectable = (flags & 1) != 0;

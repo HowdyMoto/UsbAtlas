@@ -37,5 +37,6 @@ internal static class SelfTests
         Check(DeviceIdentity.ReadInterfaceFunctions([9, 2, 11, 0, 0, 1, 0, 128, 0, 0, 4]).Count == 0, "Zero-length malformed descriptors must terminate safely.");
         Check(DeviceIdentity.ReadInterfaceFunctions(keyboardConfig[..15]).Count == 0, "Truncated interfaces must not be read.");
         Check(demo.Nodes.First(x => x.Name == "Portable SSD").DeviceType == "Storage", "Demo storage device type.");
+        IdentityTests.Run();
     }
 }

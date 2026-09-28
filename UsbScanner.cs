@@ -9,7 +9,7 @@ namespace UsbAtlas;
 public sealed class UsbScanner
 {
     private static readonly Guid ControllerGuid = new("3ABF6F2D-71C4-462A-8A92-1E6861E6AF27");
-    private readonly Dictionary<string, string> names = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (string Name, string Manufacturer)> names = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
     private Snapshot snapshot = new();
 
@@ -58,6 +58,7 @@ public sealed class UsbScanner
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }
+        foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         if (snapshot.Controllers.Count == 0) snapshot.Diagnostics.Add("No USB host controllers were returned by Windows.");
         return snapshot;
     }
@@ -113,11 +114,12 @@ public sealed class UsbScanner
             if (langs is { Length: >= 4 }) language = BitConverter.ToUInt16(langs, 2);
             node.Manufacturer = StringDescriptor(handle, port, data[18], language);
             node.Serial = StringDescriptor(handle, port, data[20], language);
-            var product = StringDescriptor(handle, port, data[19], language);
-            var windowsName = names.GetValueOrDefault(node.DriverKey);
-            node.Name = product.Length > 0 ? product : windowsName ?? $"USB {node.Kind.ToLowerInvariant()} {node.VendorId}:{node.ProductId}";
-            if (windowsName != null && windowsName != node.Name) node.Notes.Add("Windows device name: " + windowsName);
-            if (product.Length > 0 && node.Name != product) node.Notes.Add("Product descriptor: " + product);
+            node.ReportedProduct = StringDescriptor(handle, port, data[19], language);
+            if (names.TryGetValue(node.DriverKey, out var identity))
+            {
+                node.WindowsName = identity.Name; node.WindowsManufacturer = identity.Manufacturer;
+            }
+            DeviceIdentity.ResolveName(node);
             // Match the active configuration value; descriptor index is not configuration value.
             if (data[22] != 0)
             {
@@ -145,7 +147,6 @@ public sealed class UsbScanner
                 node.Notes.Add("Downstream devices share this hub's upstream link. Link speed is a signaling ceiling, not available payload throughput.");
             }
         }
-        if (hub.Kind == "Root hub") hub.Protocols = string.Join(" / ", hub.Children.Select(x => x.Protocols).Where(x => x != "Not reported").Distinct());
     }
 
     internal static (string, double?) DecodeSpeed(byte speed, int flags)
@@ -170,7 +171,7 @@ public sealed class UsbScanner
                 if (!Native.SetupDiEnumDeviceInfo(set, i, ref d)) break;
                 var key = Property(set, ref d, 9);
                 var name = Property(set, ref d, 12) ?? Property(set, ref d, 0);
-                if (key != null && name != null) names[key] = name;
+                if (key != null && name != null) names[key] = (name, Property(set, ref d, 11) ?? "");
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }

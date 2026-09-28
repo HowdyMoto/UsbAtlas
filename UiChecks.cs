@@ -7,6 +7,70 @@ namespace UsbAtlas;
 
 public partial class MainWindow
 {
+    private void VerifyIdentityUi()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+        {
+            yield return root;
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+                foreach (var child in Descendants(VisualTreeHelper.GetChild(root, i))) yield return child;
+        }
+        var savedSnapshot = snapshot; var savedSelection = selected; var savedLabels = deviceLabels;
+        string directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "UsbAtlas-ui-label-test-" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(directory);
+        try
+        {
+            snapshot = DemoData.Create(); deviceLabels = new DeviceLabels(System.IO.Path.Combine(directory, "labels.json"));
+            selected = snapshot.Controllers[0]; Draw(); ShowDetails(); UpdateLayout();
+            var text = Descendants(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
+            Check(text.Contains("Port support") && text.Any(t => t.Contains("USB 3.x")), "Host inspector lost reported port protocols.");
+            Check(text.Contains("Supply capacity") && text.Contains("Unknown · not measured") && !text.Contains("Negotiated link"), "Host inspector must distinguish unknown supply from peripheral metrics.");
+            var hub = snapshot.Nodes.First(n => n.Kind == "Hub"); SelectNode(hub); UpdateLayout();
+            var editor = Details.Children.OfType<Expander>().First(); editor.IsExpanded = true; UpdateLayout();
+            var input = Descendants(editor).OfType<TextBox>().Single(); input.Text = "Dell monitor KVM";
+            Descendants(editor).OfType<Button>().Single(b => b.Content as string == "Save label").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); UpdateLayout();
+            Check(hub.UserLabel == "Dell monitor KVM" && hub.Name == "Studio desktop hub", "Label editor overwrote reported identity or failed to save.");
+            Check(Descendants(cards[hub.Id].Card).OfType<TextBlock>().Any(t => t.Text == "Dell monitor KVM"), "Saved label did not reach graph card.");
+            Search.Text = "Dell monitor KVM"; ApplySearch(); Check(matches.Count == 1 && selected?.Id == hub.Id, "Saved labels must be searchable.");
+            Search.Clear(); ApplySearch(); SelectNode(hub); UpdateLayout();
+            deviceLabels = new DeviceLabels(System.IO.Path.Combine(directory, "labels.json"));
+            var refreshed = DemoData.Create(); deviceLabels.Apply(refreshed);
+            Check(refreshed.Nodes.Single(n => n.Id == hub.Id).UserLabel == "Dell monitor KVM", "Labels did not survive a fresh snapshot and store reload.");
+            editor = Details.Children.OfType<Expander>().First(); editor.IsExpanded = true; UpdateLayout();
+            Descendants(editor).OfType<Button>().Single(b => b.Content as string == "Reset").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(hub.UserLabel == "" && hub.DisplayName == "Studio desktop hub", "Label Reset failed to restore the detected name.");
+        }
+        finally
+        {
+            Search.Clear(); searchTimer.Stop(); snapshot = savedSnapshot; selected = savedSelection; deviceLabels = savedLabels;
+            Draw(); ShowDetails(); UpdateIssues();
+            System.IO.Directory.Delete(directory, true);
+        }
+    }
+    private async Task VerifyRefreshUi()
+    {
+        // Demo refresh completes immediately, exercising the shortest possible scan.
+        if (!demo) return;
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, Key.F5) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+        Search.RaiseEvent(key);
+        Check(key.Handled && busy && RefreshProgress.Visibility == Visibility.Visible && RefreshProgress.Opacity == 1, "F5 must show progress immediately, including from search.");
+        int version = refreshIndicatorVersion;
+        await Refresh();
+        Check(refreshIndicatorVersion == version, "Repeated refresh must not start an overlapping scan.");
+        while (busy) await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+        Check(RefreshButton.IsEnabled && RefreshProgress.Visibility == Visibility.Visible, "Fast refresh must enable controls while its feedback fades.");
+        // Restart while the previous scan is fading; its completion must not hide the new bar.
+        await Task.Delay(160);
+        var restarted = Refresh();
+        Check(RefreshProgress.Visibility == Visibility.Visible && RefreshProgress.Opacity == 1, "Refresh during fade must restore full visibility.");
+        await restarted;
+        await Task.Delay(170);
+        Check(RefreshProgress.Visibility == Visibility.Visible, "An earlier fade hid a newer refresh indicator.");
+        await Task.Delay(250);
+        Check(RefreshProgress.Visibility == Visibility.Collapsed && !RefreshProgress.IsIndeterminate, "Progress animation must stop after fading out.");
+    }
     private void VerifyCompactUi()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
@@ -20,6 +84,8 @@ public partial class MainWindow
             for (int i = 5; i <= 33; i++) hub.Children.Add(new UsbNode { Id = hub.Id + "/" + i, Kind = "Empty port", Name = "Available port " + i, Port = i, Status = "Empty" });
             hub.PortCount = 33;
             hub.Name = "Long hub identity with several words and USB generation information";
+            hub.NameSource = "USB ID lookup";
+            hub.UserLabel = "Dell monitor KVM with a longer personal label";
             selected = hub; EmptyPorts.IsChecked = true;
             foreach (bool compact in new[] { true, false })
             foreach (bool horizontal in new[] { false, true })

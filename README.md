@@ -10,7 +10,12 @@ subject to the license terms.
 
 Bundled Geist/Geist Mono fonts remain under SIL OFL 1.1. The Google Material
 `device_hub` icon and its converted WPF geometry remain subject to Apache 2.0.
+The bundled USB ID database uses its BSD-3-Clause licensing option.
 See [Third-party notices](THIRD-PARTY-NOTICES.md) for attribution and license files.
+
+## Download
+
+Download the Windows x64 portable ZIP from [GitHub Releases](https://github.com/HowdyMoto/UsbAtlas/releases/latest), extract the entire archive, and open `UsbAtlas.exe`. The release includes the .NET runtime; no separate runtime installation is needed. Keep the bundled license and notice files with the app.
 
 ## Run
 
@@ -35,6 +40,7 @@ Launch `dist\UsbAtlas.exe`. For a machine without .NET, publish with `-r win-x64
 ## Explore
 
 - Select a controller, hub, device, or numbered empty-port slot to inspect it. Copy details is available near the inspector heading.
+- **Add your own label** in the inspector gives hardware a recognizable name, such as “Dell monitor KVM”. Save applies it to cards and search; Reset restores the detected name. The detected identity remains visible underneath.
 - Search names, VID:PID, manufacturers, serials, device types, logical paths, or issue labels such as “Reduced speed”. Matches are outlined and the first result is selected and revealed. Enter / Shift+Enter moves between results; Escape clears search. Ancestors remain visible for context.
 - Tab through cards and controls. Arrow keys on a card move between visible nodes; Enter or Space selects without rebuilding the graph.
 - Double-click a hub/controller, or use its +/− button, to fold a branch. Search temporarily reveals matching descendants without discarding folded state.
@@ -44,7 +50,7 @@ Launch `dist\UsbAtlas.exe`. For a machine without .NET, publish with `-r win-x64
 - Pan by dragging empty canvas, or right/middle dragging anywhere. Mouse wheel zooms around the pointer. **Readable** reflows the graph at 100%, **Overview** fits the graph, **Locate** centers the selection, and the zoom percentage resets to 100%.
 - **Vertical / Horizontal** changes tree direction and preserves selection and folded branches.
 - The issue button lists reduced-speed links, incomplete scans, port failures and scan diagnostics. Select a hardware issue to reveal its node.
-- Refresh manually or enable ten-second auto-refresh. Unchanged scans preserve graph controls and inspector state.
+- Click **Refresh**, press **F5**, or enable ten-second auto-refresh. A thin progress bar appears at the top of the canvas while scanning and fades out over 180 ms. Even instant scans remain briefly visible. Unchanged scans preserve graph controls and inspector state.
 - Export the snapshot as JSON. **Sample** switches to labeled demo hardware; **My devices** returns to local hardware.
 
 ## Visual language
@@ -56,6 +62,25 @@ Blue outlines identify selection and search matches; the selected upstream path 
 Hub location is inferred from Windows port accessibility and topology, and labeled accordingly. A reported USB-C socket identifies the upstream receptacle, not the cable or device-end plug. Unknown connector shapes remain available in the inspector rather than repeating “Plug ?” on every card. Detection evidence and measurement caveats are expandable in the inspector.
 
 ## What the numbers mean
+
+**Identity:** specific USB product/manufacturer strings and Windows device names
+take priority over generic descriptions. Generic names fall back to the bundled
+offline USB ID database, with the source explicitly labeled. Community matches
+may identify an internal chip vendor rather than the retail brand. Detection
+details retain the original USB strings, Windows name and lookup results.
+
+**Saved labels:** stored in `%LOCALAPPDATA%/UsbAtlas/device-labels.json`. A unique
+VID/PID/serial identity follows a device between ports. Devices without a unique
+serial use a port-path/VID/PID key: moving them requires a new label, and an
+identical replacement at that port can inherit it. Sample labels are separate
+from hardware labels. Exports include user labels; scans do not modify devices.
+
+**Host capabilities:** controller/root-hub cards show reported downstream port
+protocols, including empty ports. The inspector shows port support and explicitly
+unknown supply capacity. Partial summaries are labeled when some port queries
+are unavailable. These are protocol families, not an exact negotiated rate or
+a controller-wide bandwidth budget. External hubs show their upstream port's
+protocols separately from their own downstream-port support.
 
 The scanner enumerates host controller interfaces using SetupAPI, resolves each root hub, and recursively queries every physical hub port with read-only USB IOCTLs. Names are matched through the device's driver key, with USB product descriptors as a fallback.
 

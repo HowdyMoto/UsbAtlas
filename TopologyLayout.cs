@@ -4,7 +4,7 @@ namespace UsbAtlas;
 // cannot collide with the next row. A left gutter carries wrapped connections.
 internal sealed class TopologyLayout
 {
-    internal const double CardWidth = 290, CardHeight = 110, Gap = 16, Gutter = 16, LevelGap = 28;
+    internal const double CardWidth = 290, CardHeight = 118, Gap = 16, Gutter = 16, LevelGap = 28;
     internal sealed record Item(UsbNode Node, double X, double Y, double Width, double Height, List<Item> Children);
     private static double MinimumWidth(UsbNode node, Func<UsbNode, List<UsbNode>> children, Func<UsbNode, double> crossSize)
     {

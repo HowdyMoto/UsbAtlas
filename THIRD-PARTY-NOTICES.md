@@ -26,6 +26,16 @@ not require the application code to use the OFL.
   is supplied by the application theme. Other pictograms are defined locally.
 - Additional attribution: `Assets/Icons/NOTICE.txt`.
 
+## USB ID Repository
+
+- Maintained by Stephen J. Gowdy and volunteer contributors.
+- Upstream: https://usb-ids.gowdy.us/
+- Canonical download: http://www.linux-usb.org/usb.ids
+- File: `Assets/UsbIds/usb.ids`, snapshot 2026.06.26, embedded without changes.
+- The upstream project offers GPL-2.0-or-later OR BSD-3-Clause. USB Atlas
+  uses the **BSD-3-Clause** option; this does not change our MIT code license.
+- License and provenance: `Assets/UsbIds/LICENSE.txt` and `NOTICE.txt`.
+
 ## .NET and WPF
 
 USB Atlas targets .NET 10 and WPF. There are no third-party NuGet package
@@ -36,7 +46,8 @@ requires a separately installed .NET Desktop Runtime and does not bundle it.
 - WPF: https://github.com/dotnet/wpf/blob/main/LICENSE.TXT
 
 Self-contained distributions must retain the runtime's applicable license
-and third-party notices as well.
+and third-party notices as well. The Windows x64 release includes these in
+`RuntimeNotices/` alongside the bundled .NET and Windows Desktop runtimes.
 
 ## Implementation references
 

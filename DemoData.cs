@@ -29,6 +29,13 @@ internal static class DemoData
             DeviceIdentity.Identify(n);
         }
         hub.Children[0].PortConnectorIsTypeC = true;
-        return new Snapshot { IsDemo = true, Controllers = [new UsbNode { Id = "demo", Name = "USB xHCI host controller", Kind = "Controller", Children = [root], PowerSource = "System supplied", Location = "Host", LocationEvidence = "Demo host controller." }] };
+        var snapshot = new Snapshot { IsDemo = true, Controllers = [new UsbNode { Id = "demo", Name = "USB xHCI host controller", Kind = "Controller", Children = [root], PowerSource = "System supplied", Location = "Host", LocationEvidence = "Demo host controller." }] };
+        foreach (var node in snapshot.Nodes)
+        {
+            node.NameSource = "Illustrative sample data";
+            if (node.Kind is "Device" or "Hub") node.ReportedProduct = node.Name;
+        }
+        foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
+        return snapshot;
     }
 }

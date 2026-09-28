@@ -1,0 +1,10 @@
+USB ID Repository
+Maintained by Stephen J. Gowdy <linux.usb.ids@gmail.com> and contributors.
+Project and dual-license declaration: https://usb-ids.gowdy.us/
+Canonical download: http://www.linux-usb.org/usb.ids
+Bundled snapshot: 2026.06.26 (2026-06-26 20:34:02), downloaded 2026-09-28.
+SHA-256: f5a48b0cc8dae1607c2f0bae6b8dc13f2ecef69dbeaeaf34b4be8e280d34dba4
+The database is embedded without modification. USB Atlas uses its
+BSD-3-Clause licensing option; see LICENSE.txt in this directory.
+Matches identify USB vendor/product IDs and may describe component chips
+rather than retail enclosures. The application performs no online lookup.
