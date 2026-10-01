@@ -24,12 +24,13 @@ public partial class MainWindow
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
         var save = new Button { Content = "Save label", Padding = new Thickness(8, 3, 8, 3), Margin = new Thickness(0, 0, 6, 0) };
         var clear = new Button { Content = "Reset", Padding = new Thickness(8, 3, 8, 3), ToolTip = "Remove your label and use the detected name" };
-        var error = new TextBlock { Foreground = Brush("Warning"), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) };
+        var error = new ContentControl { Margin = new Thickness(0, 5, 0, 0) };
+        void Fail(string message) => error.Content = NodeVisuals.StatusBadge(NodeVisuals.Severity.Error, message);
         void Save(string value)
         {
             var current = snapshot.Nodes.FirstOrDefault(n => n.Id == node.Id);
-            if (current == null) { error.Text = "Device is no longer in this snapshot."; return; }
-            if (!deviceLabels.TrySet(current, snapshot, value, out var message)) { error.Text = message; return; }
+            if (current == null) { Fail("Device is no longer in this snapshot."); return; }
+            if (!deviceLabels.TrySet(current, snapshot, value, out var message)) { Fail(message); return; }
             Draw(); ShowDetails();
             StatusText.Text = value.Trim().Length == 0 ? "Device label removed." : "Device label saved locally.";
         }

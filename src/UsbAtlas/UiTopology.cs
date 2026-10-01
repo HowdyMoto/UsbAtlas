@@ -12,7 +12,6 @@ public partial class MainWindow
     private bool readableView = true, arranging, horizontalTree;
     private double layoutWidth = 1100, inspectorWidth = 310;
     private double ReadingScale => 1;
-    private readonly HashSet<string> expandedPorts = [];
     private readonly HashSet<string> visibleIds = [];
     private readonly Dictionary<string, string> pathLabels = [];
     private readonly Dictionary<string, System.Windows.Shapes.Path> wires = [];
@@ -26,17 +25,24 @@ public partial class MainWindow
     private readonly DispatcherTimer searchTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private string appliedQuery = "";
     private bool Compact => CompactDensity.IsChecked == true;
-    private static string Issue(UsbNode n) => string.Join(" · ", new[] { n.ScanIncomplete ? "Scan incomplete" : null, n.Kind == "Unavailable" ? "Port error" : null, n.SpeedLimited ? "Reduced speed" : null }.Where(x => x != null));
+    private static List<(NodeVisuals.Severity Severity, string Text)> Issues(UsbNode n)
+    {
+        var issues = new List<(NodeVisuals.Severity, string)>();
+        if (n.Kind == "Unavailable") issues.Add((NodeVisuals.Severity.Error, "Port error"));
+        if (n.ScanIncomplete) issues.Add((NodeVisuals.Severity.Warning, "Scan incomplete"));
+        if (n.SpeedLimited) issues.Add((NodeVisuals.Severity.Warning, "Reduced speed"));
+        return issues;
+    }
+    private static string Issue(UsbNode n) => string.Join(" · ", Issues(n).Select(i => i.Text));
     private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
     private bool Visible(UsbNode n) => visibleIds.Contains(n.Id);
     private List<UsbNode> Children(UsbNode n) => folded.Contains(n.Id) && appliedQuery.Length == 0 ? [] : n.Children.Where(c => c.Kind != "Empty port" && Visible(c)).OrderBy(c => c.Port).ToList();
-    private bool ShowPorts(UsbNode n) => EmptyPorts.IsChecked == true || expandedPorts.Contains(n.Id) || appliedQuery.Length > 0 && n.Children.Any(c => c.Kind == "Empty port" && Matches(c, appliedQuery));
+    // Every logical port is drawn on its hub, occupied or not, so the sockets themselves show occupancy.
     // Cached per drawing pass; layout queries each hub's ports many times while choosing staircases.
     private List<UsbNode> EdgePorts(UsbNode n)
     {
         if (edgePortCache.TryGetValue(n.Id, out var ports)) return ports;
-        return edgePortCache[n.Id] = n.Kind is "Hub" or "Root hub"
-            ? n.Children.Where(c => c.Kind != "Empty port" || ShowPorts(n)).OrderBy(c => c.Port).ToList() : [];
+        return edgePortCache[n.Id] = n.Kind is "Hub" or "Root hub" ? n.Children.OrderBy(c => c.Port).ToList() : [];
     }
     // Ports spread evenly along the edge; a staircase gathers them at the card's right end
     // so its column of devices can tuck under the card.
@@ -52,10 +58,8 @@ public partial class MainWindow
     private double HeightFor(UsbNode n)
     {
         double height = n.Kind is "Controller" or "Root hub" ? (Compact ? 84 : 100) : Compact ? CardHeight : 138;
-        if (n.UserLabel.Length > 0 || n.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase)) height += 18;
-        if (Issue(n).Length > 0) height += 22;
-        int empty = n.Children.Count(c => c.Kind == "Empty port");
-        if (empty > 0) height += 24;
+        if (n.UserLabel.Length > 0) height += 18;
+        if (Issue(n).Length > 0) height += 24;
         int ports = EdgePorts(n).Count;
         if (ports > 0) height = horizontalTree ? Math.Max(height, ports * 30 + 16) : height + 44;
         return height;
@@ -88,11 +92,12 @@ public partial class MainWindow
         var roots = snapshot.Controllers.Where(Visible).ToList();
         const double margin = 16, controllerGap = 24;
         var layouts = ArrangeLayouts(roots, layoutWidth - margin * 2, controllerGap);
-        // Controllers flow left to right and wrap only as whole trees; horizontal trees stack.
+        // Controllers are siblings like any other row, so they sit side by side and never wrap;
+        // horizontal trees stack them instead.
         double top = 12, left = margin, rowHeight = 0, maxRight = 0;
         foreach (var tree in layouts)
         {
-            if (left > margin && (horizontalTree || left + tree.Width > layoutWidth - margin)) { top += rowHeight + 36; left = margin; rowHeight = 0; }
+            if (left > margin && horizontalTree) { top += rowHeight + 36; left = margin; rowHeight = 0; }
             Place(tree, left, top);
             left += tree.Width + controllerGap;
             rowHeight = Math.Max(rowHeight, tree.Height);
@@ -137,12 +142,6 @@ public partial class MainWindow
             }
         }
         Shrink(all => all.Sum(t => t.Width) + gap * (all.Count - 1));
-        if (layouts.Count > 1 && layouts.Sum(t => t.Width) + gap * (layouts.Count - 1) > available)
-        {
-            // The controllers will wrap anyway, so stack only inside trees too wide on their own.
-            stackedHubs.Clear(); layouts = Measure();
-            Shrink(all => all.Max(t => t.Width));
-        }
         return layouts;
     }
     private void Place(TopologyLayout.Item layout, double left, double top)
@@ -168,20 +167,20 @@ public partial class MainWindow
         var icon = NodeVisuals.Icon(node, host ? 18 : 23); icon.Margin = new Thickness(0, 0, 7, 0); DockPanel.SetDock(icon, Dock.Left); identity.Children.Add(icon);
         identity.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = host ? 13 : 16, FontWeight = FontWeights.SemiBold, TextWrapping = host ? TextWrapping.NoWrap : TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = host ? 24 : Compact ? 46 : 52, VerticalAlignment = VerticalAlignment.Center });
         panel.Children.Add(identity);
-        if (node.UserLabel.Length > 0 || node.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase))
-            panel.Children.Add(new TextBlock { Text = node.UserLabel.Length > 0 ? "Detected: " + node.Name : "USB ID lookup · component identity", FontSize = 10, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 2, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
+        // Under a custom label, keep the detected name visible; where a name came from is in Detection details.
+        if (node.UserLabel.Length > 0)
+            panel.Children.Add(new TextBlock { Text = "Detected: " + node.Name, FontSize = 10, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 2, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
         int occupied = node.Children.Count(c => c.Kind != "Empty port");
         string occupancy = $"{occupied}/{node.PortCount} occupied";
         string metric = node.Kind switch { "Controller" => $"{node.Children.Count} root buses", "Root hub" => occupancy, "Hub" => $"{occupancy} · {ShortSpeed(node)}", "Unavailable" => node.Status, _ => ShortSpeed(node) + (node.MaxPowerMa is int ma ? $" · {ma} mA declared" : "") };
         if (!host) panel.Children.Add(new TextBlock { Text = metric + (node.PortConnectorIsTypeC == true ? " · USB-C" : ""), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 4, 0, 0), ToolTip = metric });
         else panel.Children.Add(new TextBlock { Text = "Ports: " + ProtocolSummary(node), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0), ToolTip = ProtocolSummary(node) + "\nSupply capacity: unknown; charging limits are not queried.\n" + metric });
-        if (Issue(node).Length > 0) panel.Children.Add(new TextBlock { Text = "⚠ " + Issue(node), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Brush("Warning"), Margin = new Thickness(0, 4, 0, 0) });
-        var empties = node.Children.Where(c => c.Kind == "Empty port").ToList();
-        if (empties.Count > 0)
+        var issues = Issues(node);
+        if (issues.Count > 0)
         {
-            var toggle = new Button { Content = $"{(ShowPorts(node) ? "−" : "+")} {empties.Count} empty logical ports · {occupancy}", Padding = new Thickness(3, 1, 3, 1), FontSize = 11, Margin = new Thickness(0, 3, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, ToolTip = "Expand numbered empty-port slots" };
-            toggle.Click += (_, e) => { if (EmptyPorts.IsChecked == true) { EmptyPorts.IsChecked = false; foreach (var hub in snapshot.Nodes.Where(n => n.Children.Any(c => c.Kind == "Empty port"))) expandedPorts.Add(hub.Id); } if (!expandedPorts.Add(node.Id)) expandedPorts.Remove(node.Id); Draw(); ShowDetails(); e.Handled = true; };
-            panel.Children.Add(toggle);
+            var badges = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+            foreach (var (severity, text) in issues) { var badge = NodeVisuals.StatusBadge(severity, text); badge.Margin = new Thickness(0, 0, 4, 0); badges.Children.Add(badge); }
+            panel.Children.Add(badges);
         }
         var edgePorts = EdgePorts(node);
         var padding = edgePorts.Count == 0 ? new Thickness(11, 7, 11, 7) : horizontalTree ? new Thickness(11, 7, 55, 7) : new Thickness(11, 7, 11, 51);
@@ -211,6 +210,7 @@ public partial class MainWindow
             content.Children.Add(new TextBlock { Text = port.Port.ToString("00"), FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
             if (horizontalTree) graphic.LayoutTransform = new RotateTransform(90);
             content.Children.Add(graphic);
+            if (port.Kind == "Empty port") content.Opacity = 0.5;
             var button = new Button { Content = content, Tag = port, Width = horizontalTree ? 40 : 34, Height = horizontalTree ? 26 : 38, Padding = new Thickness(0), ToolTip = $"Logical port {port.Port} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{(port.PortConnectorIsTypeC == true ? "USB-C receptacle reported by Windows" : "Connector shape unknown")}" };
             System.Windows.Automation.AutomationProperties.SetName(button, $"Port {port.Port}, {port.DisplayName}");
             button.Click += (_, e) => { SelectNode(port); e.Handled = true; };
@@ -309,10 +309,12 @@ public partial class MainWindow
             bool upstream = chain.Contains(id);
             wire.Stroke = Brush(upstream ? "Accent" : "Wire"); wire.StrokeThickness = upstream ? 2.25 : 1.5;
         }
+        // Occupied sockets get a solid outline; empty ones fade back, so occupancy reads even on folded hubs.
         foreach (var (id, slot) in portSlots.Concat(connectedPorts))
         {
+            bool empty = portSlots.ContainsKey(id);
             slot.Background = Brush(id == selected?.Id ? "Selection" : "Surface");
-            slot.BorderBrush = Brush(id == selected?.Id || appliedQuery.Length > 0 && Matches((UsbNode)slot.Tag, appliedQuery) ? "Accent" : "Border");
+            slot.BorderBrush = Brush(id == selected?.Id || appliedQuery.Length > 0 && Matches((UsbNode)slot.Tag, appliedQuery) ? "Accent" : empty ? "Divider" : "BorderHover");
         }
         LocateButton.IsEnabled = selected != null && (cards.ContainsKey(selected.Id) || portSlots.ContainsKey(selected.Id));
         int index = matches.FindIndex(n => n.Id == selected?.Id);
@@ -349,12 +351,14 @@ public partial class MainWindow
         SplitterColumn.Width = new GridLength(hide ? 0 : 5);
         InspectorPanel.Visibility = InspectorSplitter.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
         InspectorButton.Content = hide ? "Show inspector" : "Hide inspector";
+        UpdateLayout(); FitSidePanels();
     }
     private void UpdateIssues()
     {
         int count = snapshot.Nodes.Count(n => Issue(n).Length > 0) + snapshot.Diagnostics.Count;
-        IssuesButton.Content = count == 0 ? "No issues" : $"⚠ {count} issues";
-        IssuesButton.Foreground = Brush(count == 0 ? "TextMuted" : "Warning");
+        var worst = snapshot.Nodes.SelectMany(Issues).Select(i => i.Severity).DefaultIfEmpty(NodeVisuals.Severity.Warning).Max();
+        if (count == 0) { IssuesButton.Content = new TextBlock { Text = "No issues", Foreground = Brush("TextMuted") }; IssuesButton.ClearValue(BackgroundProperty); }
+        else { IssuesButton.Content = NodeVisuals.StatusContent(worst, count == 1 ? "1 issue" : $"{count} issues"); IssuesButton.Background = Brush(worst == NodeVisuals.Severity.Error ? "ErrorSurface" : "WarningSurface"); }
         IssuesButton.IsEnabled = count > 0;
         StatusText.Text = (snapshot.IsDemo ? "Sample topology" : "Local snapshot") + $" · Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(n => n.Kind == "Unavailable")} port errors · {snapshot.Nodes.Count(n => n.ScanIncomplete)} incomplete · {snapshot.Nodes.Count(n => n.SpeedLimited)} reduced speed";
         if (snapshot.Diagnostics.Count > 0) StatusText.Text += " · " + string.Join(" · ", snapshot.Diagnostics);
@@ -365,11 +369,11 @@ public partial class MainWindow
         var menu = new ContextMenu { Background = Brush("Surface"), Foreground = Brush("TextPrimary"), BorderBrush = Brush("Border") };
         foreach (var node in snapshot.Nodes.Where(n => Issue(n).Length > 0))
         {
-            var item = new MenuItem { Header = $"{Issue(node)} — {node.DisplayName} ({pathLabels.GetValueOrDefault(node.Id)})" };
+            var item = new MenuItem { Header = $"{Issue(node)} — {node.DisplayName} ({pathLabels.GetValueOrDefault(node.Id)})", Icon = NodeVisuals.StatusGlyph(Issues(node).Max(i => i.Severity)) };
             item.Click += (_, _) => { Search.Clear(); searchTimer.Stop(); foreach (var ancestor in FindPath(node.Id)) folded.Remove(ancestor.Id); Draw(); SelectNode(node); LocateClick(this, new RoutedEventArgs()); };
             menu.Items.Add(item);
         }
-        foreach (var diagnostic in snapshot.Diagnostics) menu.Items.Add(new MenuItem { Header = diagnostic, IsEnabled = false });
+        foreach (var diagnostic in snapshot.Diagnostics) menu.Items.Add(new MenuItem { Header = diagnostic, IsEnabled = false, Icon = NodeVisuals.StatusGlyph(NodeVisuals.Severity.Warning) });
         menu.PlacementTarget = IssuesButton; menu.IsOpen = true;
     }
 }

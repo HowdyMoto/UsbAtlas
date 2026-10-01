@@ -12,17 +12,49 @@ internal static class NodeVisuals
         "Controller" or "Root hub" => "HostRole",
         "Hub" when n.Location == "Internal" => "HostRole",
         "Hub" when n.Location == "External" => "HubRole",
-        "Hub" => "UnknownRole", "Empty port" => "UnknownRole", "Unavailable" => "Error", _ => "DeviceRole"
+        "Hub" or "Empty port" or "Unavailable" => "UnknownRole", _ => "DeviceRole"
     };
     internal static string Label(UsbNode n) => n.Kind switch
     {
         "Controller" => "Host controller", "Root hub" => "Root ports",
         "Hub" when n.Location == "Internal" => "Internal hub · inferred",
         "Hub" when n.Location == "External" => "External hub · inferred",
-        "Hub" => "Hub · location unknown", "Empty port" => "Empty port", "Unavailable" => "Port error",
+        "Hub" => "Hub · location unknown", "Empty port" => "Empty port", "Unavailable" => "USB port",
         _ => n.DeviceType
     };
     internal static Brush Ink(string hex) => Theme.Brush(hex);
+
+    // Warnings and errors share one look everywhere: a shape-coded glyph (triangle for a warning,
+    // circle for an error) beside semibold text in a color nothing else uses, usually on a tinted pill.
+    internal enum Severity { Warning, Error }
+    internal const string StatusGlyphTag = "status-glyph";
+    internal static string StatusColor(Severity s) => s == Severity.Error ? "Error" : "Warning";
+    internal static FrameworkElement StatusGlyph(Severity s, double size = 12)
+    {
+        var canvas = new Canvas { Width = 12, Height = 12 };
+        if (s == Severity.Error) canvas.Children.Add(new Ellipse { Width = 12, Height = 12, Fill = Ink("Error") });
+        else canvas.Children.Add(new Path { Data = Geometry.Parse("M6,1 L11.4,10.8 H0.6 Z"), Fill = Ink("Warning"), Stroke = Ink("Warning"), StrokeThickness = 1, StrokeLineJoin = PenLineJoin.Round });
+        canvas.Children.Add(new Path
+        {
+            Data = Geometry.Parse(s == Severity.Error ? "M5.3,2.6 H6.7 V7.2 H5.3 Z M6,8.1 A0.85,0.85 0 1 1 6,9.8 A0.85,0.85 0 1 1 6,8.1 Z" : "M5.35,4 H6.65 V7.6 H5.35 Z M6,8.3 A0.75,0.75 0 1 1 6,9.8 A0.75,0.75 0 1 1 6,8.3 Z"),
+            Fill = Ink("StatusInk")
+        });
+        return new Viewbox { Width = size, Height = size, Child = canvas, Tag = StatusGlyphTag, VerticalAlignment = VerticalAlignment.Center };
+    }
+    // Glyph and text without a surface, for hosts that provide their own (such as a button).
+    internal static FrameworkElement StatusContent(Severity s, string text)
+    {
+        var row = new DockPanel();
+        var glyph = StatusGlyph(s); glyph.Margin = new Thickness(0, 1, 5, 0); glyph.VerticalAlignment = VerticalAlignment.Top;
+        DockPanel.SetDock(glyph, Dock.Left); row.Children.Add(glyph);
+        row.Children.Add(new TextBlock { Text = text, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Ink(StatusColor(s)), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+        return row;
+    }
+    internal static Border StatusBadge(Severity s, string text) => new()
+    {
+        Background = Ink(s == Severity.Error ? "ErrorSurface" : "WarningSurface"), CornerRadius = new CornerRadius(4),
+        Padding = new Thickness(5, 2, 7, 2), HorizontalAlignment = HorizontalAlignment.Left, Child = StatusContent(s, text)
+    };
     internal static FrameworkElement Icon(UsbNode n, double size = 36)
     {
         if (n.Kind == "Hub")

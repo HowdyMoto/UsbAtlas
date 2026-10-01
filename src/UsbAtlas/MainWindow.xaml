@@ -32,19 +32,18 @@
      <Button Content="Overview" Click="OverviewClick" Padding="10,3" Margin="8,0,0,0"/>
     </StackPanel>
     <Button x:Name="TreeButton" Content="Hide tree" Click="TreePanelClick" DockPanel.Dock="Left" Padding="8,3" Margin="0,0,10,0" ToolTip="Show or hide the device tree"/>
-    <Grid Width="190" DockPanel.Dock="Left" Margin="0,0,16,0">
+    <Grid Width="190" DockPanel.Dock="Left" HorizontalAlignment="Left">
      <TextBox x:Name="Search" TextChanged="SearchChanged" KeyDown="SearchKeyDown" ToolTip="Search names, IDs, serials, types, paths or issues. Enter: next; Shift+Enter: previous; Escape: clear." Padding="9,5" AutomationProperties.Name="Search devices"/>
      <TextBlock Text="Find a device…" Foreground="{DynamicResource TextMuted}" Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=Search}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
     </Grid>
-    <CheckBox x:Name="EmptyPorts" Content="Empty slots" Click="FilterClick"/>
    </DockPanel>
   </Border>
-  <Grid Grid.Row="2">
-   <Grid.ColumnDefinitions><ColumnDefinition x:Name="TreeColumn" Width="240" MinWidth="180" MaxWidth="420"/><ColumnDefinition x:Name="TreeSplitterColumn" Width="5"/><ColumnDefinition MinWidth="390"/><ColumnDefinition x:Name="SplitterColumn" Width="5"/><ColumnDefinition x:Name="InspectorColumn" Width="310" MinWidth="260" MaxWidth="520"/></Grid.ColumnDefinitions>
+  <Grid Grid.Row="2" SizeChanged="SidePanelsSizeChanged">
+   <Grid.ColumnDefinitions><ColumnDefinition x:Name="TreeColumn" Width="240" MinWidth="180"/><ColumnDefinition x:Name="TreeSplitterColumn" Width="5"/><ColumnDefinition MinWidth="390"/><ColumnDefinition x:Name="SplitterColumn" Width="5"/><ColumnDefinition x:Name="InspectorColumn" Width="310" MinWidth="260" MaxWidth="520"/></Grid.ColumnDefinitions>
    <Border x:Name="TreePanel" Background="{DynamicResource Surface}">
     <Grid><Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition/></Grid.RowDefinitions>
      <Border BorderBrush="{DynamicResource Divider}" BorderThickness="0,0,0,1" Padding="12,0"><TextBlock Text="DEVICES" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></Border>
-     <TreeView x:Name="DeviceTree" Grid.Row="1" SelectedItemChanged="DeviceTreeSelectionChanged" PreviewMouseLeftButtonDown="DeviceTreeMouseDown" Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}" BorderThickness="0" Padding="6,8" ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="USB device tree">
+     <TreeView x:Name="DeviceTree" Grid.Row="1" SelectedItemChanged="DeviceTreeSelectionChanged" PreviewMouseLeftButtonDown="DeviceTreeMouseDown" Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}" BorderThickness="0" Padding="6,8" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="USB device tree">
       <TreeView.Resources>
        <Style TargetType="TreeViewItem">
         <Setter Property="Padding" Value="2,3,8,3"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
@@ -75,7 +74,7 @@
      </TreeView>
     </Grid>
    </Border>
-   <GridSplitter x:Name="TreeSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext"/>
+   <GridSplitter x:Name="TreeSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Grid Grid.Column="2" Background="{DynamicResource CanvasSurface}">
     <Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition/><RowDefinition Height="26"/></Grid.RowDefinitions>
     <DockPanel Margin="16,0">
@@ -95,7 +94,7 @@
     <TextBlock Grid.Row="1" x:Name="EmptyMessage" Text="Reading your USB connections…" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="14" IsHitTestVisible="False"/>
     <TextBlock Grid.Row="2" Text="Drag to pan · Scroll to zoom · Tab / arrows to navigate" Margin="16,0" FontSize="11" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
    </Grid>
-   <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext"/>
+   <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Border x:Name="InspectorPanel" Grid.Column="4" Background="{DynamicResource Surface}">
     <Grid><Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition/></Grid.RowDefinitions>
      <Border BorderBrush="{DynamicResource Divider}" BorderThickness="0,0,0,1" Padding="14,0"><TextBlock Text="INSPECTOR" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></Border>

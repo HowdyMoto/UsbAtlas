@@ -21,9 +21,12 @@ internal static class Theme
         ("Focus", "#7097CF", "#ABC8EF"), ("BorderHover", "#93A5B7", "#7B91AD"),
         ("Subtle", "#FAFBFC", "#242B34"), ("Wire", "#B8C0C5", "#596575"),
         ("WireDot", "#929FA8", "#8B9AAF"), ("HostRole", "#586A80", "#A6B8CE"),
-        ("HubRole", "#98713E", "#D9B17A"), ("DeviceRole", "#4E7B74", "#8ABCB0"),
-        ("UnknownRole", "#737B83", "#A2ADB9"), ("Error", "#B6453E", "#F29C95"),
-        ("Warning", "#946526", "#DCB37C"), ("Success", "#4E7B65", "#92C5A7")
+        ("HubRole", "#7562A8", "#B5A6E3"), ("DeviceRole", "#4E7B74", "#8ABCB0"),
+        ("UnknownRole", "#737B83", "#A2ADB9"), ("Success", "#4E7B65", "#92C5A7"),
+        // Reserved for warnings and errors, always with a status glyph; no role color comes near them.
+        ("Warning", "#9A5B00", "#F5B544"), ("WarningSurface", "#FDF0D5", "#3B2D12"),
+        ("Error", "#B42318", "#FF7A6E"), ("ErrorSurface", "#FDE7E5", "#43201F"),
+        ("StatusInk", "#FFFFFF", "#15181D")
     ];
     public static Brush Brush(string key) => (Brush)Application.Current.FindResource(key);
     public static void Initialize(string[] args)

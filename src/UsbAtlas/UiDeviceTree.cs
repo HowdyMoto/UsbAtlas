@@ -18,7 +18,8 @@ public partial class MainWindow
     private void UpdateDeviceTree()
     {
         if (DeviceTree == null) return;
-        bool Include(UsbNode n) => Visible(n) && (n.Kind != "Empty port" || snapshot.Nodes.Any(p => p.Children.Contains(n) && ShowPorts(p)));
+        // Empty ports are sockets on the canvas; the tree lists them only when they match a search.
+        bool Include(UsbNode n) => Visible(n) && (n.Kind != "Empty port" || appliedQuery.Length > 0);
         var nodes = snapshot.Nodes.Where(Include).ToList();
         string signature = System.Text.Json.JsonSerializer.Serialize(new { Theme.IsDark, appliedQuery, Nodes = nodes.Select(n => new { n.Id, n.DisplayName, n.Kind, n.Port, n.Status, n.Location, Issue = Issue(n) }) });
         if (signature == treeSignature) return;
@@ -28,9 +29,16 @@ public partial class MainWindow
             DeviceTree.Items.Clear(); treeItems.Clear(); treeRebuilt = true;
             TreeViewItem Create(UsbNode node)
             {
-                var header = new StackPanel { Orientation = Orientation.Horizontal };
-                var icon = NodeVisuals.Icon(node, 16); icon.Margin = new Thickness(0, 0, 6, 0); header.Children.Add(icon);
-                header.Children.Add(new TextBlock { Text = (node.Port > 0 ? $"{node.Port:00} · " : "") + node.DisplayName, VerticalAlignment = VerticalAlignment.Center });
+                // The name fills the row and trims, so the tree never scrolls sideways; the tooltip has the full name.
+                var header = new DockPanel();
+                var icon = NodeVisuals.Icon(node, 16); icon.Margin = new Thickness(0, 0, 6, 0); DockPanel.SetDock(icon, Dock.Left); header.Children.Add(icon);
+                var issues = Issues(node);
+                if (issues.Count > 0)
+                {
+                    var glyph = NodeVisuals.StatusGlyph(issues.Max(i => i.Severity)); glyph.Margin = new Thickness(6, 0, 0, 0);
+                    DockPanel.SetDock(glyph, Dock.Right); header.Children.Add(glyph);
+                }
+                header.Children.Add(new TextBlock { Text = (node.Port > 0 ? $"{node.Port:00} · " : "") + node.DisplayName, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
                 var item = new TreeViewItem { Header = header, Tag = node, IsExpanded = appliedQuery.Length > 0 || !collapsedTreeBranches.Contains(node.Id), ToolTip = $"{node.DisplayName}\n{NodeVisuals.Label(node)} · {node.Status}\n{pathLabels.GetValueOrDefault(node.Id)}\n{Issue(node)}" };
                 System.Windows.Automation.AutomationProperties.SetName(item, $"{node.DisplayName}, {NodeVisuals.Label(node)}" + (node.Port > 0 ? $", port {node.Port}" : ""));
                 item.Expanded += (_, e) => { if (!syncingTree && appliedQuery.Length == 0 && ReferenceEquals(e.OriginalSource, item)) collapsedTreeBranches.Remove(node.Id); };
@@ -92,10 +100,8 @@ public partial class MainWindow
     // Selects a tree node on the canvas, opening folded branches only when they hide it.
     private void ShowOnCanvas(UsbNode node)
     {
-        var path = FindPath(node.Id);
         bool redraw = false;
-        foreach (var ancestor in path.SkipLast(1)) redraw |= folded.Remove(ancestor.Id);
-        if (node.Kind == "Empty port" && path.SkipLast(1).LastOrDefault() is UsbNode hub && !ShowPorts(hub)) redraw |= expandedPorts.Add(hub.Id);
+        foreach (var ancestor in FindPath(node.Id).SkipLast(1)) redraw |= folded.Remove(ancestor.Id);
         if (redraw) Draw();
         SelectNode(snapshot.Nodes.FirstOrDefault(n => n.Id == node.Id) ?? node);
         RevealSelection(); Pulse(node);
@@ -110,5 +116,19 @@ public partial class MainWindow
         TreeSplitterColumn.Width = new GridLength(hide ? 0 : 5);
         TreePanel.Visibility = TreeSplitter.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
         TreeButton.Content = hide ? "Show tree" : "Hide tree";
+        UpdateLayout(); FitSidePanels();
     }
+
+    // A splitter beside the star-sized graph column honors only its own column's limits, so each
+    // side panel's maximum is whatever leaves the graph its minimum width beside the other panel.
+    private void FitSidePanels()
+    {
+        var graph = ((Grid)TreePanel.Parent).ColumnDefinitions[2];
+        double free = ((Grid)TreePanel.Parent).ActualWidth - TreeSplitterColumn.ActualWidth - SplitterColumn.ActualWidth - graph.MinWidth;
+        if (TreePanel.Visibility == Visibility.Visible) TreeColumn.MaxWidth = Math.Max(TreeColumn.MinWidth, free - InspectorColumn.ActualWidth);
+        if (InspectorPanel.Visibility == Visibility.Visible) InspectorColumn.MaxWidth = Math.Max(InspectorColumn.MinWidth, Math.Min(InspectorMaxWidth, free - TreeColumn.ActualWidth));
+    }
+    private const double InspectorMaxWidth = 520;
+    private void SidePanelsSizeChanged(object sender, SizeChangedEventArgs e) => FitSidePanels();
+    private void SplitterDragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e) => FitSidePanels();
 }

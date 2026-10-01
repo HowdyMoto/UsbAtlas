@@ -29,9 +29,15 @@ public partial class MainWindow
         Search.Text = target.Name; ApplySearch();
         Check(treeItems.ContainsKey(target.Id) && FindPath(target.Id).All(n => treeItems.ContainsKey(n.Id)), "Filtered tree lost matching device ancestry.");
         Search.Clear(); ApplySearch();
-        EmptyPorts.IsChecked = true; Draw();
-        Check(treeItems.Count == snapshot.Nodes.Count(), "Tree must include empty ports when enabled.");
-        EmptyPorts.IsChecked = false; collapsedTreeBranches.Clear(); treeSignature = ""; Draw();
+        var empties = snapshot.Nodes.Where(n => n.Kind == "Empty port").ToList();
+        Check(empties.All(n => !treeItems.ContainsKey(n.Id)), "Tree must list empty ports only for a search.");
+        if (empties.Count > 0)
+        {
+            Search.Text = empties[0].Name; ApplySearch();
+            Check(treeItems.ContainsKey(empties[0].Id), "Tree must list empty ports that match a search.");
+            Search.Clear(); ApplySearch();
+        }
+        collapsedTreeBranches.Clear(); treeSignature = ""; Draw();
         if (originalSelection != null) SelectNode(originalSelection);
     }
 
@@ -48,13 +54,14 @@ public partial class MainWindow
             // Enough rows to overflow the tree even in a 3840×1560 window.
             for (int i = 5; i <= 100; i++) hub.Children.Add(new UsbNode { Id = hub.Id + "/sync/" + i, Kind = "Device", Name = "Sync device " + i, Port = i });
             var first = hub.Children[0]; var last = hub.Children[^1];
+            last.Name = "Sync device 100 with an unusually long reported product name that must trim instead of widening the tree";
             selected = null; FitClick(this, new RoutedEventArgs()); UpdateLayout();
+            var scroller = (ScrollViewer)DeviceTree.Template.FindName("_tv_scrollviewer_", DeviceTree);
+            // Measure against the content host: the tree's padding sits between it and the scroller's edge.
+            var host = (FrameworkElement)scroller.Template.FindName("PART_ScrollContentPresenter", scroller);
             bool RowShown(UsbNode node)
             {
                 var row = (FrameworkElement)treeItems[node.Id].Template.FindName("Row", treeItems[node.Id]);
-                var scroller = (ScrollViewer)DeviceTree.Template.FindName("_tv_scrollviewer_", DeviceTree);
-                // Measure against the content host: the tree's padding sits between it and the scroller's edge.
-                var host = (FrameworkElement)scroller.Template.FindName("PART_ScrollContentPresenter", scroller);
                 var top = row.TranslatePoint(new Point(0, 0), host).Y;
                 return top >= -0.5 && top + row.ActualHeight <= host.ActualHeight + 0.5;
             }
@@ -74,6 +81,10 @@ public partial class MainWindow
             Check(DeviceTree.SelectedItem == treeItems[last.Id], "Canvas selection did not select the tree row.");
             Check(lastRow.Background == Brush("SelectionStrong") && lastRow.BorderBrush == Brush("Accent"), "Selected tree row is not highlighted.");
             Check(RowShown(last), "Canvas selection did not scroll its tree row into view.");
+            // Long names trim to the panel, so the tree never scrolls sideways and rows stay left-aligned.
+            var name = ((DockPanel)treeItems[last.Id].Header).Children.OfType<TextBlock>().Single();
+            Check(scroller.HorizontalOffset == 0 && scroller.ComputedHorizontalScrollBarVisibility != Visibility.Visible
+                && name.TranslatePoint(new Point(name.ActualWidth, 0), host).X <= host.ActualWidth + 0.5, "Long tree names must trim instead of scrolling the tree sideways.");
 
             // Tree to canvas: keeps the zoom, brings the card into view, and pulses it.
             SetZoom(0.6); ResetPan(); GraphScroll.ScrollToTop(); GraphScroll.ScrollToLeftEnd(); UpdateLayout();
@@ -93,6 +104,16 @@ public partial class MainWindow
             Search.Text = last.Name; ApplySearch(); selected = first; UpdateSelection();
             Check(DeviceTree.SelectedItem == null, "Tree kept a stale highlight for a filtered selection.");
             Search.Clear(); ApplySearch();
+
+            // Dragging the splitter widens the tree as far as the graph's minimum width allows.
+            var graphColumn = ((Grid)TreePanel.Parent).ColumnDefinitions[2];
+            double start = TreeColumn.ActualWidth, room = graphColumn.ActualWidth - graphColumn.MinWidth;
+            TreeSplitter.RaiseEvent(new System.Windows.Controls.Primitives.DragStartedEventArgs(0, 0));
+            TreeSplitter.RaiseEvent(new System.Windows.Controls.Primitives.DragDeltaEventArgs(700, 0));
+            TreeSplitter.RaiseEvent(new System.Windows.Controls.Primitives.DragCompletedEventArgs(700, 0, false));
+            UpdateLayout();
+            Check(Math.Abs(TreeColumn.ActualWidth - (start + Math.Min(700, room))) < 1, $"Tree panel widened to {TreeColumn.ActualWidth:0}px; expected {start + Math.Min(700, room):0}px.");
+            TreeColumn.Width = new GridLength(start); UpdateLayout();
         }
         finally
         {
@@ -201,6 +222,7 @@ public partial class MainWindow
 
     private void VerifyCrowdedRouting()
     {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         var savedSnapshot = snapshot;
         bool savedHorizontal = horizontalTree;
         double savedWidth = layoutWidth;
@@ -225,17 +247,43 @@ public partial class MainWindow
             chainRoot.Children.AddRange([outer, new UsbNode { Id = "second/root/3", Kind = "Device", Name = "Second device", Port = 3 }]);
             snapshot.Controllers.Add(new UsbNode { Id = "second", Kind = "Controller", Name = "Second controller", Children = [chainRoot] });
             foreach (bool horizontal in new[] { false, true })
-            foreach (bool empty in new[] { false, true })
             foreach (double width in new[] { 650.0, 1200.0, 2400.0, 4000.0 })
             {
-                horizontalTree = horizontal; EmptyPorts.IsChecked = empty; layoutWidth = width; Draw(); UpdateLayout();
+                horizontalTree = horizontal; layoutWidth = width; Draw(); UpdateLayout();
                 VerifyWireRouting();
+                var hosts = snapshot.Controllers.Select(c => cards[c.Id].Point).ToList();
+                Check(horizontal ? hosts.All(p => Math.Abs(p.X - hosts[0].X) < 0.01) : hosts.All(p => Math.Abs(p.Y - hosts[0].Y) < 0.01), "Host controllers must share one row (one column when horizontal), even when the graph is wider than the view.");
             }
         }
         finally
         {
-            snapshot = savedSnapshot; horizontalTree = savedHorizontal; layoutWidth = savedWidth; EmptyPorts.IsChecked = false; Draw();
+            snapshot = savedSnapshot; horizontalTree = savedHorizontal; layoutWidth = savedWidth; Draw();
         }
+    }
+
+    private static IEnumerable<DependencyObject> VisualDescendants(DependencyObject root)
+    {
+        yield return root;
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            foreach (var child in VisualDescendants(VisualTreeHelper.GetChild(root, i))) yield return child;
+    }
+
+    // Warning and error colors appear only as semibold text beside a status glyph, every issue on a
+    // card has its badge, and no role color can be mistaken for a status color.
+    private void VerifyStatusStyling()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        static bool IsGlyph(DependencyObject d) => d is FrameworkElement { Tag: NodeVisuals.StatusGlyphTag };
+        var status = new[] { Brush("Warning"), Brush("Error") };
+        var roots = cards.Values.Select(c => (DependencyObject)c.Card).Append(Details).Append(DeviceTree).Append(IssuesButton);
+        foreach (var text in roots.SelectMany(VisualDescendants).OfType<TextBlock>().Where(t => status.Contains(t.Foreground)))
+            Check(text.FontWeight == FontWeights.SemiBold && text.Parent is Panel row && row.Children.Cast<DependencyObject>().Any(IsGlyph),
+                $"\"{text.Text}\" uses a warning or error color without the status glyph and weight.");
+        foreach (var (id, item) in cards)
+            Check(VisualDescendants(item.Card).Count(IsGlyph) == Issues((UsbNode)item.Card.Tag).Count, $"Card {id} must show one status badge per issue.");
+        static double Distance(Brush a, Brush b) { var (x, y) = (((SolidColorBrush)a).Color, ((SolidColorBrush)b).Color); return Math.Sqrt(Math.Pow(x.R - y.R, 2) + Math.Pow(x.G - y.G, 2) + Math.Pow(x.B - y.B, 2)); }
+        foreach (var role in new[] { "HostRole", "HubRole", "DeviceRole", "UnknownRole" })
+            foreach (var severity in status) Check(Distance(Brush(role), severity) > 100, $"{role} is too close to a warning or error color.");
     }
 
     private void VerifyIdentityUi()
@@ -312,12 +360,13 @@ public partial class MainWindow
             snapshot = DemoData.Create();
             var hub = snapshot.Nodes.First(n => n.Kind == "Hub");
             hub.ScanIncomplete = true; hub.SpeedLimited = true;
+            snapshot.Nodes.First(n => n.Id == "demo/root/4").Kind = "Unavailable";
             for (int i = 5; i <= 33; i++) hub.Children.Add(new UsbNode { Id = hub.Id + "/" + i, Kind = "Empty port", Name = "Available port " + i, Port = i, Status = "Empty" });
             hub.PortCount = 33;
             hub.Name = "Long hub identity with several words and USB generation information";
             hub.NameSource = "USB ID lookup";
             hub.UserLabel = "Dell monitor KVM with a longer personal label";
-            selected = hub; EmptyPorts.IsChecked = true;
+            selected = hub;
             foreach (bool compact in new[] { true, false })
             foreach (bool horizontal in new[] { false, true })
             {
@@ -335,6 +384,11 @@ public partial class MainWindow
                         Check(horizontal ? cards[child.Id].Point.X >= bounds.Right + TopologyLayout.LevelGap : cards[child.Id].Point.Y >= bounds.Bottom + TopologyLayout.LevelGap, "Variable-height parent overlaps its children.");
                 }
                 Check(portSlots.Count == 31 && cards.Values.All(c => ((UsbNode)c.Card.Tag).Kind != "Empty port"), "Empty ports must render as slots, not full cards.");
+                int logicalPorts = snapshot.Nodes.Where(n => cards.ContainsKey(n.Id) && n.Kind is "Hub" or "Root hub").Sum(n => n.Children.Count);
+                Check(portSlots.Count + connectedPorts.Count == logicalPorts, "Every logical port must be drawn on its hub.");
+                Check(portSlots.Values.All(b => ((UIElement)b.Content).Opacity < 1) && connectedPorts.Values.All(b => ((UIElement)b.Content).Opacity == 1), "Empty ports must look unoccupied.");
+                ShowDetails(); UpdateIssues(); UpdateLayout();
+                VerifyStatusStyling();
                 foreach (var (id, slot) in portSlots.Concat(connectedPorts))
                 {
                     var edge = horizontal ? new Point(Canvas.GetLeft(slot) + slot.Width, Canvas.GetTop(slot) + slot.Height / 2)
@@ -344,7 +398,7 @@ public partial class MainWindow
                         Check((((PathGeometry)wire.Data).Figures[0].StartPoint - edge).Length < 0.01, "Connection must start at its own port graphic.");
                 }
             }
-            horizontalTree = false; CompactDensity.IsChecked = true; EmptyPorts.IsChecked = false; FitClick(this, new RoutedEventArgs());
+            horizontalTree = false; CompactDensity.IsChecked = true; FitClick(this, new RoutedEventArgs());
             var target = snapshot.Nodes.First(n => n.Kind == "Device");
             var originalCard = cards[target.Id].Card;
             SelectNode(target);
@@ -367,7 +421,7 @@ public partial class MainWindow
         }
         finally
         {
-            Search.Clear(); searchTimer.Stop(); folded.Clear(); expandedPorts.Clear(); EmptyPorts.IsChecked = false;
+            Search.Clear(); searchTimer.Stop(); folded.Clear();
             snapshot = savedSnapshot; selected = savedSelection; horizontalTree = savedHorizontal; CompactDensity.IsChecked = savedCompact;
             OrientationButton.Content = horizontalTree ? "Horizontal" : "Vertical";
             FitClick(this, new RoutedEventArgs()); ShowDetails(); UpdateIssues();

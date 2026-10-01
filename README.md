@@ -19,11 +19,13 @@ Download the Windows x64 portable ZIP from [GitHub Releases](https://github.com/
 
 ## Run
 
-Open `UsbAtlas.slnx` in Visual Studio, or run:
+To compile the current source and run it, without a release build or packaging, run this from the repository root:
 
 ```powershell
-dotnet run --project src/UsbAtlas
+.\run-dev.ps1
 ```
+
+Arguments are passed to the app, for example `.\run-dev.ps1 --demo --dark` for the sample topology in dark mode. `Get-Help .\run-dev.ps1` describes it. You can also open `UsbAtlas.slnx` in Visual Studio, or run `dotnet run --project src/UsbAtlas`.
 
 Requires Windows 10/11 and the .NET 10 Desktop Runtime (the SDK includes it). Build a portable framework-dependent folder with:
 
@@ -44,22 +46,21 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 | `src/UsbAtlas/` | Application source: C#, XAML, manifest, project file, and bundled `Assets/` (fonts, icon, USB ID database and their license files). |
 | `docs/` | Release notes. |
 | `artifacts/` | Generated and untracked: builds, publishes, release packages, previews, scans, and test results. `Directory.Build.props` routes all build output here. |
-| Root | This README, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `UsbAtlas.slnx`, and `Directory.Build.props`. |
+| Root | This README, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `run-dev.ps1` (compile and run), `UsbAtlas.slnx`, and `Directory.Build.props`. |
 
 ## Explore
 
-- Select a controller, hub, device, or numbered empty-port slot to inspect it. Copy details is available near the inspector heading.
-- The left device tree provides traditional expandable branches in port order. Selection stays synchronized with the graph and inspector. Selecting a tree entry brings its card into view at the current zoom and briefly rings it; clicking the selected entry again finds it after you have panned away. Selecting on the canvas highlights the entry in the tree and scrolls to it. Drag its divider to resize it, or use **Hide tree / Show tree** to collapse and restore the panel. Search and **Empty slots** apply to both views.
+- Select a controller, hub, device, or numbered port to inspect it. Copy details is available near the inspector heading.
+- The left device tree provides traditional expandable branches in port order. Selection stays synchronized with the graph and inspector. Selecting a tree entry brings its card into view at the current zoom and briefly rings it; clicking the selected entry again finds it after you have panned away. Selecting on the canvas highlights the entry in the tree and scrolls to it. Drag its divider to resize it, or use **Hide tree / Show tree** to collapse and restore the panel. Search applies to both views; the tree lists empty ports only when they match a search.
 - **Add your own label** in the inspector gives hardware a recognizable name, such as “Dell monitor KVM”. Save applies it to cards and search; Reset restores the detected name. The detected identity remains visible underneath.
 - Search names, VID:PID, manufacturers, serials, device types, logical paths, or issue labels such as “Reduced speed”. Matches are outlined and the first result is selected and revealed. Enter / Shift+Enter moves between results; Escape clears search. Ancestors remain visible for context.
 - Tab through cards and controls. Arrow keys on a card move between visible nodes; Enter or Space selects without rebuilding the graph.
 - Double-click a hub/controller, or use its +/− button, to fold a branch. Search temporarily reveals matching descendants without discarding folded state.
-- Expand a hub’s empty-port summary to inspect numbered slots, or enable **Empty slots** globally. Empty logical ports do not consume full device cards.
 - Use **Compact** for short host/root cards and denser device cards. Turn it off for more room within cards. Density is independent of zoom; readable mode stays at 100% on large displays.
 - Drag the inspector divider to resize it, or use **Hide inspector / Show inspector** to reclaim the graph area.
 - Pan by dragging empty canvas, or right/middle dragging anywhere. Mouse wheel zooms around the pointer. **Readable** reflows the graph at 100% and opens on the first host controller, **Overview** fits the graph, **Locate** centers the selection, and the zoom percentage resets to 100%.
 - **Vertical / Horizontal** changes tree direction and preserves selection and folded branches.
-- Hub port graphics sit along the bottom edge in Vertical mode and the right edge in Horizontal mode. Each device connection starts at its numbered port. Expand empty slots to include unused ports; large hubs grow along the port edge to keep each slot readable. Dashed graphics with a question mark indicate an unknown connector shape.
+- Every logical port appears as a numbered socket along the hub's bottom edge in Vertical mode and its right edge in Horizontal mode. Occupied sockets are outlined and carry a connection; empty ones are faded. Empty ports never take a full device card. USB 3 hubs often report two logical ports per physical socket (USB 2 and USB 3), so a hub can show more sockets than it has. Hubs with many ports grow along the port edge to keep each socket readable. Dashed graphics with a question mark indicate an unknown connector shape.
 - Connections never cross. A hub's devices sit in one row in port order, and their connections fan out from the ports, bending at most twice. When the window is too narrow, a hub with only end devices lists them as a staircase beside it, read top to bottom, with its ports gathered at the card's right end. Rows never wrap; if the graph is still wider than the window, scroll or use **Overview**.
 - The issue button lists reduced-speed links, incomplete scans, port failures and scan diagnostics. Select a hardware issue to reveal its node.
 - The graph, tree and inspector rescan automatically when Windows reports USB devices being connected or disconnected. Rescans wait for the burst of notifications to settle. The status bar names what was connected or disconnected, and newly connected devices briefly ring.
@@ -70,17 +71,20 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 
 Controllers and root buses have short headers; hubs and devices have compact cards with function icons. Cards show logical paths (`H01/root/04/02`), link rates, known USB-C sockets, and device-declared current where available. Hubs show occupied/total logical ports. Repeated hub names can be distinguished by their paths.
 
-Blue outlines identify selection and search matches; the selected upstream path is highlighted. Explicit warning text identifies reduced speed, incomplete enumeration and port errors. A scan failure does not imply a disconnected device, but its counts may be incomplete.
+Blue outlines identify selection and search matches; the selected upstream path is highlighted. Role colors label what a card is: slate for host hardware, violet for external hubs, teal for devices, gray when unknown.
+
+Warnings and errors look the same everywhere: a glyph, semibold text in their own color, usually on a tinted pill. Warnings (reduced speed, incomplete enumeration) are amber with a triangle; errors (a port Windows could not read) are red with a circle. The shapes differ so they read without color. No other text uses amber or red, and tree rows carry the same glyph. A scan failure does not imply a disconnected device, but its counts may be incomplete.
 
 Hub location is inferred from Windows port accessibility and topology, and labeled accordingly. A reported USB-C socket identifies the upstream receptacle, not the cable or device-end plug. Unknown connector shapes remain available in the inspector rather than repeating “Plug ?” on every card. Detection evidence and measurement caveats are expandable in the inspector.
 
 ## What the numbers mean
 
 **Identity:** specific USB product/manufacturer strings and Windows device names
-take priority over generic descriptions. Generic names fall back to the bundled
-offline USB ID database, with the source explicitly labeled. Community matches
-may identify an internal chip vendor rather than the retail brand. Detection
-details retain the original USB strings, Windows name and lookup results.
+take priority over generic descriptions. Devices that report only a generic name
+are named from the bundled offline USB ID database. Those entries usually name the
+maker of the chip inside (a hub in a Dell monitor may appear as Realtek), not the
+retail brand; **Add your own label** can rename it. Detection details record where
+each name came from, along with the original USB strings, Windows name and lookup results.
 
 **Saved labels:** stored in `%LOCALAPPDATA%/UsbAtlas/device-labels.json`. A unique
 VID/PID/serial identity follows a device between ports. Devices without a unique

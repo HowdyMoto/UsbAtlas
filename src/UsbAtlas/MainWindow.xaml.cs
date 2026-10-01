@@ -123,19 +123,22 @@ public partial class MainWindow : Window
     {
         Details.Children.Clear();
         if (selected is not UsbNode node) { Text("Select a device", 22); Text("Inspect a connection to see its link, power and path through your hardware.", 12, "TextMuted"); return; }
-        if (appliedQuery.Length > 0 && !Matches(node, appliedQuery)) Text("Selection is outside the search results.", 11, "Warning");
+        if (appliedQuery.Length > 0 && !Matches(node, appliedQuery)) Text("Selection is outside the search results.", 11, "TextMuted");
         if (!cards.ContainsKey(node.Id) && !portSlots.ContainsKey(node.Id)) Text("Selection is hidden by a collapsed branch or filter.", 11, "TextMuted");
         var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
         var symbol = NodeVisuals.Icon(node, 26); symbol.Margin = new Thickness(0, 0, 8, 0); DockPanel.SetDock(symbol, Dock.Left); heading.Children.Add(symbol);
         heading.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap }); Details.Children.Add(heading);
         if (node.UserLabel.Length > 0) Text("Detected: " + node.Name, 11, "TextSecondary");
-        if (node.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase)) Text(node.NameSource + " · component identity", 11, "TextSecondary");
-        Text(NodeVisuals.Label(node) + " · " + (node.ScanIncomplete ? "Scan incomplete" : node.Status), 11, node.ScanIncomplete || node.Kind == "Unavailable" ? "Warning" : "TextSecondary");
-        if (Issue(node).Length > 0)
+        Text(NodeVisuals.Label(node) + " · " + node.Status, 11, "TextSecondary");
+        var issues = Issues(node);
+        if (issues.Count > 0)
         {
-            Text("⚠ " + Issue(node), 12, "Warning");
-            if (node.SpeedLimited) Text("A faster link is supported. Check the upstream port, hub and cable.", 11, "Warning");
-            if (node.ScanIncomplete) Text("Enumeration is incomplete; counts may omit downstream devices. See Detection details.", 11, "Warning");
+            var badges = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
+            foreach (var (severity, text) in issues) { var badge = NodeVisuals.StatusBadge(severity, text); badge.Margin = new Thickness(0, 0, 4, 4); badges.Children.Add(badge); }
+            Details.Children.Add(badges);
+            if (node.Kind == "Unavailable") Text("Windows could not read this port. A device may still be connected.", 11, "TextSecondary");
+            if (node.SpeedLimited) Text("A faster link is supported. Check the upstream port, hub and cable.", 11, "TextSecondary");
+            if (node.ScanIncomplete) Text("Enumeration is incomplete; counts may omit downstream devices. See Detection details.", 11, "TextSecondary");
         }
         var copy = new Button { Content = "Copy details", Padding = new Thickness(8, 3, 8, 3), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 8) };
         copy.Click += (_, _) => { try { Clipboard.SetText(JsonSerializer.Serialize(node, new JsonSerializerOptions { WriteIndented = true })); StatusText.Text = "Device details copied."; } catch (Exception ex) { StatusText.Text = "Clipboard unavailable: " + ex.Message; } }; Details.Children.Add(copy);
@@ -197,7 +200,8 @@ public partial class MainWindow : Window
         if (node.WindowsManufacturer.Length > 0) notes.Add("Windows INF manufacturer: " + node.WindowsManufacturer + " (may identify the driver supplier).");
         if (node.LookupVendor.Length > 0) notes.Add("USB ID vendor: " + node.LookupVendor);
         if (node.LookupProduct.Length > 0) notes.Add("USB ID product: " + node.LookupProduct);
-        if (node.LookupVendor.Length > 0) notes.Add("Community USB ID matches may identify an internal chip rather than the retail brand or enclosure.");
+        if (node.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase)) notes.Add("This device doesn't report its own product name, so its name comes from the public USB ID database. That usually names the maker of the chip inside, such as Realtek, rather than the brand of the hub, dock or monitor. Use Add your own label to name it yourself.");
+        else if (node.LookupVendor.Length > 0) notes.Add("USB ID database entries usually name the maker of the chip inside rather than the retail brand.");
         if (host) notes.Add("Port support summarizes reported logical-port capabilities, including empty ports. USB revision and a single negotiated upstream link do not apply to this host summary.");
         if (node.Kind is "Controller" or "Root hub" or "Hub" or "Empty port") notes.Add("Supply capacity, USB-C charging limits and Power Delivery contracts are not queried. Device-declared draw is not the hub's available supply.");
         if (node.Kind == "Device") notes.Add(node.TypeEvidence);
@@ -267,7 +271,6 @@ public partial class MainWindow : Window
     private async void RefreshClick(object sender, RoutedEventArgs e) => await Refresh();
     private async void DemoClick(object sender, RoutedEventArgs e) { demo = !demo; folded.Clear(); fitNext = true; await Refresh(); }
     private void SearchChanged(object sender, TextChangedEventArgs e) { searchTimer.Stop(); searchTimer.Start(); }
-    private void FilterClick(object sender, RoutedEventArgs e) { Draw(); ShowDetails(); }
     private void SetZoom(double value) { readableView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; ZoomLabel.Text = $"{value:P0}"; }
     private void ZoomIn(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX * 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
     private void ZoomOut(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX / 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
