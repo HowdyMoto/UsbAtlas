@@ -1,23 +1,17 @@
-# Build outputs and local development state
+# Generated output: builds, publishes, release packages, previews, scans and scratch files
+artifacts/
 bin/
 obj/
-dist/
-tmp/
 .vs/
 *.user
 *.suo
 
-# Hardware snapshots and generated previews (may contain device identifiers)
+# Hardware snapshots and generated previews written to the launch folder (may contain device identifiers)
 /scan*.json
 /usb-atlas-*.json
 /preview*.png
 /ui-test.txt
 /self-test.txt
-
-# Downloaded source archives and local recovery notes
-/geist-font.zip
-/geist-release.json
-/RECOVERY.md
 
 # Local credentials
 .env

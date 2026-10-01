@@ -31,7 +31,8 @@
      <Button Content="Readable" Click="FitClick" Padding="10,3" Margin="8,0,0,0"/>
      <Button Content="Overview" Click="OverviewClick" Padding="10,3" Margin="8,0,0,0"/>
     </StackPanel>
-    <Grid Width="220" DockPanel.Dock="Left" Margin="0,0,16,0">
+    <Button x:Name="TreeButton" Content="Hide tree" Click="TreePanelClick" DockPanel.Dock="Left" Padding="8,3" Margin="0,0,10,0" ToolTip="Show or hide the device tree"/>
+    <Grid Width="190" DockPanel.Dock="Left" Margin="0,0,16,0">
      <TextBox x:Name="Search" TextChanged="SearchChanged" KeyDown="SearchKeyDown" ToolTip="Search names, IDs, serials, types, paths or issues. Enter: next; Shift+Enter: previous; Escape: clear." Padding="9,5" AutomationProperties.Name="Search devices"/>
      <TextBlock Text="Find a device…" Foreground="{DynamicResource TextMuted}" Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=Search}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
     </Grid>
@@ -39,8 +40,43 @@
    </DockPanel>
   </Border>
   <Grid Grid.Row="2">
-   <Grid.ColumnDefinitions><ColumnDefinition MinWidth="390"/><ColumnDefinition x:Name="SplitterColumn" Width="5"/><ColumnDefinition x:Name="InspectorColumn" Width="310" MinWidth="260" MaxWidth="520"/></Grid.ColumnDefinitions>
-   <Grid Background="{DynamicResource CanvasSurface}">
+   <Grid.ColumnDefinitions><ColumnDefinition x:Name="TreeColumn" Width="240" MinWidth="180" MaxWidth="420"/><ColumnDefinition x:Name="TreeSplitterColumn" Width="5"/><ColumnDefinition MinWidth="390"/><ColumnDefinition x:Name="SplitterColumn" Width="5"/><ColumnDefinition x:Name="InspectorColumn" Width="310" MinWidth="260" MaxWidth="520"/></Grid.ColumnDefinitions>
+   <Border x:Name="TreePanel" Background="{DynamicResource Surface}">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition/></Grid.RowDefinitions>
+     <Border BorderBrush="{DynamicResource Divider}" BorderThickness="0,0,0,1" Padding="12,0"><TextBlock Text="DEVICES" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></Border>
+     <TreeView x:Name="DeviceTree" Grid.Row="1" SelectedItemChanged="DeviceTreeSelectionChanged" PreviewMouseLeftButtonDown="DeviceTreeMouseDown" Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}" BorderThickness="0" Padding="6,8" ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="USB device tree">
+      <TreeView.Resources>
+       <Style TargetType="TreeViewItem">
+        <Setter Property="Padding" Value="2,3,8,3"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TreeViewItem">
+         <StackPanel>
+          <Border x:Name="Row" Background="Transparent" BorderBrush="Transparent" BorderThickness="3,0,0,0" CornerRadius="3" Padding="{TemplateBinding Padding}">
+           <DockPanel>
+            <ToggleButton x:Name="Expander" DockPanel.Dock="Left" Width="16" Height="16" Margin="0,0,3,0" Focusable="False" ClickMode="Press" Cursor="Hand" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}">
+             <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+              <Border Background="Transparent"><Path x:Name="Chevron" Data="M0,0 L4,4 L0,8" Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5"/></Border>
+              <ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Chevron" Property="RenderTransform"><Setter.Value><RotateTransform Angle="90"/></Setter.Value></Setter></Trigger></ControlTemplate.Triggers>
+             </ControlTemplate></ToggleButton.Template>
+            </ToggleButton>
+            <ContentPresenter x:Name="PART_Header" ContentSource="Header" VerticalAlignment="Center"/>
+           </DockPanel>
+          </Border>
+          <ItemsPresenter x:Name="ItemsHost" Margin="12,0,0,0"/>
+         </StackPanel>
+         <ControlTemplate.Triggers>
+          <Trigger Property="IsExpanded" Value="False"><Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed"/></Trigger>
+          <Trigger Property="HasItems" Value="False"><Setter TargetName="Expander" Property="Visibility" Value="Hidden"/></Trigger>
+          <Trigger SourceName="Row" Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource SelectionStrong}"/><Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource Accent}"/><Setter TargetName="PART_Header" Property="TextElement.FontWeight" Value="SemiBold"/></Trigger>
+         </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
+       </Style>
+      </TreeView.Resources>
+     </TreeView>
+    </Grid>
+   </Border>
+   <GridSplitter x:Name="TreeSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext"/>
+   <Grid Grid.Column="2" Background="{DynamicResource CanvasSurface}">
     <Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition/><RowDefinition Height="26"/></Grid.RowDefinitions>
     <DockPanel Margin="16,0">
      <TextBlock Text="TOPOLOGY" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
@@ -59,8 +95,8 @@
     <TextBlock Grid.Row="1" x:Name="EmptyMessage" Text="Reading your USB connections…" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="14" IsHitTestVisible="False"/>
     <TextBlock Grid.Row="2" Text="Drag to pan · Scroll to zoom · Tab / arrows to navigate" Margin="16,0" FontSize="11" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
    </Grid>
-   <GridSplitter x:Name="InspectorSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext"/>
-   <Border x:Name="InspectorPanel" Grid.Column="2" Background="{DynamicResource Surface}">
+   <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext"/>
+   <Border x:Name="InspectorPanel" Grid.Column="4" Background="{DynamicResource Surface}">
     <Grid><Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition/></Grid.RowDefinitions>
      <Border BorderBrush="{DynamicResource Divider}" BorderThickness="0,0,0,1" Padding="14,0"><TextBlock Text="INSPECTOR" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></Border>
      <ScrollViewer x:Name="DetailsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="Details" Margin="14,12,14,16"/></ScrollViewer>

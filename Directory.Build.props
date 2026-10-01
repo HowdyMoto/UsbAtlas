@@ -1,0 +1,6 @@
+<Project>
+  <!-- Keep all build, test and publish output out of the source tree: artifacts/{bin,obj,publish}/<project>/<config>. -->
+  <PropertyGroup>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
+  </PropertyGroup>
+</Project>

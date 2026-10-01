@@ -16,7 +16,12 @@ public partial class MainWindow
     private readonly HashSet<string> visibleIds = [];
     private readonly Dictionary<string, string> pathLabels = [];
     private readonly Dictionary<string, System.Windows.Shapes.Path> wires = [];
+    private readonly Dictionary<string, List<Point>> wireRoutes = [];
     private readonly Dictionary<string, Button> portSlots = [];
+    private readonly Dictionary<string, Button> connectedPorts = [];
+    private readonly Dictionary<string, Point> portAnchors = [];
+    private readonly Dictionary<string, List<UsbNode>> edgePortCache = [];
+    private readonly HashSet<string> stackedHubs = [], stackableHubs = [];
     private List<UsbNode> matches = [];
     private readonly DispatcherTimer searchTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private string appliedQuery = "";
@@ -24,21 +29,41 @@ public partial class MainWindow
     private static string Issue(UsbNode n) => string.Join(" · ", new[] { n.ScanIncomplete ? "Scan incomplete" : null, n.Kind == "Unavailable" ? "Port error" : null, n.SpeedLimited ? "Reduced speed" : null }.Where(x => x != null));
     private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
     private bool Visible(UsbNode n) => visibleIds.Contains(n.Id);
-    private List<UsbNode> Children(UsbNode n) => folded.Contains(n.Id) && appliedQuery.Length == 0 ? [] : n.Children.Where(c => c.Kind != "Empty port" && Visible(c)).ToList();
+    private List<UsbNode> Children(UsbNode n) => folded.Contains(n.Id) && appliedQuery.Length == 0 ? [] : n.Children.Where(c => c.Kind != "Empty port" && Visible(c)).OrderBy(c => c.Port).ToList();
     private bool ShowPorts(UsbNode n) => EmptyPorts.IsChecked == true || expandedPorts.Contains(n.Id) || appliedQuery.Length > 0 && n.Children.Any(c => c.Kind == "Empty port" && Matches(c, appliedQuery));
+    // Cached per drawing pass; layout queries each hub's ports many times while choosing staircases.
+    private List<UsbNode> EdgePorts(UsbNode n)
+    {
+        if (edgePortCache.TryGetValue(n.Id, out var ports)) return ports;
+        return edgePortCache[n.Id] = n.Kind is "Hub" or "Root hub"
+            ? n.Children.Where(c => c.Kind != "Empty port" || ShowPorts(n)).OrderBy(c => c.Port).ToList() : [];
+    }
+    // Ports spread evenly along the edge; a staircase gathers them at the card's right end
+    // so its column of devices can tuck under the card.
+    private double? PortOffset(UsbNode parent, UsbNode child)
+    {
+        var ports = EdgePorts(parent);
+        int i = ports.FindIndex(p => p.Id == child.Id);
+        if (i < 0) return null;
+        double edge = horizontalTree ? HeightFor(parent) : WidthFor(parent);
+        return stackedHubs.Contains(parent.Id) ? edge - 30 - (ports.Count - 1 - i) * 38 : edge * (i + 0.5) / ports.Count;
+    }
+    private double WidthFor(UsbNode n) => horizontalTree ? CardWidth + (EdgePorts(n).Count > 0 ? 44 : 0) : Math.Max(CardWidth, EdgePorts(n).Count * 38 + 24);
     private double HeightFor(UsbNode n)
     {
         double height = n.Kind is "Controller" or "Root hub" ? (Compact ? 84 : 100) : Compact ? CardHeight : 138;
         if (n.UserLabel.Length > 0 || n.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase)) height += 18;
         if (Issue(n).Length > 0) height += 22;
         int empty = n.Children.Count(c => c.Kind == "Empty port");
-        if (empty > 0) height += 24 + (ShowPorts(n) ? Math.Ceiling(empty / 8.0) * 27 : 0);
+        if (empty > 0) height += 24;
+        int ports = EdgePorts(n).Count;
+        if (ports > 0) height = horizontalTree ? Math.Max(height, ports * 30 + 16) : height + 44;
         return height;
     }
     private void PrepareGraph()
     {
         appliedQuery = Search.Text.Trim();
-        pathLabels.Clear(); visibleIds.Clear(); matches.Clear();
+        pathLabels.Clear(); visibleIds.Clear(); matches.Clear(); edgePortCache.Clear();
         void Visit(UsbNode n, string path)
         {
             pathLabels[n.Id] = path;
@@ -58,26 +83,22 @@ public partial class MainWindow
         for (var hit = Keyboard.FocusedElement as DependencyObject; hit != null; hit = hit is Visual ? VisualTreeHelper.GetParent(hit) : LogicalTreeHelper.GetParent(hit))
             if (hit is FrameworkElement { Tag: UsbNode n }) { focusId = n.Id; break; }
         PrepareGraph();
-        Graph.Children.Clear(); cards.Clear(); wires.Clear(); portSlots.Clear();
+        UpdateDeviceTree();
+        Graph.Children.Clear(); cards.Clear(); wires.Clear(); wireRoutes.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear();
         var roots = snapshot.Controllers.Where(Visible).ToList();
         const double margin = 16, controllerGap = 24;
-        int columns = horizontalTree ? 1 : Math.Min(Math.Max(1, roots.Count), Math.Max(1, (int)(layoutWidth / 650)));
-        double budget = Math.Max(CardWidth, (layoutWidth - margin * 2 - controllerGap * (columns - 1)) / columns);
-        if (horizontalTree) budget = Math.Max(CardHeight + 40, (GraphScroll.ActualHeight - 48 * Math.Max(1, roots.Count)) / Math.Max(1, roots.Count));
-        var layouts = roots.Select(r => TopologyLayout.Measure(r, budget, Children, horizontalTree, HeightFor)).ToList();
-        double top = 12, maxRight = 0;
-        for (int start = 0; start < layouts.Count; start += columns)
+        var layouts = ArrangeLayouts(roots, layoutWidth - margin * 2, controllerGap);
+        // Controllers flow left to right and wrap only as whole trees; horizontal trees stack.
+        double top = 12, left = margin, rowHeight = 0, maxRight = 0;
+        foreach (var tree in layouts)
         {
-            var row = layouts.Skip(start).Take(columns).ToList();
-            double left = margin;
-            foreach (var tree in row)
-            {
-                Place(tree, left, top, null, horizontalTree ? top + 5 : left + 5);
-                left += tree.Width + controllerGap;
-            }
+            if (left > margin && (horizontalTree || left + tree.Width > layoutWidth - margin)) { top += rowHeight + 36; left = margin; rowHeight = 0; }
+            Place(tree, left, top);
+            left += tree.Width + controllerGap;
+            rowHeight = Math.Max(rowHeight, tree.Height);
             maxRight = Math.Max(maxRight, left - controllerGap + margin);
-            top += row.Max(n => n.Height) + 36;
         }
+        top += rowHeight + 36;
         Graph.Width = Math.Max(CardWidth + margin * 2, maxRight);
         Graph.Height = Math.Max(200, top);
         EmptyMessage.Text = snapshot.Controllers.Count == 0 ? "No USB controllers found. Try Refresh or Sample." : "No matching devices. Press Escape to clear search.";
@@ -90,36 +111,46 @@ public partial class MainWindow
             else if (selected != null && cards.TryGetValue(selected.Id, out item)) item.Card.Focus();
         }
     }
-    private void Place(TopologyLayout.Item layout, double left, double y, Rect? parent, double trunk)
+    // Readable layouts never wrap a hub's children. While the graph is wider than the view,
+    // groups of end devices become staircases, each time picking the one that saves the most.
+    private List<TopologyLayout.Item> ArrangeLayouts(List<UsbNode> roots, double available, double gap)
+    {
+        stackedHubs.Clear(); stackableHubs.Clear();
+        List<TopologyLayout.Item> Measure() => roots.Select(r => TopologyLayout.Measure(r, Children, horizontalTree, WidthFor, HeightFor, PortOffset, stackedHubs)).ToList();
+        var layouts = Measure();
+        if (horizontalTree) return layouts;
+        static IEnumerable<TopologyLayout.Item> Flatten(TopologyLayout.Item item) => item.Children.SelectMany(Flatten).Prepend(item);
+        stackableHubs.UnionWith(layouts.SelectMany(Flatten).Where(i => TopologyLayout.CanStack(i.Node, Children, PortOffset)).Select(i => i.Node.Id));
+        void Shrink(Func<List<TopologyLayout.Item>, double> extent)
+        {
+            while (extent(layouts) > available)
+            {
+                var options = stackableHubs.Where(id => !stackedHubs.Contains(id)).ToList();
+                if (options.Count == 0) return;
+                var best = options.Select(id =>
+                {
+                    stackedHubs.Add(id); var trial = Measure(); stackedHubs.Remove(id);
+                    return (Id: id, Layouts: trial, Extent: extent(trial));
+                }).ToList().MinBy(t => t.Extent);
+                if (best.Extent >= extent(layouts) - 0.5) return;
+                stackedHubs.Add(best.Id); layouts = best.Layouts;
+            }
+        }
+        Shrink(all => all.Sum(t => t.Width) + gap * (all.Count - 1));
+        if (layouts.Count > 1 && layouts.Sum(t => t.Width) + gap * (layouts.Count - 1) > available)
+        {
+            // The controllers will wrap anyway, so stack only inside trees too wide on their own.
+            stackedHubs.Clear(); layouts = Measure();
+            Shrink(all => all.Max(t => t.Width));
+        }
+        return layouts;
+    }
+    private void Place(TopologyLayout.Item layout, double left, double top)
     {
         var node = layout.Node;
-        var baseY = y;
-        double height = HeightFor(node);
-        double x = horizontalTree ? left : left + (layout.Width - CardWidth) / 2;
-        if (horizontalTree) y += (layout.Height - height) / 2;
-        var bounds = new Rect(x, y, CardWidth, height);
-        if (parent is Rect p)
-        {
-            Point Orient(double cross, double along) => horizontalTree ? new Point(along, cross) : new Point(cross, along);
-            double pc = horizontalTree ? p.Y + p.Height / 2 : p.X + p.Width / 2;
-            double pe = horizontalTree ? p.Right : p.Bottom;
-            double cc = horizontalTree ? y + height / 2 : x + CardWidth / 2;
-            double cs = horizontalTree ? x : y;
-            double bus = cs - 14;
-            var fig = new PathFigure { StartPoint = Orient(pc, pe) };
-            fig.Segments.Add(new LineSegment(Orient(pc, pe + 10), true));
-            if (cs > pe + TopologyLayout.LevelGap + 1)
-            {
-                fig.Segments.Add(new LineSegment(Orient(trunk, pe + 10), true));
-                fig.Segments.Add(new LineSegment(Orient(trunk, bus), true));
-            }
-            else fig.Segments.Add(new LineSegment(Orient(pc, bus), true));
-            fig.Segments.Add(new LineSegment(Orient(cc, bus), true));
-            fig.Segments.Add(new LineSegment(Orient(cc, cs), true));
-            var geometry = new PathGeometry(); geometry.Figures.Add(fig);
-            var wire = new System.Windows.Shapes.Path { Data = geometry, Stroke = Brush("Wire"), StrokeThickness = 1.5, IsHitTestVisible = false };
-            Graph.Children.Add(wire); wires[node.Id] = wire;
-        }
+        double height = HeightFor(node), width = WidthFor(node);
+        double x = left + layout.CardX, y = top + layout.CardY;
+        var bounds = new Rect(x, y, width, height);
         bool host = node.Kind is "Controller" or "Root hub";
         var panel = new StackPanel();
         var header = new DockPanel { Margin = new Thickness(0, 0, 0, 3) };
@@ -151,19 +182,10 @@ public partial class MainWindow
             var toggle = new Button { Content = $"{(ShowPorts(node) ? "−" : "+")} {empties.Count} empty logical ports · {occupancy}", Padding = new Thickness(3, 1, 3, 1), FontSize = 11, Margin = new Thickness(0, 3, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, ToolTip = "Expand numbered empty-port slots" };
             toggle.Click += (_, e) => { if (EmptyPorts.IsChecked == true) { EmptyPorts.IsChecked = false; foreach (var hub in snapshot.Nodes.Where(n => n.Children.Any(c => c.Kind == "Empty port"))) expandedPorts.Add(hub.Id); } if (!expandedPorts.Add(node.Id)) expandedPorts.Remove(node.Id); Draw(); ShowDetails(); e.Handled = true; };
             panel.Children.Add(toggle);
-            if (ShowPorts(node))
-            {
-                var slots = new WrapPanel { Width = 264, Margin = new Thickness(0, 3, 0, 0) };
-                foreach (var empty in empties)
-                {
-                    var button = new Button { Content = empty.Port.ToString("00"), Tag = empty, Width = 30, Height = 24, Padding = new Thickness(0), Margin = new Thickness(0, 0, 3, 3), FontSize = 11, ToolTip = $"Empty logical port {empty.Port} · select for protocols and connector" };
-                    button.Click += (_, e) => { SelectNode(empty); e.Handled = true; };
-                    slots.Children.Add(button); portSlots[empty.Id] = button;
-                }
-                panel.Children.Add(slots);
-            }
         }
-        var card = new Border { Width = CardWidth, Height = height, Padding = new Thickness(11, 7, 11, 7), CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush("Surface"), BorderBrush = Brush("Border"), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.Name + "\n" + metric + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
+        var edgePorts = EdgePorts(node);
+        var padding = edgePorts.Count == 0 ? new Thickness(11, 7, 11, 7) : horizontalTree ? new Thickness(11, 7, 55, 7) : new Thickness(11, 7, 11, 51);
+        var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush("Surface"), BorderBrush = Brush("Border"), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.Name + "\n" + metric + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
         System.Windows.Automation.AutomationProperties.SetName(card, node.DisplayName + ", " + NodeVisuals.Label(node) + ", " + metric + ", " + Issue(node));
         card.MouseLeftButtonDown += (_, e) => { card.Focus(); SelectNode(node); if (e.ClickCount == 2 && node.Children.Count > 0 && appliedQuery.Length == 0) { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); } e.Handled = true; };
         card.KeyDown += (_, e) =>
@@ -180,17 +202,100 @@ public partial class MainWindow
         card.GotKeyboardFocus += (_, _) => card.BorderBrush = Brush("Accent");
         card.LostKeyboardFocus += (_, _) => UpdateSelection();
         Canvas.SetLeft(card, x); Canvas.SetTop(card, y); Panel.SetZIndex(card, 1); Graph.Children.Add(card); cards[node.Id] = (card, bounds.TopLeft);
-        foreach (var child in layout.Children) Place(child, left + child.X, baseY + child.Y, bounds, horizontalTree ? baseY + 5 : left + 5);
+        for (int i = 0; i < edgePorts.Count; i++)
+        {
+            var port = edgePorts[i];
+            double cross = (horizontalTree ? y : x) + PortOffset(node, port)!.Value;
+            var graphic = NodeVisuals.PortGraphic(port);
+            var content = new StackPanel { Orientation = horizontalTree ? Orientation.Horizontal : Orientation.Vertical };
+            content.Children.Add(new TextBlock { Text = port.Port.ToString("00"), FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
+            if (horizontalTree) graphic.LayoutTransform = new RotateTransform(90);
+            content.Children.Add(graphic);
+            var button = new Button { Content = content, Tag = port, Width = horizontalTree ? 40 : 34, Height = horizontalTree ? 26 : 38, Padding = new Thickness(0), ToolTip = $"Logical port {port.Port} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{(port.PortConnectorIsTypeC == true ? "USB-C receptacle reported by Windows" : "Connector shape unknown")}" };
+            System.Windows.Automation.AutomationProperties.SetName(button, $"Port {port.Port}, {port.DisplayName}");
+            button.Click += (_, e) => { SelectNode(port); e.Handled = true; };
+            Canvas.SetLeft(button, horizontalTree ? bounds.Right - button.Width : cross - button.Width / 2);
+            Canvas.SetTop(button, horizontalTree ? cross - button.Height / 2 : bounds.Bottom - button.Height);
+            Panel.SetZIndex(button, 2); Graph.Children.Add(button);
+            (port.Kind == "Empty port" ? portSlots : connectedPorts)[port.Id] = button;
+            portAnchors[port.Id] = horizontalTree ? new Point(bounds.Right, cross) : new Point(cross, bounds.Bottom);
+        }
+        var children = layout.Children;
+        var childCards = children.Select(c => new Rect(left + c.X + c.CardX, top + c.Y + c.CardY, WidthFor(c.Node), HeightFor(c.Node))).ToList();
+        var anchors = children.Select(c => portAnchors.TryGetValue(c.Node.Id, out var anchor) ? anchor : (Point?)null).ToList();
+        var routes = TopologyLayout.Route(bounds, anchors, childCards, layout.Stacked, horizontalTree);
+        for (int i = 0; i < children.Count; i++)
+        {
+            AddWire(children[i].Node.Id, routes[i]);
+            Place(children[i], left + children[i].X, top + children[i].Y);
+        }
+    }
+    private void AddWire(string id, List<Point> route)
+    {
+        var wire = new System.Windows.Shapes.Path { Data = RoundedRoute(route, 6), Stroke = Brush("Wire"), StrokeThickness = 1.5, IsHitTestVisible = false };
+        Graph.Children.Add(wire); wires[id] = wire; wireRoutes[id] = route;
+    }
+    // Softened corners make orthogonal routes read as cables.
+    private static PathGeometry RoundedRoute(List<Point> route, double radius)
+    {
+        var figure = new PathFigure { StartPoint = route[0] };
+        for (int i = 1; i < route.Count - 1; i++)
+        {
+            Vector incoming = route[i] - route[i - 1], outgoing = route[i + 1] - route[i];
+            double r = Math.Min(radius, Math.Min(incoming.Length, outgoing.Length) / 2);
+            if (r < 0.5) { figure.Segments.Add(new LineSegment(route[i], true)); continue; }
+            incoming.Normalize(); outgoing.Normalize();
+            figure.Segments.Add(new LineSegment(route[i] - incoming * r, true));
+            figure.Segments.Add(new QuadraticBezierSegment(route[i], route[i] + outgoing * r, true));
+        }
+        figure.Segments.Add(new LineSegment(route[^1], true));
+        var geometry = new PathGeometry(); geometry.Figures.Add(figure);
+        return geometry;
     }
     private void SelectNode(UsbNode node)
     {
         bool changed = selected?.Id != node.Id;
         selected = snapshot.Nodes.FirstOrDefault(n => n.Id == node.Id) ?? node;
-        UpdateSelection(); ShowDetails();
+        UpdateSelection(revealInTree: true); ShowDetails();
         if (changed) DetailsScroll.ScrollToTop();
     }
-    private void UpdateSelection()
+    private Rect? GraphBounds(UsbNode node)
     {
+        if (portSlots.TryGetValue(node.Id, out var slot)) return new Rect(Canvas.GetLeft(slot), Canvas.GetTop(slot), slot.Width, slot.Height);
+        return cards.TryGetValue(node.Id, out var item) ? new Rect(item.Point, new Size(item.Card.Width, item.Card.Height)) : null;
+    }
+    // Brings the selection into view at the current zoom, moving only when it is not fully visible.
+    private void RevealSelection()
+    {
+        if (selected == null || GraphBounds(selected) is not Rect area) return;
+        GraphScroll.UpdateLayout();
+        var shown = new Rect(Graph.TranslatePoint(area.TopLeft, GraphScroll), Graph.TranslatePoint(area.BottomRight, GraphScroll));
+        var view = new Rect(0, 0, GraphScroll.ViewportWidth, GraphScroll.ViewportHeight);
+        if (view.Contains(shown)) return;
+        var delta = new Vector(shown.X + shown.Width / 2 - view.Width / 2, shown.Y + shown.Height / 2 - view.Height / 2);
+        double h = Math.Clamp(GraphScroll.HorizontalOffset + delta.X, 0, GraphScroll.ScrollableWidth);
+        double v = Math.Clamp(GraphScroll.VerticalOffset + delta.Y, 0, GraphScroll.ScrollableHeight);
+        // Scroll as far as the content allows, then pan for the remainder.
+        delta -= new Vector(h - GraphScroll.HorizontalOffset, v - GraphScroll.VerticalOffset);
+        GraphScroll.ScrollToHorizontalOffset(h); GraphScroll.ScrollToVerticalOffset(v);
+        PanTransform.X -= delta.X; PanTransform.Y -= delta.Y;
+        GraphScroll.UpdateLayout();
+    }
+    // A fading ring draws the eye to a card revealed from the tree or a newly connected device.
+    private void Pulse(UsbNode node, double seconds = 0.9)
+    {
+        if (GraphBounds(node) is not Rect area) return;
+        area.Inflate(6, 6);
+        var ring = new Border { Width = area.Width, Height = area.Height, CornerRadius = new CornerRadius(10), BorderBrush = Brush("Accent"), BorderThickness = new Thickness(3), IsHitTestVisible = false };
+        Canvas.SetLeft(ring, area.X); Canvas.SetTop(ring, area.Y); Panel.SetZIndex(ring, 3);
+        Graph.Children.Add(ring);
+        var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0, TimeSpan.FromSeconds(seconds)) { BeginTime = TimeSpan.FromMilliseconds(200), EasingFunction = new System.Windows.Media.Animation.QuadraticEase() };
+        fade.Completed += (_, _) => Graph.Children.Remove(ring);
+        ring.BeginAnimation(OpacityProperty, fade);
+    }
+    private void UpdateSelection(bool revealInTree = false)
+    {
+        SyncTreeSelection(revealInTree);
         var chain = FindPath(selected?.Id ?? "").Select(n => n.Id).ToHashSet();
         foreach (var (id, item) in cards)
         {
@@ -199,8 +304,12 @@ public partial class MainWindow
             item.Card.BorderBrush = Brush(id == selected?.Id || item.Card.IsKeyboardFocusWithin || match ? "Accent" : "Border");
             item.Card.BorderThickness = new Thickness(id == selected?.Id || match ? 2 : 1);
         }
-        foreach (var (id, wire) in wires) wire.Stroke = Brush(chain.Contains(id) ? "Accent" : "Wire");
-        foreach (var (id, slot) in portSlots)
+        foreach (var (id, wire) in wires)
+        {
+            bool upstream = chain.Contains(id);
+            wire.Stroke = Brush(upstream ? "Accent" : "Wire"); wire.StrokeThickness = upstream ? 2.25 : 1.5;
+        }
+        foreach (var (id, slot) in portSlots.Concat(connectedPorts))
         {
             slot.Background = Brush(id == selected?.Id ? "Selection" : "Surface");
             slot.BorderBrush = Brush(id == selected?.Id || appliedQuery.Length > 0 && Matches((UsbNode)slot.Tag, appliedQuery) ? "Accent" : "Border");

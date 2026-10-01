@@ -38,13 +38,14 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { VerifyUi(); VerifyCompactUi(); VerifyIdentityUi(); await VerifyRefreshUi(); File.WriteAllText("ui-test.txt", "UI checks passed: layout, filtering, folding, focus, fit, compact/comfortable density, empty slots, search navigation, issues, inspector, saved labels, host capabilities, selection reuse and refresh feedback."); }
+                try { VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, compact/comfortable density, empty slots, search navigation, issues, inspector, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
         };
         timer.Tick += async (_, _) => { if (AutoRefresh.IsChecked == true && !demo && !busy) await Refresh(); };
         searchTimer.Tick += (_, _) => ApplySearch();
+        SourceInitialized += (_, _) => WatchDevices();
         timer.Start(); Closed += (_, _) => { timer.Stop(); searchTimer.Stop(); };
     }
     private async Task Refresh()
@@ -59,6 +60,7 @@ public partial class MainWindow : Window
             await Dispatcher.Yield(DispatcherPriority.Background);
             var next = demo ? DemoData.Create() : await Task.Run(() => new UsbScanner().Scan());
             deviceLabels.Apply(next);
+            var before = snapshot.Controllers.Count > 0 && snapshot.IsDemo == next.IsDemo ? Occupants(snapshot) : null;
             var id = selected?.Id;
             bool changed = JsonSerializer.Serialize(snapshot.Controllers) != JsonSerializer.Serialize(next.Controllers) || !snapshot.Diagnostics.SequenceEqual(next.Diagnostics);
             snapshot = next;
@@ -73,9 +75,14 @@ public partial class MainWindow : Window
             if (deviceLabels.LoadError != null) StatusText.Text += " · Saved labels unavailable";
             if (changed) { Draw(); ShowDetails(); }
             if (fitNext) { GraphScroll.UpdateLayout(); FitClick(this, new RoutedEventArgs()); fitNext = false; }
+            if (before != null) ReportConnections(before, Occupants(snapshot));
         }
         catch (Exception ex) { StatusText.Text = "Scan failed: " + ex.Message; EmptyMessage.Text = "Could not read USB devices. See status below; refresh to retry."; EmptyMessage.Visibility = Visibility.Visible; }
-        finally { busy = false; RefreshButton.IsEnabled = true; DemoButton.IsEnabled = true; FadeRefreshProgress(); }
+        finally
+        {
+            busy = false; RefreshButton.IsEnabled = true; DemoButton.IsEnabled = true; FadeRefreshProgress();
+            if (rescanQueued) { rescanQueued = false; QueueDeviceRescan(); }
+        }
     }
     private void ShowRefreshProgress()
     {
@@ -251,8 +258,10 @@ public partial class MainWindow : Window
         if (targetId == null || !cards.TryGetValue(targetId, out var item)) return;
         ResetPan();
         SetZoom(1); GraphScroll.UpdateLayout();
-        GraphScroll.ScrollToHorizontalOffset(Math.Max(0, item.Point.X + CardWidth / 2 - GraphScroll.ViewportWidth / 2));
-        GraphScroll.ScrollToVerticalOffset(Math.Max(0, item.Point.Y + item.Card.Height / 2 - GraphScroll.ViewportHeight / 2));
+        var center = selected.Kind == "Empty port" && portAnchors.TryGetValue(selected.Id, out var anchor)
+            ? anchor : new Point(item.Point.X + item.Card.Width / 2, item.Point.Y + item.Card.Height / 2);
+        GraphScroll.ScrollToHorizontalOffset(Math.Max(0, center.X - GraphScroll.ViewportWidth / 2));
+        GraphScroll.ScrollToVerticalOffset(Math.Max(0, center.Y - GraphScroll.ViewportHeight / 2));
         GraphScroll.UpdateLayout();
     }
     private async void RefreshClick(object sender, RoutedEventArgs e) => await Refresh();
@@ -272,7 +281,13 @@ public partial class MainWindow : Window
             double scale = ReadingScale;
             layoutWidth = Math.Max(CardWidth + 48, (GraphScroll.ActualWidth - 32) / scale);
             Draw(); SetZoom(scale); readableView = true;
-            GraphScroll.UpdateLayout(); GraphScroll.ScrollToHorizontalOffset(0);
+            GraphScroll.UpdateLayout();
+            // Rows never wrap, so a graph larger than the view opens on its first host, not its corner.
+            var host = snapshot.Controllers.Where(c => cards.ContainsKey(c.Id)).Select(c => cards[c.Id]).FirstOrDefault();
+            double across = host.Card == null ? 0 : horizontalTree ? host.Point.Y + host.Card.Height / 2 - GraphScroll.ViewportHeight / 2 : host.Point.X + host.Card.Width / 2 - GraphScroll.ViewportWidth / 2;
+            if (horizontalTree) { GraphScroll.ScrollToHorizontalOffset(0); GraphScroll.ScrollToVerticalOffset(Math.Max(0, across)); }
+            else GraphScroll.ScrollToHorizontalOffset(Math.Max(0, across));
+            GraphScroll.UpdateLayout();
         }
         finally { arranging = false; }
     }
@@ -287,7 +302,7 @@ public partial class MainWindow : Window
         horizontalTree = !horizontalTree;
         OrientationButton.Content = horizontalTree ? "Horizontal" : "Vertical";
         FitClick(this, new RoutedEventArgs());
-        GraphScroll.ScrollToVerticalOffset(0);
+        if (!horizontalTree) GraphScroll.ScrollToVerticalOffset(0);
     }
     private void GraphSizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -350,6 +365,8 @@ public partial class MainWindow : Window
     }
     private void VerifyUi()
     {
+        VerifyWireRouting();
+        VerifyCrowdedRouting();
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         foreach (var (key, weight) in new[] { ("UiFont", FontWeights.Normal), ("UiFont", FontWeights.SemiBold), ("UiFont", FontWeights.Bold), ("MonoFont", FontWeights.Normal) })
         {
@@ -397,7 +414,8 @@ public partial class MainWindow : Window
         Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ViewportWidth + 1 && Graph.Height * GraphScale.ScaleY <= GraphScroll.ViewportHeight + 1, "Fit all leaves graph outside viewport.");
         FitClick(this, new RoutedEventArgs()); GraphScroll.UpdateLayout();
         Check(GraphScale.ScaleX >= 1, "Readable view must not shrink device text.");
-        if (!horizontalTree) Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ActualWidth + 1, "Readable layout overflows the available width.");
+        // Rows never wrap, so the graph may overflow only once every group of end devices is a staircase.
+        if (!horizontalTree) Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ActualWidth + 1 || stackableHubs.IsSubsetOf(stackedHubs), "Readable layout overflows while end devices could still stack.");
         PanTransform.X = 87; PanTransform.Y = 53;
         var pointer = new Point(GraphScroll.ViewportWidth * 0.4, GraphScroll.ViewportHeight * 0.4);
         var anchored = GraphScroll.TranslatePoint(pointer, Graph);

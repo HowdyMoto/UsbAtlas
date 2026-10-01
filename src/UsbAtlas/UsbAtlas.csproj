@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>UsbAtlas</AssemblyName>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Authors>Wright Bagwell</Authors>
     <Copyright>Copyright (c) 2026 Wright Bagwell</Copyright>
@@ -17,7 +17,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Assets\UsbIds\usb.ids" LogicalName="UsbAtlas.usb.ids" />
     <None Update="Assets\UsbIds\LICENSE.txt;Assets\UsbIds\NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Update="LICENSE;THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\LICENSE;..\..\THIRD-PARTY-NOTICES.md" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Resource Include="Assets\Fonts\*.ttf" />
     <None Update="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="Assets\Icons\LICENSE.txt;Assets\Icons\NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

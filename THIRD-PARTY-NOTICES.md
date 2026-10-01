@@ -2,6 +2,8 @@
 
 The license for USB Atlas's original code does not replace the licenses below.
 Keep these notices and the referenced license files with redistributed builds.
+File paths below are relative to the application folder; in the source
+repository they are under `src/UsbAtlas/`.
 
 ## Geist and Geist Mono fonts
 

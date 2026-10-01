@@ -19,27 +19,37 @@ Download the Windows x64 portable ZIP from [GitHub Releases](https://github.com/
 
 ## Run
 
-Open `UsbAtlas.csproj` in Visual Studio, or run:
+Open `UsbAtlas.slnx` in Visual Studio, or run:
 
 ```powershell
-dotnet run --project UsbAtlas.csproj
+dotnet run --project src/UsbAtlas
 ```
 
 Requires Windows 10/11 and the .NET 10 Desktop Runtime (the SDK includes it). Build a portable framework-dependent folder with:
 
 ```powershell
-dotnet publish -c Release -o dist
+dotnet publish src/UsbAtlas -c Release
 ```
 
-Build/test output lives in `bin/Release/net10.0-windows`; `dist` is the runnable
-distribution folder. Publish completed changes to refresh `dist`, and distribute
+Build/test output lives in `artifacts/bin/UsbAtlas/release`; `artifacts/publish/UsbAtlas/release`
+is the runnable distribution folder. Publish completed changes to refresh it, and distribute
 the entire folder so the required assemblies and license notices stay together.
 
-Launch `dist\UsbAtlas.exe`. For a machine without .NET, publish with `-r win-x64 --self-contained true` (requires downloading runtime packs).
+Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without .NET, publish with `-r win-x64 --self-contained true` (requires downloading runtime packs); that output goes to `artifacts\publish\UsbAtlas\release_win-x64`.
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `src/UsbAtlas/` | Application source: C#, XAML, manifest, project file, and bundled `Assets/` (fonts, icon, USB ID database and their license files). |
+| `docs/` | Release notes. |
+| `artifacts/` | Generated and untracked: builds, publishes, release packages, previews, scans, and test results. `Directory.Build.props` routes all build output here. |
+| Root | This README, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `UsbAtlas.slnx`, and `Directory.Build.props`. |
 
 ## Explore
 
 - Select a controller, hub, device, or numbered empty-port slot to inspect it. Copy details is available near the inspector heading.
+- The left device tree provides traditional expandable branches in port order. Selection stays synchronized with the graph and inspector. Selecting a tree entry brings its card into view at the current zoom and briefly rings it; clicking the selected entry again finds it after you have panned away. Selecting on the canvas highlights the entry in the tree and scrolls to it. Drag its divider to resize it, or use **Hide tree / Show tree** to collapse and restore the panel. Search and **Empty slots** apply to both views.
 - **Add your own label** in the inspector gives hardware a recognizable name, such as “Dell monitor KVM”. Save applies it to cards and search; Reset restores the detected name. The detected identity remains visible underneath.
 - Search names, VID:PID, manufacturers, serials, device types, logical paths, or issue labels such as “Reduced speed”. Matches are outlined and the first result is selected and revealed. Enter / Shift+Enter moves between results; Escape clears search. Ancestors remain visible for context.
 - Tab through cards and controls. Arrow keys on a card move between visible nodes; Enter or Space selects without rebuilding the graph.
@@ -47,9 +57,12 @@ Launch `dist\UsbAtlas.exe`. For a machine without .NET, publish with `-r win-x64
 - Expand a hub’s empty-port summary to inspect numbered slots, or enable **Empty slots** globally. Empty logical ports do not consume full device cards.
 - Use **Compact** for short host/root cards and denser device cards. Turn it off for more room within cards. Density is independent of zoom; readable mode stays at 100% on large displays.
 - Drag the inspector divider to resize it, or use **Hide inspector / Show inspector** to reclaim the graph area.
-- Pan by dragging empty canvas, or right/middle dragging anywhere. Mouse wheel zooms around the pointer. **Readable** reflows the graph at 100%, **Overview** fits the graph, **Locate** centers the selection, and the zoom percentage resets to 100%.
+- Pan by dragging empty canvas, or right/middle dragging anywhere. Mouse wheel zooms around the pointer. **Readable** reflows the graph at 100% and opens on the first host controller, **Overview** fits the graph, **Locate** centers the selection, and the zoom percentage resets to 100%.
 - **Vertical / Horizontal** changes tree direction and preserves selection and folded branches.
+- Hub port graphics sit along the bottom edge in Vertical mode and the right edge in Horizontal mode. Each device connection starts at its numbered port. Expand empty slots to include unused ports; large hubs grow along the port edge to keep each slot readable. Dashed graphics with a question mark indicate an unknown connector shape.
+- Connections never cross. A hub's devices sit in one row in port order, and their connections fan out from the ports, bending at most twice. When the window is too narrow, a hub with only end devices lists them as a staircase beside it, read top to bottom, with its ports gathered at the card's right end. Rows never wrap; if the graph is still wider than the window, scroll or use **Overview**.
 - The issue button lists reduced-speed links, incomplete scans, port failures and scan diagnostics. Select a hardware issue to reveal its node.
+- The graph, tree and inspector rescan automatically when Windows reports USB devices being connected or disconnected. Rescans wait for the burst of notifications to settle. The status bar names what was connected or disconnected, and newly connected devices briefly ring.
 - Click **Refresh**, press **F5**, or enable ten-second auto-refresh. A thin progress bar appears at the top of the canvas while scanning and fades out over 180 ms. Even instant scans remain briefly visible. Unchanged scans preserve graph controls and inspector state.
 - Export the snapshot as JSON. **Sample** switches to labeled demo hardware; **My devices** returns to local hardware.
 
@@ -96,13 +109,15 @@ Snapshots and exports may contain serial numbers. Scans are local; the applicati
 
 ```powershell
 dotnet build -c Release
-& .\bin\Release\net10.0-windows\UsbAtlas.exe --self-test
-& .\bin\Release\net10.0-windows\UsbAtlas.exe --scan scan.json
-& .\bin\Release\net10.0-windows\UsbAtlas.exe --demo --render
-& .\bin\Release\net10.0-windows\UsbAtlas.exe --demo --render --verify-ui --compact
+$exe = Resolve-Path artifacts\bin\UsbAtlas\release\UsbAtlas.exe
+$out = New-Item -ItemType Directory -Force artifacts\diagnostics
+Start-Process $exe '--self-test' -WorkingDirectory $out -Wait
+Start-Process $exe '--scan scan.json' -WorkingDirectory $out -Wait
+Start-Process $exe '--demo --render' -WorkingDirectory $out -Wait
+Start-Process $exe '--demo --render --verify-ui --compact' -WorkingDirectory $out -Wait
 ```
 
-`--self-test` writes `self-test.txt` and exits. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits.
+The app writes these files to its working directory, so the commands above keep them in `artifacts\diagnostics`. `--self-test` writes `self-test.txt` and exits. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits.
 
 ## API references
 
@@ -116,4 +131,4 @@ Native layout and IOCTL constants are checked against the installed Windows SDK 
 
 Connector detection uses Microsoft's [USB port connector properties](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ns-usbioctl-_usb_port_connector_properties) and [port flags](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ns-usbioctl-_usb_port_properties).
 
-`--verify-ui` checks actual WPF card bounds, connections, filtering, folding, selection scrolling and fit. It also exercises both densities/directions with variable-height cards and 31 empty slots, search navigation, issue search, inspector collapse/restore and selection reuse. Results are written to `ui-test.txt`. `--compact` opens the minimum supported window size; `--wide` uses a 3840×1560 window. These off-screen checks do not replace native mouse/keyboard testing.
+`--verify-ui` checks actual WPF card bounds, connections, filtering, folding, selection scrolling and fit. Every connection must be orthogonal, start at its port, end on its own card, avoid other cards and never cross or touch another; rows must keep port order without wrapping, including crowded hubs at several widths. It also exercises both densities/directions with variable-height cards and 31 empty slots, search navigation, issue search, inspector collapse/restore, selection reuse, tree and canvas selection sync, and device-change rescans (simulated notifications; plug in a real device to confirm on hardware). Results are written to `ui-test.txt`. `--compact` opens the minimum supported window size; `--wide` uses a 3840×1560 window. These off-screen checks do not replace native mouse/keyboard testing.

@@ -55,6 +55,16 @@ internal static class NodeVisuals
         return new Viewbox { Width = size, Height = size, Child = canvas, Stretch = Stretch.Uniform };
     }
 
+    internal static FrameworkElement PortGraphic(UsbNode n)
+    {
+        var graphic = new Canvas { Width = 24, Height = 14 };
+        bool typeC = n.PortConnectorIsTypeC == true;
+        graphic.Children.Add(new Rectangle { Width = 22, Height = 12, RadiusX = typeC ? 6 : 2, RadiusY = typeC ? 6 : 2, Stroke = Ink(n.Kind == "Empty port" ? "TextMuted" : "TextSecondary"), StrokeThickness = 1.3, StrokeDashArray = typeC ? null : new DoubleCollection { 2, 2 }, Margin = new Thickness(1) });
+        if (typeC) graphic.Children.Add(new Rectangle { Width = 12, Height = 2, Fill = Ink("TextSecondary"), Margin = new Thickness(6, 6, 0, 0) });
+        else graphic.Children.Add(new TextBlock { Text = "?", FontSize = 10, Foreground = Ink("TextSecondary"), Margin = new Thickness(9, -1, 0, 0) });
+        return graphic;
+    }
+
     internal static FrameworkElement Connector(UsbNode n)
     {
         bool host = n.Kind is "Controller" or "Root hub";
