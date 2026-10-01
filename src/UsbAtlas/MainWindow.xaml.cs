@@ -38,7 +38,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, compact/comfortable density, empty slots, search navigation, issues, inspector, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, compact/comfortable density, empty slots, search navigation, issues, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -119,67 +119,83 @@ public partial class MainWindow : Window
         if (!e.IsRepeat) await Refresh();
     }
     private static string ShortSpeed(UsbNode n) => n.LinkMbps switch { 5000 => "5 Gb/s", 480 => "480 Mb/s", 12 => "12 Mb/s", 1.5 => "1.5 Mb/s", _ => n.Speed.StartsWith("SuperSpeedPlus") ? "≥10 Gb/s" : "Rate unknown" };
+    private const string NotApplicable = "—";
+    private static string IssueHelp(string issue) => issue switch
+    {
+        "Port error" => "Windows could not read this port. A device may still be connected.",
+        "Reduced speed" => "A faster link is supported. Check the upstream port, hub and cable.",
+        _ => "Enumeration is incomplete; counts may omit downstream devices. See Detection details."
+    };
+    // One layout per kind of selection, so ports can be compared by flipping between them: every port,
+    // device and hub shows the same rows in the same places. "—" marks a row that doesn't apply or has
+    // nothing attached; "Not reported" marks a value an attached device left out. Content that varies
+    // (explanations, actions, evidence) follows the comparable rows.
     private void ShowDetails()
     {
         Details.Children.Clear();
         if (selected is not UsbNode node) { Text("Select a device", 22); Text("Inspect a connection to see its link, power and path through your hardware.", 12, "TextMuted"); return; }
         if (appliedQuery.Length > 0 && !Matches(node, appliedQuery)) Text("Selection is outside the search results.", 11, "TextMuted");
         if (!cards.ContainsKey(node.Id) && !portSlots.ContainsKey(node.Id)) Text("Selection is hidden by a collapsed branch or filter.", 11, "TextMuted");
-        var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        bool host = node.Kind is "Controller" or "Root hub", attached = node.Kind is "Device" or "Hub", hub = node.Kind == "Hub";
+        string Reported(string value) => attached ? (value.Length > 0 && value != "Not reported" ? value : "Not reported") : node.Kind == "Unavailable" ? "Unknown" : NotApplicable;
+
+        // Fixed-height heading, role line and status row keep everything below in place.
+        var heading = new DockPanel { Height = 48, Margin = new Thickness(0, 0, 0, 4) };
         var symbol = NodeVisuals.Icon(node, 26); symbol.Margin = new Thickness(0, 0, 8, 0); DockPanel.SetDock(symbol, Dock.Left); heading.Children.Add(symbol);
-        heading.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap }); Details.Children.Add(heading);
-        if (node.UserLabel.Length > 0) Text("Detected: " + node.Name, 11, "TextSecondary");
-        Text(NodeVisuals.Label(node) + " · " + node.Status, 11, "TextSecondary");
-        var issues = Issues(node);
-        if (issues.Count > 0)
+        heading.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, LineHeight = 24, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, MaxHeight = 48, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName });
+        Details.Children.Add(heading);
+        Details.Children.Add(new TextBlock { Text = NodeVisuals.Label(node) + " · " + node.Status + (node.UserLabel.Length > 0 ? " · detected as " + node.Name : ""), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = node.UserLabel.Length > 0 ? "Detected name: " + node.Name : null });
+        var status = new WrapPanel { Height = 22, Margin = new Thickness(0, 5, 0, 6), ClipToBounds = true };
+        foreach (var (severity, text) in Issues(node)) { var badge = NodeVisuals.StatusBadge(severity, text); badge.Margin = new Thickness(0, 0, 4, 0); badge.ToolTip = IssueHelp(text); status.Children.Add(badge); }
+        if (status.Children.Count == 0) status.Children.Add(new TextBlock { Text = "No issues", FontSize = 11, Foreground = Brush("TextMuted"), VerticalAlignment = VerticalAlignment.Center });
+        Details.Children.Add(status);
+
+        if (!host)
         {
-            var badges = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
-            foreach (var (severity, text) in issues) { var badge = NodeVisuals.StatusBadge(severity, text); badge.Margin = new Thickness(0, 0, 4, 4); badges.Children.Add(badge); }
-            Details.Children.Add(badges);
-            if (node.Kind == "Unavailable") Text("Windows could not read this port. A device may still be connected.", 11, "TextSecondary");
-            if (node.SpeedLimited) Text("A faster link is supported. Check the upstream port, hub and cable.", 11, "TextSecondary");
-            if (node.ScanIncomplete) Text("Enumeration is incomplete; counts may omit downstream devices. See Detection details.", 11, "TextSecondary");
-        }
-        var copy = new Button { Content = "Copy details", Padding = new Thickness(8, 3, 8, 3), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 8) };
-        copy.Click += (_, _) => { try { Clipboard.SetText(JsonSerializer.Serialize(node, new JsonSerializerOptions { WriteIndented = true })); StatusText.Text = "Device details copied."; } catch (Exception ex) { StatusText.Text = "Clipboard unavailable: " + ex.Message; } }; Details.Children.Add(copy);
-        AddLabelEditor(node);
-        if (node.VendorId.Length > 0) Field("VID / PID", $"{node.VendorId} : {node.ProductId}");
-        if (node.Manufacturer.Length > 0) Field("Manufacturer", node.Manufacturer);
-        if (node.Serial.Length > 0) Field("Serial", node.Serial);
-        var metrics = new Grid { Margin = new Thickness(0, 5, 0, 4) };
-        metrics.ColumnDefinitions.Add(new ColumnDefinition()); metrics.ColumnDefinitions.Add(new ColumnDefinition());
-        void Metric(string value, string label, int column)
-        {
-            var stack = new StackPanel(); Grid.SetColumn(stack, column);
-            stack.Children.Add(new TextBlock { Text = value, FontSize = 19, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary") });
-            stack.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 0, 0) });
-            metrics.Children.Add(stack);
-        }
-        bool host = node.Kind is "Controller" or "Root hub";
-        if (!host && node.Kind != "Empty port")
-        {
-            Metric(ShortSpeed(node) == "Rate unknown" ? "Unknown" : ShortSpeed(node), "Negotiated link", 0);
-            Metric(node.MaxPowerMa is int ma ? $"{ma} mA" : "Unknown", "Declared max draw", 1);
+            var metrics = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+            metrics.ColumnDefinitions.Add(new ColumnDefinition()); metrics.ColumnDefinitions.Add(new ColumnDefinition());
+            void Metric(string value, string label, int column)
+            {
+                var stack = new StackPanel(); Grid.SetColumn(stack, column);
+                stack.Children.Add(new TextBlock { Text = value, FontSize = 19, FontWeight = FontWeights.SemiBold, Foreground = Brush(value == NotApplicable || value == "Unknown" ? "TextMuted" : "TextPrimary") });
+                stack.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 0, 0) });
+                metrics.Children.Add(stack);
+            }
+            string unread = node.Kind == "Unavailable" ? "Unknown" : NotApplicable;
+            Metric(attached ? (ShortSpeed(node) == "Rate unknown" ? "Unknown" : ShortSpeed(node)) : unread, "Negotiated link", 0);
+            Metric(attached ? (node.MaxPowerMa is int ma ? $"{ma} mA" : "Unknown") : unread, "Declared max draw", 1);
             Details.Children.Add(metrics);
+            Section("Port");
+            Field("Port number", node.Port.ToString("00"));
+            Field("Port supports", node.Protocols);
+            Field("Connector", NodeVisuals.Connector(node));
+            Field("Location", node.Location == "Unknown" ? "Not reported" : node.Location + " · inferred");
+            Field("Supply capacity", "Unknown · not measured");
+            Section("Attached device");
+            Field("VID / PID", attached && node.VendorId.Length > 0 ? $"{node.VendorId} : {node.ProductId}" : Reported(""));
+            Field("Manufacturer", Reported(node.Manufacturer));
+            Field("Serial", Reported(node.Serial));
+            Field("USB revision", Reported(node.UsbVersion));
+            Field("Power source", Reported(node.PowerSource));
+            Field("At nominal 5 V", attached && node.MaxPowerMa is int draw ? $"{draw * 0.005:0.##} W declared" : Reported(""));
+            Section("Hub");
+            Field("Logical ports", hub ? node.PortCount.ToString() : NotApplicable);
+            Field("Downstream", hub ? ProtocolSummary(node) : NotApplicable);
+            Field("End devices", hub ? node.Walk().Count(n => n.Kind == "Device").ToString() : NotApplicable);
         }
-        Field(host ? "Port support" : "Upstream port", host ? ProtocolSummary(node) : node.Protocols);
-        if (node.Kind == "Hub") Field("Downstream", ProtocolSummary(node));
-        if (node.Kind is "Controller" or "Root hub" or "Hub" or "Empty port") Field("Supply capacity", "Unknown · not measured");
-        Section("Connection");
-        var connector = NodeVisuals.Connector(node); connector.Margin = new Thickness(0, 0, 0, 12); Details.Children.Add(connector);
-        if (node.Kind is "Controller" or "Root hub") Field("Location", "Host hardware");
         else
         {
-            Field("Location", node.Location == "Unknown" ? "Not reported" : node.Location + " · inferred");
-            Field("Port number", node.Port.ToString("00"));
-        }
-        if (node.Kind is "Hub" or "Root hub" or "Controller")
-        {
+            var roots = node.Kind == "Controller" ? node.Children.Where(c => c.Kind == "Root hub").ToList() : [node];
+            Section("Host");
+            Field("Port support", ProtocolSummary(node));
+            Field("Logical ports", roots.Sum(r => r.PortCount).ToString());
+            Field("Occupied", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString());
             Field("End devices", node.Walk().Count(n => n.Kind == "Device").ToString());
-            if (node.Kind != "Controller") Field("Logical ports", node.PortCount.ToString());
+            Field("Connector", NodeVisuals.Connector(node));
+            Field("Location", "Host hardware");
+            Field("Power source", node.PowerSource);
+            Field("Supply capacity", "Unknown · not measured");
         }
-        Field("Power source", node.PowerSource);
-        if (node.MaxPowerMa is int draw) Field("At nominal 5 V", $"{draw * 0.005:0.##} W declared");
         Section("Upstream path");
         var chain = FindPath(node.Id);
         var pathRow = new WrapPanel();
@@ -191,7 +207,10 @@ public partial class MainWindow : Window
             if (ancestor != chain.Last()) pathRow.Children.Add(new TextBlock { Text = "›", Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 4, 0) });
         }
         Details.Children.Add(pathRow);
-        if (!host && node.Kind != "Empty port") Field("USB revision", node.UsbVersion);
+        foreach (var (_, text) in Issues(node)) Text(IssueHelp(text), 11, "TextSecondary");
+        var copy = new Button { Content = "Copy details", Padding = new Thickness(8, 3, 8, 3), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 8) };
+        copy.Click += (_, _) => { try { Clipboard.SetText(JsonSerializer.Serialize(node, new JsonSerializerOptions { WriteIndented = true })); StatusText.Text = "Device details copied."; } catch (Exception ex) { StatusText.Text = "Clipboard unavailable: " + ex.Message; } }; Details.Children.Add(copy);
+        AddLabelEditor(node);
         var evidence = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
         var notes = new List<string> { node.LocationEvidence };
         notes.Add("Name source: " + node.NameSource + ".");
@@ -210,8 +229,8 @@ public partial class MainWindow : Window
         if (knownLinks.Count > 0) notes.Add($"Known path ceiling: {knownLinks.Min(n => n.LinkMbps):0.##} Mb/s, shared and before overhead.");
         if (node.Kind is "Hub" or "Root hub")
         {
-            var attached = node.Children.Where(n => n.Status == "Connected").ToList();
-            notes.Add($"Direct children's declared draw: {attached.Sum(n => n.MaxPowerMa ?? 0)} mA known; {attached.Count(n => n.MaxPowerMa == null)} unknown. Excludes devices behind child hubs; not a supply measurement.");
+            var connected = node.Children.Where(n => n.Status == "Connected").ToList();
+            notes.Add($"Direct children's declared draw: {connected.Sum(n => n.MaxPowerMa ?? 0)} mA known; {connected.Count(n => n.MaxPowerMa == null)} unknown. Excludes devices behind child hubs; not a supply measurement.");
         }
         notes.Add("Port protocols: " + node.Protocols);
         notes.Add("Connector graphics identify the upstream socket. The cable and device-end plug are unknown.");
@@ -231,14 +250,20 @@ public partial class MainWindow : Window
     private void Section(string title)
     {
         Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 9, 0, 8) });
-        Details.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary"), Margin = new Thickness(0, 0, 0, 7) });
+        Details.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary"), Margin = new Thickness(0, 0, 0, 7), Tag = "section" });
     }
+    // Values stay on one line (full text in the tooltip) so every row keeps its height; missing values are muted.
     private void Field(string label, string value)
     {
-        var row = new Grid { Margin = new Thickness(0, 0, 0, 5) };
+        bool missing = value is NotApplicable or "Not reported" || value.StartsWith("Unknown", StringComparison.Ordinal);
+        Field(label, new TextBlock { Text = value, FontSize = 12, Foreground = Brush(missing ? "TextMuted" : "TextPrimary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value });
+    }
+    private void Field(string label, FrameworkElement value)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 5), Tag = "field", MinHeight = 18 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) }); row.ColumnDefinitions.Add(new ColumnDefinition());
-        row.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Brush("TextMuted"), TextWrapping = TextWrapping.Wrap });
-        var text = new TextBlock { Text = value, FontSize = 12, Foreground = Brush("TextPrimary"), TextWrapping = TextWrapping.Wrap }; Grid.SetColumn(text, 1); row.Children.Add(text);
+        row.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+        value.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(value, 1); row.Children.Add(value);
         Details.Children.Add(row);
     }
     private void ActualSizeClick(object sender, RoutedEventArgs e) => ZoomAt(1, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));

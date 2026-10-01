@@ -286,6 +286,34 @@ public partial class MainWindow
             foreach (var severity in status) Check(Distance(Brush(role), severity) > 100, $"{role} is too close to a warning or error color.");
     }
 
+    // Flipping between ports compares like with like: a hub, a device, an empty port and an unreadable
+    // port show the same rows at the same heights, and the two kinds of host share their own layout.
+    private void VerifyInspectorConsistency()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        var savedSnapshot = snapshot; var savedSelection = selected;
+        try
+        {
+            snapshot = DemoData.Create();
+            snapshot.Nodes.First(n => n.Id == "demo/root/4").Kind = "Unavailable";
+            Draw();
+            List<string> Layout(string id)
+            {
+                SelectNode(snapshot.Nodes.First(n => n.Id == id)); UpdateLayout();
+                return Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is "field" or "section")
+                    .Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)e).Text)}@{e.TranslatePoint(new Point(), Details).Y:0}").ToList();
+            }
+            var expected = Layout("demo/root/1");
+            foreach (var id in new[] { "demo/root/1/1", "demo/root/1/3", "demo/root/4" })
+            {
+                var actual = Layout(id);
+                Check(actual.SequenceEqual(expected), $"Inspector rows for {id} differ from a hub's: {string.Join(", ", actual.Except(expected).Concat(expected.Except(actual)).Take(4))}.");
+            }
+            Check(Layout("demo").SequenceEqual(Layout("demo/root")), "Controller and root hub inspector rows differ.");
+        }
+        finally { snapshot = savedSnapshot; selected = savedSelection; Draw(); ShowDetails(); }
+    }
+
     private void VerifyIdentityUi()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
