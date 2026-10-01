@@ -55,6 +55,38 @@ internal static class NodeVisuals
         Background = Ink(s == Severity.Error ? "ErrorSurface" : "WarningSurface"), CornerRadius = new CornerRadius(4),
         Padding = new Thickness(5, 2, 7, 2), HorizontalAlignment = HorizontalAlignment.Left, Child = StatusContent(s, text)
     };
+    // Metric glyphs mark what a number measures: opposed arrows for the negotiated link, a clock for
+    // bus time a device reserves, and a bolt for the power it requests. Neutral ink; never a status color.
+    internal enum Metric { Link, Reserved, Power }
+    internal const string MetricGlyphTag = "metric-glyph";
+    internal static FrameworkElement MetricGlyph(Metric m, double size = 11)
+    {
+        var canvas = new Canvas { Width = 14, Height = 14 };
+        var ink = Ink("TextSecondary");
+        canvas.Children.Add(m switch
+        {
+            Metric.Link => new Path { Data = Geometry.Parse("M4,12.5 V1.5 M1.2,4.3 L4,1.5 L6.8,4.3 M10,1.5 V12.5 M7.2,9.7 L10,12.5 L12.8,9.7"), Stroke = ink, StrokeThickness = 1.4, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round },
+            Metric.Reserved => new Path { Data = Geometry.Parse("M7,1.5 A5.5,5.5 0 1 1 6.99,1.5 Z M7,4 V7.2 L9.4,8.6"), Stroke = ink, StrokeThickness = 1.4, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round },
+            _ => new Path { Data = Geometry.Parse("M8.4,0.8 L2.6,8 H6.4 L5.4,13.2 L11.4,5.6 H7.5 Z"), Fill = ink, Stroke = ink, StrokeThickness = 0.6, StrokeLineJoin = PenLineJoin.Round }
+        });
+        return new Viewbox { Width = size, Height = size, Child = canvas, Tag = MetricGlyphTag, Uid = m.ToString() };
+    }
+    // One trimming line of metrics separated by middle dots; each value may carry its glyph.
+    internal static TextBlock MetricLine(IEnumerable<(Metric? Glyph, string Text)> parts, double fontSize = 11)
+    {
+        var line = new TextBlock { FontSize = fontSize, Foreground = Ink("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis };
+        foreach (var (glyph, text) in parts)
+        {
+            if (line.Inlines.Count > 0) line.Inlines.Add(new System.Windows.Documents.Run("  ·  "));
+            if (glyph is Metric m)
+            {
+                var icon = MetricGlyph(m, fontSize); icon.Margin = new Thickness(0, 0, 3, 0);
+                line.Inlines.Add(new System.Windows.Documents.InlineUIContainer(icon) { BaselineAlignment = BaselineAlignment.Center });
+            }
+            line.Inlines.Add(new System.Windows.Documents.Run(text));
+        }
+        return line;
+    }
     internal static FrameworkElement Icon(UsbNode n, double size = 36)
     {
         if (n.Kind == "Hub")

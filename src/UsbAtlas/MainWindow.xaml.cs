@@ -38,7 +38,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, compact/comfortable density, empty slots, search navigation, issues, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, compact/comfortable density, empty slots, search navigation, issues, power and stability issues, link/reserved/power glyphs, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -60,6 +60,7 @@ public partial class MainWindow : Window
             await Dispatcher.Yield(DispatcherPriority.Background);
             var next = demo ? DemoData.Create() : await Task.Run(() => new UsbScanner().Scan());
             deviceLabels.Apply(next);
+            reconnects.Apply(next);
             var before = snapshot.Controllers.Count > 0 && snapshot.IsDemo == next.IsDemo ? Occupants(snapshot) : null;
             var id = selected?.Id;
             bool changed = JsonSerializer.Serialize(snapshot.Controllers) != JsonSerializer.Serialize(next.Controllers) || !snapshot.Diagnostics.SequenceEqual(next.Diagnostics);
@@ -124,6 +125,12 @@ public partial class MainWindow : Window
     {
         "Port error" => "Windows could not read this port. A device may still be connected.",
         "Reduced speed" => "A faster link is supported. Check the upstream port, hub and cable.",
+        "Insufficient power" => "Windows refused to configure this device because it asks for more power than the port can supply. Connect it to a powered hub or directly to the computer.",
+        "Overcurrent" => "The device drew more current than the port allows, so Windows switched the port off. Reconnect it to a powered hub or another port; a damaged cable or device can also cause this.",
+        "Power at risk" => "This device declares more current than its port is guaranteed to supply, so it may disconnect or misbehave under load. See Detection details.",
+        "Over power budget" => "The devices behind this bus-powered hub declare more current, in total, than its upstream port is guaranteed to supply. See Detection details.",
+        "Hub adapter not detected" => "This hub can run from its own power supply but is running on bus power. If it has an adapter, check that it is plugged in.",
+        "Unstable connection" => "This device has repeatedly dropped and reconnected within seconds. That usually means it is short of power, or a cable or connector is faulty.",
         _ => "Enumeration is incomplete; counts may omit downstream devices. See Detection details."
     };
     // One layout per kind of selection, so ports can be compared by flipping between them: every port,
@@ -153,19 +160,27 @@ public partial class MainWindow : Window
         if (!host)
         {
             var metrics = new Grid { Margin = new Thickness(0, 0, 0, 4) };
-            metrics.ColumnDefinitions.Add(new ColumnDefinition()); metrics.ColumnDefinitions.Add(new ColumnDefinition());
-            void Metric(string value, string label, int column)
+            for (int i = 0; i < 3; i++) metrics.ColumnDefinitions.Add(new ColumnDefinition());
+            void Metric(NodeVisuals.Metric glyph, string value, string label, int column, string help)
             {
-                var stack = new StackPanel(); Grid.SetColumn(stack, column);
-                stack.Children.Add(new TextBlock { Text = value, FontSize = 19, FontWeight = FontWeights.SemiBold, Foreground = Brush(value == NotApplicable || value == "Unknown" ? "TextMuted" : "TextPrimary") });
-                stack.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 0, 0) });
+                var stack = new StackPanel { ToolTip = help }; Grid.SetColumn(stack, column);
+                var line = new DockPanel();
+                var icon = NodeVisuals.MetricGlyph(glyph, 13); icon.Margin = new Thickness(0, 1, 4, 0); DockPanel.SetDock(icon, Dock.Left); line.Children.Add(icon);
+                line.Children.Add(new TextBlock { Text = value, FontSize = 16, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = Brush(value == NotApplicable || value == "Unknown" ? "TextMuted" : "TextPrimary") });
+                stack.Children.Add(line);
+                stack.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0) });
                 metrics.Children.Add(stack);
             }
             string unread = node.Kind == "Unavailable" ? "Unknown" : NotApplicable;
-            Metric(attached ? (ShortSpeed(node) == "Rate unknown" ? "Unknown" : ShortSpeed(node)) : unread, "Negotiated link", 0);
-            Metric(attached ? (node.MaxPowerMa is int ma ? $"{ma} mA" : "Unknown") : unread, "Declared max draw", 1);
+            Metric(NodeVisuals.Metric.Link, attached ? (ShortSpeed(node) == "Rate unknown" ? "Unknown" : ShortSpeed(node)) : unread, "Negotiated link", 0,
+                "The signaling rate negotiated when the device connected. Everything upstream on the same path shares it; it is not a measured speed.");
+            Metric(NodeVisuals.Metric.Reserved, attached ? (node.ReservedMbps is double reserved ? UsbBudgets.Rate(reserved) : "Unknown") : unread, "Reserved", 1,
+                "Bus time held for this device's open interrupt and isochronous pipes, such as audio, video and input. Bulk transfers, such as storage, reserve nothing and share what is left.");
+            Metric(NodeVisuals.Metric.Power, node.MaxPowerMa is int ma && node.Kind != "Empty port" ? $"{ma} mA" : attached ? "Unknown" : unread, "Power request", 2,
+                "The most current the device's active configuration says it will draw. A declared maximum, not a measurement.");
             Details.Children.Add(metrics);
             Section("Port");
+            Field("Logical path", pathLabels.GetValueOrDefault(node.Id, NotApplicable));
             Field("Port number", node.Port.ToString("00"));
             Field("Port supports", node.Protocols);
             Field("Connector", NodeVisuals.Connector(node));
@@ -178,6 +193,7 @@ public partial class MainWindow : Window
             Field("USB revision", Reported(node.UsbVersion));
             Field("Power source", Reported(node.PowerSource));
             Field("At nominal 5 V", attached && node.MaxPowerMa is int draw ? $"{draw * 0.005:0.##} W declared" : Reported(""));
+            Field("Peak reserved", attached && node.PeakReservedMbps is double peak ? $"Up to {UsbBudgets.Rate(peak)} when active" : Reported(""));
             Section("Hub");
             Field("Logical ports", hub ? node.PortCount.ToString() : NotApplicable);
             Field("Downstream", hub ? ProtocolSummary(node) : NotApplicable);
@@ -187,6 +203,7 @@ public partial class MainWindow : Window
         {
             var roots = node.Kind == "Controller" ? node.Children.Where(c => c.Kind == "Root hub").ToList() : [node];
             Section("Host");
+            Field("Logical path", pathLabels.GetValueOrDefault(node.Id, NotApplicable));
             Field("Port support", ProtocolSummary(node));
             Field("Logical ports", roots.Sum(r => r.PortCount).ToString());
             Field("Occupied", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString());
@@ -232,13 +249,14 @@ public partial class MainWindow : Window
             var connected = node.Children.Where(n => n.Status == "Connected").ToList();
             notes.Add($"Direct children's declared draw: {connected.Sum(n => n.MaxPowerMa ?? 0)} mA known; {connected.Count(n => n.MaxPowerMa == null)} unknown. Excludes devices behind child hubs; not a supply measurement.");
         }
+        if (node.OpenPipes.Count > 0) notes.Add("Open pipes: " + string.Join("; ", node.OpenPipes) + ".");
         notes.Add("Port protocols: " + node.Protocols);
         notes.Add("Connector graphics identify the upstream socket. The cable and device-end plug are unknown.");
         notes.AddRange(node.Notes);
         foreach (var note in notes) evidence.Children.Add(new TextBlock { Text = note, FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 0, 0, 10) });
         Details.Children.Add(new Expander { Header = "Detection details", Content = evidence, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 16, 0, 0), FontSize = 12 });
         Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 20, 0, 16) });
-        Text("Link rates are shared signaling limits. Power is device-declared, not live draw. Available bandwidth and power budgets are not measured.", 11, "TextMuted");
+        Text("Link rates are shared signaling limits. Reserved bandwidth and requested power come from device descriptors, not live measurements. Power checks compare declared draw with what the USB specification guarantees a port; supply capacity itself is not measured.", 11, "TextMuted");
 
     }
     private List<UsbNode> FindPath(string id)

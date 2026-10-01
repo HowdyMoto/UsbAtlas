@@ -14,7 +14,7 @@ internal static class SelfTests
         Check(UsbScanner.DecodeSpeed(2, 0).Item2 == 480, "High-speed decoding.");
         var demo = DemoData.Create();
         Check(demo.IsDemo, "Sample data must be explicitly identified.");
-        Check(demo.Nodes.Count(x => x.Kind == "Device") == 5, "Recursive topology traversal.");
+        Check(demo.Nodes.Count(x => x.Kind == "Device") == 7, "Recursive topology traversal.");
         Check(demo.Nodes.Select(x => x.Id).Distinct().Count() == demo.Nodes.Count(), "Stable unique graph identities.");
         var port = new UsbNode();
         Check(port.PortIsUserConnectable == null && port.PortConnectorIsTypeC == null, "Missing connector query must remain unknown.");
@@ -37,6 +37,67 @@ internal static class SelfTests
         Check(DeviceIdentity.ReadInterfaceFunctions([9, 2, 11, 0, 0, 1, 0, 128, 0, 0, 4]).Count == 0, "Zero-length malformed descriptors must terminate safely.");
         Check(DeviceIdentity.ReadInterfaceFunctions(keyboardConfig[..15]).Count == 0, "Truncated interfaces must not be read.");
         Check(demo.Nodes.First(x => x.Name == "Portable SSD").DeviceType == "Storage", "Demo storage device type.");
+        BudgetTests(demo);
         IdentityTests.Run();
+    }
+
+    private static void BudgetTests(Snapshot demo)
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        static bool Near(double a, double b) => Math.Abs(a - b) < 1e-6;
+        Check(Near(UsbBudgets.PeriodicMbps(3, 8, 10, 1), 0.0064), "Full-speed interrupt intervals are whole frames.");
+        Check(Near(UsbBudgets.PeriodicMbps(1, 192, 1, 1), 1.536), "Full-speed isochronous reserves every frame.");
+        Check(Near(UsbBudgets.PeriodicMbps(5, 0x1400, 1, 2), 196.608), "High-bandwidth high-speed endpoints carry up to three packets per microframe.");
+        Check(Near(UsbBudgets.PeriodicMbps(5, 1024, 1, 3, 3072), 196.608), "SuperSpeed reservations use the companion's bytes per interval.");
+        Check(UsbBudgets.PeriodicMbps(2, 512, 0, 2) == 0 && UsbBudgets.PeriodicMbps(0, 64, 0, 2) == 0, "Bulk and control transfers reserve nothing.");
+        Check(UsbBudgets.Rate(0.0064) == "6.4 kb/s" && UsbBudgets.Rate(196.608) == "197 Mb/s" && UsbBudgets.Rate(4.6) == "4.6 Mb/s", "Rate formatting.");
+        byte[] camera = [9, 2, 50, 0, 2, 1, 0, 0x80, 50, 9, 4, 0, 0, 0, 0x0E, 2, 0, 0, 9, 4, 0, 1, 1, 0x0E, 2, 0, 0, 7, 5, 0x81, 5, 0x00, 0x14, 1, 9, 4, 1, 0, 1, 3, 0, 0, 0, 7, 5, 0x82, 3, 8, 0, 4];
+        var endpoints = UsbBudgets.ReadEndpoints(camera);
+        Check(endpoints.Count == 2 && endpoints[0].Alternate == 1 && endpoints[1].Interface == 1, "Endpoints keep their interface and alternate setting.");
+        Check(Near(UsbBudgets.PeakPeriodicMbps(endpoints, 2), 196.672), "Peak reservation takes each interface's busiest alternate setting.");
+        Check(UsbBudgets.ReadEndpoints(camera[..30]).Count == 0, "Truncated endpoint descriptors must not be read.");
+        var pipes = new byte[4096];
+        BitConverter.GetBytes(2).CopyTo(pipes, 27);
+        byte[] open = [7, 5, 0x81, 5, 0x00, 0x14, 1, 0, 0, 0, 0, 7, 5, 0x82, 3, 8, 0, 4, 0, 0, 0, 0];
+        open.CopyTo(pipes, 35);
+        var streaming = new UsbNode();
+        UsbScanner.ReadOpenPipes(pipes, 35 + open.Length, 2, endpoints, streaming);
+        Check(streaming.OpenPipes.Count == 2 && Near(streaming.ReservedMbps!.Value, 196.672) && Near(streaming.PeakReservedMbps!.Value, 196.672), "Open periodic pipes add up to the reserved bandwidth.");
+        var truncated = new UsbNode();
+        UsbScanner.ReadOpenPipes(pipes, 40, 2, endpoints, truncated);
+        Check(truncated.ReservedMbps == null && truncated.OpenPipes.Count == 0, "A pipe list longer than the returned data must stay unknown.");
+
+        var travel = demo.Nodes.Single(n => n.Id == "demo/root/5");
+        Check(travel.PowerWarnings.SequenceEqual(["Hub adapter not detected", "Over power budget"]), "A self-power-capable hub on bus power, over its upstream budget, must say so.");
+        Check(demo.Nodes.Where(n => n.PowerWarnings.Contains("Power at risk")).Select(n => n.Id).SequenceEqual(["demo/root/5/1", "demo/root/5/2"]), "Devices declaring more than a bus-powered port guarantees are at risk.");
+        Check(demo.Nodes.Single(n => n.Id == "demo/root/1").PowerWarnings.Count == 0 && demo.Nodes.Single(n => n.Id == "demo/root/1/1").PowerWarnings.Count == 0, "Self-powered hubs must not be judged against bus-power limits.");
+        Check(UsbBudgets.IsPowerFault(demo.Nodes.Single(n => n.Id == "demo/root/5/3")), "Insufficient power is a power fault.");
+        var keyboard = new UsbNode { Kind = "Device", LinkMbps = 12, MaxPowerMa = 100 };
+        var inner = new UsbNode { Kind = "Hub", LinkMbps = 480, PowerSource = "Bus powered", MaxPowerMa = 100, Children = [keyboard] };
+        var unknownDraw = new UsbNode { Kind = "Device", LinkMbps = 480 };
+        var outer = new UsbNode { Kind = "Hub", LinkMbps = 480, PowerSource = "Bus powered", MaxPowerMa = 100, Children = [inner, unknownDraw] };
+        var chained = new Snapshot { Controllers = [new UsbNode { Kind = "Controller", Children = [new UsbNode { Kind = "Root hub", Children = [outer] }] }] };
+        UsbBudgets.AnalyzePower(chained);
+        Check(inner.PowerWarnings.SequenceEqual(["Power at risk"]) && keyboard.PowerWarnings.Count == 0, "A bus-powered hub chained behind another passes its devices' draw upstream.");
+        Check(outer.PowerWarnings.Count == 0 && unknownDraw.PowerWarnings.Count == 0, "Unknown draw must not be invented into a budget problem.");
+        var superHub = new UsbNode { Kind = "Hub", LinkMbps = 5000, PowerSource = "Bus powered", MaxPowerMa = 96, Children = [new UsbNode { Kind = "Device", LinkMbps = 5000, MaxPowerMa = 144 }] };
+        UsbBudgets.AnalyzePower(new Snapshot { Controllers = [superHub] });
+        Check(superHub.Children[0].PowerWarnings.Count == 0, "SuperSpeed ports on bus-powered hubs guarantee 150 mA.");
+
+        Check(ReconnectTracker.InstanceIdFromPath(@"\\?\USB#VID_046D&PID_C52B#5&2a8c&0&3#{a5dcbf10-6530-11d2-901f-00c04fb951ed}") == @"USB\VID_046D&PID_C52B\5&2a8c&0&3", "Device interface paths name their instance.");
+        Check(ReconnectTracker.InstanceIdFromPath(@"\\?\HID#broken") == null, "Unrecognized paths are ignored.");
+        var tracker = new ReconnectTracker(); var t0 = new DateTime(2026, 1, 1, 12, 0, 0);
+        const string id = @"USB\VID_1234&PID_5678\SERIAL";
+        for (int i = 0; i < 2; i++) { tracker.Removed(id, t0.AddSeconds(i * 20)); tracker.Arrived(id, t0.AddSeconds(i * 20 + 2)); }
+        tracker.Removed(id, t0.AddSeconds(50)); tracker.Arrived(id, t0.AddSeconds(120));
+        Check(!tracker.IsUnstable(id), "A slow return is a deliberate replug, not a drop.");
+        tracker.Removed(id, t0.AddSeconds(130)); tracker.Arrived(id, t0.AddSeconds(133));
+        Check(tracker.IsUnstable(id), "Three quick returns within five minutes mark an unstable connection.");
+        var flaky = new UsbNode { Kind = "Device", InstanceId = id.ToLowerInvariant() };
+        tracker.Apply(new Snapshot { Controllers = [flaky] });
+        Check(flaky.QuickReconnects == 3, "Instance IDs match regardless of case.");
+        var sample = new UsbNode { Kind = "Device", InstanceId = id };
+        tracker.Apply(new Snapshot { IsDemo = true, Controllers = [sample] });
+        Check(sample.QuickReconnects == 0, "Hardware reconnects must not leak into sample data.");
     }
 }

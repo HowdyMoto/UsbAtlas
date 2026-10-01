@@ -62,14 +62,14 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 - **Vertical / Horizontal** changes tree direction and preserves selection and folded branches.
 - Every logical port appears as a numbered socket along the hub's bottom edge in Vertical mode and its right edge in Horizontal mode. Occupied sockets are outlined and carry a connection; empty ones are faded. Empty ports never take a full device card. USB 3 hubs often report two logical ports per physical socket (USB 2 and USB 3), so a hub can show more sockets than it has. Hubs with many ports grow along the port edge to keep each socket readable. Dashed graphics with a question mark indicate an unknown connector shape.
 - Connections never cross. A hub's devices sit in one row in port order, and their connections fan out from the ports, bending at most twice. When the window is too narrow, a hub with only end devices lists them as a staircase beside it, read top to bottom, with its ports gathered at the card's right end. Rows never wrap; if the graph is still wider than the window, scroll or use **Overview**.
-- The issue button lists reduced-speed links, incomplete scans, port failures and scan diagnostics. Select a hardware issue to reveal its node.
+- The issue button lists reduced-speed links, incomplete scans, port failures, power problems, unstable connections and scan diagnostics. Select a hardware issue to reveal its node. See **Power checks** below for what each power issue means.
 - The graph, tree and inspector rescan automatically when Windows reports USB devices being connected or disconnected. Rescans wait for the burst of notifications to settle. The status bar names what was connected or disconnected, and newly connected devices briefly ring.
 - Click **Refresh**, press **F5**, or enable ten-second auto-refresh. A thin progress bar appears at the top of the canvas while scanning and fades out over 180 ms. Even instant scans remain briefly visible. Unchanged scans preserve graph controls and inspector state.
 - Export the snapshot as JSON. **Sample** switches to labeled demo hardware; **My devices** returns to local hardware.
 
 ## Visual language
 
-Controllers and root buses have short headers; hubs and devices have compact cards with function icons. Cards show logical paths (`H01/root/04/02`), link rates, known USB-C sockets, and device-declared current where available. Hubs show occupied/total logical ports. Repeated hub names can be distinguished by their paths.
+Each card leads with its type icon in the upper left, with the type label and the name stacked beside it; controllers and root buses use shorter cards. Cards show known USB-C sockets; the logical path (`H01/root/04/02`) is in the inspector and the card's tooltip. Each number carries a glyph: opposed arrows for the negotiated link rate and a clock for bandwidth the device has reserved, on one row, and a lightning bolt for the current it requests, on the row below. The inspector shows the same three metrics. A hub's numbered sockets show which of its ports are in use. Repeated hub names can be distinguished by their paths in the inspector.
 
 Blue outlines identify selection and search matches; the selected upstream path is highlighted. Role colors label what a card is: slate for host hardware, violet for external hubs, teal for devices, gray when unknown.
 
@@ -103,7 +103,19 @@ The scanner enumerates host controller interfaces using SetupAPI, resolves each 
 
 **Bandwidth:** negotiated signaling rate, not traffic measured or free bandwidth. Hub children share the upstream link. Windows' legacy speed field is corrected using EX V2 flags. SuperSpeedPlus is shown as 10 Gb/s or higher because the implemented query does not resolve lane count or exact rate. Controller-wide capacity is unknown; it cannot be derived by adding port speeds. The device's USB specification revision is separate from its current negotiated link.
 
+**Reserved bandwidth:** a device doesn't ask for bandwidth when it connects; it connects at a link rate. But when a driver opens an interrupt or isochronous endpoint (keyboards, mice, audio, video, controllers), the host reserves bus time for it on a fixed schedule, and refuses the request if the bus is full. USB Atlas reads the open pipes Windows reports for each device and adds up their reservations from the endpoint descriptors (SuperSpeed endpoints use their companion descriptor's bytes per interval). Bulk and control transfers, such as storage, reserve nothing and share what is left. **Peak reserved** is the most the active configuration can reserve, taking each interface's busiest alternate setting; a webcam reserves almost nothing until it streams. Figures are payload before protocol overhead.
+
 **Power:** the active configuration's `MaxPower` descriptor is decoded in 2 mA units for USB 2 and 8 mA units for USB 3. This is a declared maximum, not live current. Watts assume nominal 5 V. Self-powered descriptors and hub bus-power flags are displayed when available. Actual supply budgets, USB-C current advertisement, Power Delivery contracts, cable ratings, and live electrical draw are not available through this backend. Unknown values remain unknown. A meter or hardware-specific telemetry is needed for actual draw; a separate capture backend would be needed for live traffic.
+
+**Power checks:** declared draw is compared with what the USB specification guarantees, not with a measured supply.
+
+- **Insufficient power** and **Overcurrent** (errors) are reported by Windows: it refused to configure a device that asks for more than the port can supply, or switched off a port that drew too much. Where the device descriptor is still readable, the port is named after the device and shows what it asked for.
+- **Power at risk:** a device on a bus-powered hub declares more than a bus-powered port guarantees, 100 mA (150 mA at SuperSpeed). A bus-powered hub chained behind another counts its devices' draw too.
+- **Over power budget:** everything behind a bus-powered hub, plus the hub itself, declares more than a standard upstream port guarantees: 500 mA for USB 2, 900 mA for USB 3. USB-C and charging ports can supply more, but Windows doesn't report that.
+- **Hub adapter not detected:** the hub's descriptor says it can run on its own supply, but Windows reports it running on bus power. Usually its adapter is unplugged.
+- **Unstable connection:** a device dropped and came back within 30 seconds three times in five minutes. That usually means a power shortfall or a faulty cable or connector. It stays flagged for the session.
+
+Many hubs report themselves as self-powered whether or not an adapter is connected, so the bus-power checks can only catch hubs that report honestly.
 
 **Topology:** USB 2/3 companion logical ports can refer to the same physical socket. An external USB 3 hub may appear as two hubs. This app does not infer physical connector type from USB version. Empty counts are logical ports. Errors and inaccessible hubs remain visible; a scan can be partial if hardware changes during enumeration.
 

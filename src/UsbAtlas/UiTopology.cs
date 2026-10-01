@@ -28,10 +28,45 @@ public partial class MainWindow
     private static List<(NodeVisuals.Severity Severity, string Text)> Issues(UsbNode n)
     {
         var issues = new List<(NodeVisuals.Severity, string)>();
-        if (n.Kind == "Unavailable") issues.Add((NodeVisuals.Severity.Error, "Port error"));
+        // A port refused for power names the fault; anything else unavailable is a generic port error.
+        if (n.Kind == "Unavailable") issues.Add((NodeVisuals.Severity.Error, UsbBudgets.IsPowerFault(n) ? n.Status : "Port error"));
         if (n.ScanIncomplete) issues.Add((NodeVisuals.Severity.Warning, "Scan incomplete"));
         if (n.SpeedLimited) issues.Add((NodeVisuals.Severity.Warning, "Reduced speed"));
+        foreach (var warning in n.PowerWarnings) issues.Add((NodeVisuals.Severity.Warning, warning));
+        if (n.QuickReconnects > 0) issues.Add((NodeVisuals.Severity.Warning, "Unstable connection"));
         return issues;
+    }
+    // A card's metric rows, each value behind its glyph: the connection (link rate, reserved periodic
+    // bandwidth, USB-C) on one row and requested power on its own. Port sockets already show occupancy.
+    private static List<List<(NodeVisuals.Metric? Glyph, string Text, string Words)>> CardMetrics(UsbNode n)
+    {
+        var connection = new List<(NodeVisuals.Metric?, string, string)>();
+        string link = ShortSpeed(n);
+        switch (n.Kind)
+        {
+            case "Controller": connection.Add((null, $"{n.Children.Count} root buses", $"{n.Children.Count} root buses")); break;
+            case "Root hub": break;
+            case "Unavailable": connection.Add((null, n.Status, n.Status)); break;
+            default:
+                connection.Add((NodeVisuals.Metric.Link, link, link + " link"));
+                if (n.Kind == "Device" && n.ReservedMbps is double reserved) connection.Add((NodeVisuals.Metric.Reserved, UsbBudgets.Rate(reserved), UsbBudgets.Rate(reserved) + " reserved"));
+                break;
+        }
+        if (n.PortConnectorIsTypeC == true && n.Kind is not ("Controller" or "Root hub")) connection.Add((null, "USB-C", "USB-C port"));
+        var rows = new List<List<(NodeVisuals.Metric?, string, string)>>();
+        if (connection.Count > 0) rows.Add(connection);
+        if (HasPowerRow(n)) rows.Add([(NodeVisuals.Metric.Power, $"{n.MaxPowerMa} mA", $"{n.MaxPowerMa} mA requested")]);
+        return rows;
+    }
+    private static bool HasPowerRow(UsbNode n) => n.Kind is "Device" or "Hub" or "Unavailable" && n.MaxPowerMa.HasValue;
+    private static string MetricHelp(UsbNode n)
+    {
+        var lines = new List<string>();
+        if (n.Kind is "Device" or "Hub") lines.Add($"Link: {n.Speed}. The signaling rate negotiated when the device connected, shared with everything upstream on the same path. Not a measured speed.");
+        if (n.ReservedMbps is double reserved)
+            lines.Add($"Reserved: {UsbBudgets.Rate(reserved)} of bus time held by open interrupt and isochronous pipes" + (n.PeakReservedMbps > reserved ? $", up to {UsbBudgets.Rate(n.PeakReservedMbps.Value)} when fully active" : "") + ". Bulk transfers, such as storage, reserve nothing and share what is left.");
+        if (n.MaxPowerMa is int ma) lines.Add($"Power: requests up to {ma} mA ({ma * 0.005:0.##} W at 5 V) in its descriptor. A declared maximum, not a measurement.");
+        return string.Join("\n", lines);
     }
     private static string Issue(UsbNode n) => string.Join(" · ", Issues(n).Select(i => i.Text));
     private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
@@ -59,10 +94,23 @@ public partial class MainWindow
     {
         double height = n.Kind is "Controller" or "Root hub" ? (Compact ? 84 : 100) : Compact ? CardHeight : 138;
         if (n.UserLabel.Length > 0) height += 18;
-        if (Issue(n).Length > 0) height += 24;
+        if (HasPowerRow(n)) height += 17;
+        height += 24 * BadgeRows(n);
         int ports = EdgePorts(n).Count;
         if (ports > 0) height = horizontalTree ? Math.Max(height, ports * 30 + 16) : height + 44;
         return height;
+    }
+    // Rows the card's issue badges wrap onto, estimated from label lengths at the badge font size.
+    private int BadgeRows(UsbNode n)
+    {
+        double available = WidthFor(n) - 22, x = 0; int rows = 0;
+        foreach (var (_, text) in Issues(n))
+        {
+            double width = 34 + text.Length * 6.4;
+            if (rows == 0 || x + width > available) { rows++; x = 0; }
+            x += width;
+        }
+        return rows;
     }
     private void PrepareGraph()
     {
@@ -152,28 +200,34 @@ public partial class MainWindow
         var bounds = new Rect(x, y, width, height);
         bool host = node.Kind is "Controller" or "Root hub";
         var panel = new StackPanel();
-        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 3) };
+        // The type icon anchors the upper left; the type label and the name stack beside it. The logical
+        // path lives in the inspector, leaving the upper right to the fold button.
+        var identity = new DockPanel { Height = host ? 36 : Compact ? 62 : 70 };
+        var icon = NodeVisuals.Icon(node, host ? 22 : 30); icon.Margin = new Thickness(0, 1, 9, 0); icon.VerticalAlignment = VerticalAlignment.Top;
+        DockPanel.SetDock(icon, Dock.Left); identity.Children.Add(icon);
         if (node.Children.Any(c => c.Kind != "Empty port"))
         {
-            var fold = new Button { Content = folded.Contains(node.Id) && appliedQuery.Length == 0 ? "+" : "−", Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(5, 0, 0, 0), ToolTip = "Expand / collapse branch", IsEnabled = appliedQuery.Length == 0 };
+            var fold = new Button { Content = folded.Contains(node.Id) && appliedQuery.Length == 0 ? "+" : "−", Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Top, ToolTip = "Expand / collapse branch", IsEnabled = appliedQuery.Length == 0 };
             fold.Click += (_, e) => { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); e.Handled = true; };
-            DockPanel.SetDock(fold, Dock.Right); header.Children.Add(fold);
+            DockPanel.SetDock(fold, Dock.Right); identity.Children.Add(fold);
         }
-        var path = new TextBlock { Text = pathLabels[node.Id], MaxWidth = 140, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 10, Foreground = Brush("TextMuted"), ToolTip = "Logical path: host / root / ports", Margin = new Thickness(5, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        DockPanel.SetDock(path, Dock.Right); header.Children.Add(path);
-        header.Children.Add(new TextBlock { Text = NodeVisuals.Label(node) + (node.Kind == "Root hub" ? $" · {node.Children.Count(c => c.Kind != "Empty port")}/{node.PortCount} occupied" : ""), FontSize = 11, Foreground = Brush(NodeVisuals.Color(node)), TextTrimming = TextTrimming.CharacterEllipsis });
-        panel.Children.Add(header);
-        var identity = new DockPanel { Height = host ? 24 : Compact ? 46 : 54 };
-        var icon = NodeVisuals.Icon(node, host ? 18 : 23); icon.Margin = new Thickness(0, 0, 7, 0); DockPanel.SetDock(icon, Dock.Left); identity.Children.Add(icon);
-        identity.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = host ? 13 : 16, FontWeight = FontWeights.SemiBold, TextWrapping = host ? TextWrapping.NoWrap : TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = host ? 24 : Compact ? 46 : 52, VerticalAlignment = VerticalAlignment.Center });
+        var names = new StackPanel();
+        names.Children.Add(new TextBlock { Text = NodeVisuals.Label(node), FontSize = 11, Foreground = Brush(NodeVisuals.Color(node)), TextTrimming = TextTrimming.CharacterEllipsis });
+        names.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = host ? 13 : 16, FontWeight = FontWeights.SemiBold, TextWrapping = host ? TextWrapping.NoWrap : TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = host ? 20 : Compact ? 44 : 52, Margin = new Thickness(0, 1, 0, 0) });
+        identity.Children.Add(names);
         panel.Children.Add(identity);
         // Under a custom label, keep the detected name visible; where a name came from is in Detection details.
         if (node.UserLabel.Length > 0)
             panel.Children.Add(new TextBlock { Text = "Detected: " + node.Name, FontSize = 10, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 2, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
-        int occupied = node.Children.Count(c => c.Kind != "Empty port");
-        string occupancy = $"{occupied}/{node.PortCount} occupied";
-        string metric = node.Kind switch { "Controller" => $"{node.Children.Count} root buses", "Root hub" => occupancy, "Hub" => $"{occupancy} · {ShortSpeed(node)}", "Unavailable" => node.Status, _ => ShortSpeed(node) + (node.MaxPowerMa is int ma ? $" · {ma} mA declared" : "") };
-        if (!host) panel.Children.Add(new TextBlock { Text = metric + (node.PortConnectorIsTypeC == true ? " · USB-C" : ""), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 4, 0, 0), ToolTip = metric });
+        var rows = CardMetrics(node);
+        string metric = string.Join(" · ", rows.SelectMany(r => r).Select(p => p.Words));
+        if (!host)
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var line = NodeVisuals.MetricLine(rows[i].Select(p => (p.Glyph, p.Text)));
+                line.Margin = new Thickness(0, i == 0 ? 4 : 2, 0, 0); line.ToolTip = MetricHelp(node);
+                panel.Children.Add(line);
+            }
         else panel.Children.Add(new TextBlock { Text = "Ports: " + ProtocolSummary(node), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0), ToolTip = ProtocolSummary(node) + "\nSupply capacity: unknown; charging limits are not queried.\n" + metric });
         var issues = Issues(node);
         if (issues.Count > 0)
@@ -360,7 +414,7 @@ public partial class MainWindow
         if (count == 0) { IssuesButton.Content = new TextBlock { Text = "No issues", Foreground = Brush("TextMuted") }; IssuesButton.ClearValue(BackgroundProperty); }
         else { IssuesButton.Content = NodeVisuals.StatusContent(worst, count == 1 ? "1 issue" : $"{count} issues"); IssuesButton.Background = Brush(worst == NodeVisuals.Severity.Error ? "ErrorSurface" : "WarningSurface"); }
         IssuesButton.IsEnabled = count > 0;
-        StatusText.Text = (snapshot.IsDemo ? "Sample topology" : "Local snapshot") + $" · Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(n => n.Kind == "Unavailable")} port errors · {snapshot.Nodes.Count(n => n.ScanIncomplete)} incomplete · {snapshot.Nodes.Count(n => n.SpeedLimited)} reduced speed";
+        StatusText.Text = (snapshot.IsDemo ? "Sample topology" : "Local snapshot") + $" · Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(n => n.Kind == "Unavailable")} port errors · {snapshot.Nodes.Count(n => n.ScanIncomplete)} incomplete · {snapshot.Nodes.Count(n => n.SpeedLimited)} reduced speed · {snapshot.Nodes.Count(n => UsbBudgets.IsPowerFault(n) || n.PowerWarnings.Count > 0 || n.QuickReconnects > 0)} power or stability";
         if (snapshot.Diagnostics.Count > 0) StatusText.Text += " · " + string.Join(" · ", snapshot.Diagnostics);
         StatusText.ToolTip = StatusText.Text;
     }

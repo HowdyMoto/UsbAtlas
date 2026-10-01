@@ -238,8 +238,8 @@ public partial class MainWindow
             var nested = new UsbNode { Id = root.Id + "/7", Kind = "Hub", Name = "Nested hub", Port = 7, PortCount = 3 };
             for (int i = 1; i <= 3; i++) nested.Children.Add(new UsbNode { Id = nested.Id + "/" + i, Kind = "Device", Name = "Nested device " + i, Port = i });
             root.Children.Add(nested);
-            foreach (int port in new[] { 5, 6, 8, 9, 10 }) root.Children.Add(new UsbNode { Id = root.Id + "/" + port, Kind = "Device", Name = "Root device " + port, Port = port });
-            root.PortCount = 10;
+            foreach (int port in new[] { 6, 8, 9, 10, 11 }) root.Children.Add(new UsbNode { Id = root.Id + "/" + port, Kind = "Device", Name = "Root device " + port, Port = port });
+            root.PortCount = 11;
             // A second controller with a hub chain, so controllers arrange side by side or wrap.
             var chainRoot = new UsbNode { Id = "second/root", Kind = "Root hub", Name = "Root hub", PortCount = 4 };
             var outer = new UsbNode { Id = "second/root/1", Kind = "Hub", Name = "Chain hub", Port = 1, PortCount = 4 };
@@ -284,6 +284,60 @@ public partial class MainWindow
         static double Distance(Brush a, Brush b) { var (x, y) = (((SolidColorBrush)a).Color, ((SolidColorBrush)b).Color); return Math.Sqrt(Math.Pow(x.R - y.R, 2) + Math.Pow(x.G - y.G, 2) + Math.Pow(x.B - y.B, 2)); }
         foreach (var role in new[] { "HostRole", "HubRole", "DeviceRole", "UnknownRole" })
             foreach (var severity in status) Check(Distance(Brush(role), severity) > 100, $"{role} is too close to a warning or error color.");
+    }
+
+    // Cards mark link rate, reserved bandwidth and requested power with their glyphs, power problems
+    // name themselves, and the inspector carries the same three metrics for every port-level kind.
+    private void VerifyPowerUi()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        // Card glyphs sit inline in a trimming TextBlock; inspector glyphs are ordinary children.
+        static List<NodeVisuals.Metric> Glyphs(DependencyObject root) => VisualDescendants(root).OfType<TextBlock>()
+            .SelectMany(t => t.Inlines.OfType<System.Windows.Documents.InlineUIContainer>().Select(c => (DependencyObject)c.Child))
+            .Concat(VisualDescendants(root)).OfType<Viewbox>().Where(v => v.Tag is NodeVisuals.MetricGlyphTag).Distinct()
+            .Select(v => Enum.Parse<NodeVisuals.Metric>(v.Uid)).ToList();
+        var savedSnapshot = snapshot; var savedSelection = selected;
+        try
+        {
+            snapshot = DemoData.Create();
+            var flaky = snapshot.Nodes.First(n => n.Id == "demo/root/3"); flaky.QuickReconnects = 3;
+            Draw(); UpdateLayout();
+            foreach (var device in snapshot.Nodes.Where(n => n.Kind == "Device" && cards.ContainsKey(n.Id)))
+                Check(Glyphs(cards[device.Id].Card).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Reserved, NodeVisuals.Metric.Power]), $"Card {device.Id} must mark link, reserved bandwidth and power with glyphs.");
+            Check(Glyphs(cards["demo/root/5"].Card).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Power]), "Hub cards mark their link and requested power.");
+            // Bandwidth and power read as separate rows, and sockets, not a count, show which ports are used.
+            foreach (var (id, item) in cards)
+            {
+                var lines = VisualDescendants(item.Card).OfType<TextBlock>().Where(t => Glyphs(t).Count > 0).Select(Glyphs).ToList();
+                Check(lines.All(l => !l.Contains(NodeVisuals.Metric.Power) || l.Count == 1), $"Card {id} must show power on its own row.");
+                Check(VisualDescendants(item.Card).OfType<TextBlock>().All(t => !new System.Windows.Documents.TextRange(t.ContentStart, t.ContentEnd).Text.Contains("occupied")), $"Card {id} must not repeat port occupancy as text.");
+            }
+            Check(Issue(snapshot.Nodes.First(n => n.Id == "demo/root/5")) == "Hub adapter not detected · Over power budget", "Bus-power problems must be listed on the hub.");
+            Check(Issue(snapshot.Nodes.First(n => n.Id == "demo/root/5/3")) == "Insufficient power", "A port refused for power must name the fault, not a generic port error.");
+            Check(Issue(flaky) == "Unstable connection", "Quick reconnects must be listed as an unstable connection.");
+            foreach (var (id, item) in cards)
+                Check(item.Card.Child.DesiredSize.Height <= item.Card.Height - item.Card.Padding.Top - item.Card.Padding.Bottom - 1, $"Card {id} content, including issue badges, exceeds its height.");
+            VerifyStatusStyling();
+            Search.Text = "Power at risk"; ApplySearch();
+            Check(matches.Select(n => n.Id).SequenceEqual(["demo/root/5/1", "demo/root/5/2"]), "Power issues must be searchable.");
+            Search.Clear(); ApplySearch();
+            foreach (var id in new[] { "demo/root/5/2", "demo/root/5", "demo/root/5/3", "demo/root/5/4" })
+            {
+                SelectNode(snapshot.Nodes.First(n => n.Id == id)); UpdateLayout();
+                var metrics = Details.Children.OfType<Grid>().First(g => g.ColumnDefinitions.Count == 3);
+                Check(Glyphs(metrics).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Reserved, NodeVisuals.Metric.Power]), $"Inspector metrics for {id} must carry their glyphs.");
+                if (id == "demo/root/5/2")
+                {
+                    var values = VisualDescendants(metrics).OfType<TextBlock>().Select(t => t.Text).ToList();
+                    Check(values.Contains("12 Mb/s") && values.Contains("6.4 kb/s") && values.Contains("500 mA"), "Inspector metrics must show link, reserved bandwidth and requested power.");
+                }
+            }
+        }
+        finally
+        {
+            Search.Clear(); searchTimer.Stop(); snapshot = savedSnapshot; selected = savedSelection;
+            Draw(); ShowDetails(); UpdateIssues();
+        }
     }
 
     // Flipping between ports compares like with like: a hub, a device, an empty port and an unreadable
@@ -411,7 +465,7 @@ public partial class MainWindow
                     foreach (var child in Children((UsbNode)a.Card.Tag))
                         Check(horizontal ? cards[child.Id].Point.X >= bounds.Right + TopologyLayout.LevelGap : cards[child.Id].Point.Y >= bounds.Bottom + TopologyLayout.LevelGap, "Variable-height parent overlaps its children.");
                 }
-                Check(portSlots.Count == 31 && cards.Values.All(c => ((UsbNode)c.Card.Tag).Kind != "Empty port"), "Empty ports must render as slots, not full cards.");
+                Check(portSlots.Count == snapshot.Nodes.Count(n => n.Kind == "Empty port") && cards.Values.All(c => ((UsbNode)c.Card.Tag).Kind != "Empty port"), "Empty ports must render as slots, not full cards.");
                 int logicalPorts = snapshot.Nodes.Where(n => cards.ContainsKey(n.Id) && n.Kind is "Hub" or "Root hub").Sum(n => n.Children.Count);
                 Check(portSlots.Count + connectedPorts.Count == logicalPorts, "Every logical port must be drawn on its hub.");
                 Check(portSlots.Values.All(b => ((UIElement)b.Content).Opacity < 1) && connectedPorts.Values.All(b => ((UIElement)b.Content).Opacity == 1), "Empty ports must look unoccupied.");
@@ -436,7 +490,7 @@ public partial class MainWindow
             folded.Add(snapshot.Controllers[0].Id);
             PanTransform.X = 250; PanTransform.Y = -800;
             Search.Text = "Available port"; ApplySearch();
-            Check(matches.Count == 31 && portSlots.Count == 31, "Searching hidden empty ports must reveal all matching slots.");
+            Check(matches.Count == snapshot.Nodes.Count(n => n.Kind == "Empty port") && portSlots.Count == matches.Count, "Searching hidden empty ports must reveal all matching slots.");
             Check(PanTransform.X == 0 && PanTransform.Y == 0 && selected?.Kind == "Empty port", "Search must reset panning and select a match.");
             var first = selected!.Id; NextMatch(1); Check(selected!.Id != first, "Next result failed."); NextMatch(-1); Check(selected!.Id == first, "Previous result failed.");
             Search.Text = "Reduced speed"; ApplySearch();

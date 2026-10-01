@@ -25,6 +25,15 @@ public sealed class UsbNode
     public bool ProtocolSummaryPartial { get; set; }
     public string PowerSource { get; set; } = "Not reported";
     public int? MaxPowerMa { get; set; }
+    // The active configuration's self-powered attribute; a hub's actual power source is PowerSource.
+    public bool? SelfPowerCapable { get; set; }
+    public List<string> PowerWarnings { get; set; } = [];
+    // Periodic bandwidth reserved by open pipes now, and the most the active configuration can reserve.
+    public double? ReservedMbps { get; set; }
+    public double? PeakReservedMbps { get; set; }
+    public List<string> OpenPipes { get; set; } = [];
+    public string InstanceId { get; set; } = "";
+    public int QuickReconnects { get; set; }
     public string VendorId { get; set; } = "";
     public string ProductId { get; set; } = "";
     public string Manufacturer { get; set; } = "";

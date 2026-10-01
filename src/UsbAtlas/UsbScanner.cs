@@ -9,7 +9,7 @@ namespace UsbAtlas;
 public sealed class UsbScanner
 {
     private static readonly Guid ControllerGuid = new("3ABF6F2D-71C4-462A-8A92-1E6861E6AF27");
-    private readonly Dictionary<string, (string Name, string Manufacturer)> names = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (string Name, string Manufacturer, string InstanceId)> names = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
     private Snapshot snapshot = new();
 
@@ -59,6 +59,7 @@ public sealed class UsbScanner
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
+        UsbBudgets.AnalyzePower(snapshot);
         if (snapshot.Controllers.Count == 0) snapshot.Diagnostics.Add("No USB host controllers were returned by Windows.");
         return snapshot;
     }
@@ -81,6 +82,7 @@ public sealed class UsbScanner
                 hub.Children.Add(new UsbNode { Id = hub.Id + "/" + port, Name = "Port " + port, Port = port, Kind = "Unavailable", Status = "Query failed", Notes = [Error()] });
                 continue;
             }
+            int returnedInfo = returned;
             var status = BitConverter.ToInt32(data, 31);
             var node = new UsbNode { Id = hub.Id + "/" + port, Port = port, Status = ConnectionStatus(status) };
             hub.Children.Add(node);
@@ -98,6 +100,7 @@ public sealed class UsbScanner
                 if (node.Protocols.Length == 0) node.Protocols = "Not reported";
             }
             if (status == 0) { node.Kind = "Empty port"; node.Name = "Available port " + port; continue; }
+            if (status is 4 or 5) { ReadPowerFault(handle, port, data, node); continue; }
             if (status != 1) { node.Kind = "Unavailable"; node.Name = "Port " + port + " · " + node.Status; continue; }
             node.Kind = data[24] != 0 ? "Hub" : "Device";
             node.VendorId = BitConverter.ToUInt16(data, 12).ToString("X4");
@@ -117,10 +120,11 @@ public sealed class UsbScanner
             node.ReportedProduct = StringDescriptor(handle, port, data[19], language);
             if (names.TryGetValue(node.DriverKey, out var identity))
             {
-                node.WindowsName = identity.Name; node.WindowsManufacturer = identity.Manufacturer;
+                node.WindowsName = identity.Name; node.WindowsManufacturer = identity.Manufacturer; node.InstanceId = identity.InstanceId;
             }
             DeviceIdentity.ResolveName(node);
             // Match the active configuration value; descriptor index is not configuration value.
+            List<UsbBudgets.Endpoint> endpoints = [];
             if (data[22] != 0)
             {
                 for (byte index = 0; index < data[21]; index++)
@@ -128,16 +132,22 @@ public sealed class UsbScanner
                     var config = Descriptor(handle, port, 2, index, 0, 9);
                     if (config is not { Length: >= 9 } || config[1] != 2 || config[5] != data[22]) continue;
                     node.MaxPowerMa = DecodePower(config[8], bcd);
-                    node.PowerSource = (config[7] & 0x40) != 0 ? "Self-powered capable" : "Bus powered";
+                    node.SelfPowerCapable = (config[7] & 0x40) != 0;
+                    node.PowerSource = node.SelfPowerCapable == true ? "Self-powered capable" : "Bus powered";
                     var length = BitConverter.ToUInt16(config, 2);
                     if (length >= 9)
                     {
                         var fullConfig = Descriptor(handle, port, 2, index, 0, length);
-                        if (fullConfig != null) node.InterfaceFunctions = DeviceIdentity.ReadInterfaceFunctions(fullConfig);
+                        if (fullConfig != null)
+                        {
+                            node.InterfaceFunctions = DeviceIdentity.ReadInterfaceFunctions(fullConfig);
+                            endpoints = UsbBudgets.ReadEndpoints(fullConfig);
+                        }
                     }
                     break;
                 }
             }
+            ReadOpenPipes(data, returnedInfo, SpeedClass(data[23], flags), endpoints, node);
             DeviceIdentity.Identify(node);
             if (node.Kind == "Hub")
             {
@@ -156,6 +166,56 @@ public sealed class UsbScanner
         return speed switch { 0 => ("Low speed · 1.5 Mb/s", 1.5), 1 => ("Full speed · 12 Mb/s", 12), 2 => ("High speed · 480 Mb/s", 480), 3 => ("SuperSpeed · 5 Gb/s", 5000), _ => ("Not reported", null) };
     }
     internal static int DecodePower(byte maxPower, ushort bcdUsb) => maxPower * (bcdUsb >= 0x0300 ? 8 : 2);
+    private static int SpeedClass(byte speed, int flags) => (flags & 5) != 0 ? 3 : speed;
+
+    // Open pipes follow NumberOfOpenPipes (offset 27) as packed USB_PIPE_INFO entries from offset 35:
+    // a 7-byte endpoint descriptor and a 4-byte schedule offset. Only periodic pipes reserve bandwidth.
+    internal static void ReadOpenPipes(byte[] data, int returned, int speedClass, List<UsbBudgets.Endpoint> endpoints, UsbNode node)
+    {
+        if (returned < 35 || speedClass > 3) return;
+        int count = BitConverter.ToInt32(data, 27);
+        if (count < 0 || 35 + count * 11 > Math.Min(returned, data.Length)) return;
+        double reserved = 0;
+        for (int i = 0; i < count; i++)
+        {
+            int at = 35 + i * 11;
+            byte address = data[at + 2], attributes = data[at + 3], interval = data[at + 6];
+            ushort maxPacket = BitConverter.ToUInt16(data, at + 4);
+            // SuperSpeed bytes per interval live in the companion descriptor of the matching alternate setting.
+            int? perInterval = endpoints.FirstOrDefault(e => e.Address == address && e.Attributes == attributes && e.MaxPacket == maxPacket && e.Interval == interval)?.BytesPerInterval;
+            reserved += UsbBudgets.PeriodicMbps(attributes, maxPacket, interval, speedClass, perInterval);
+            node.OpenPipes.Add(UsbBudgets.DescribePipe(address, attributes, maxPacket, interval, speedClass, perInterval));
+        }
+        node.ReservedMbps = reserved;
+        if (endpoints.Count > 0) node.PeakReservedMbps = Math.Max(reserved, UsbBudgets.PeakPeriodicMbps(endpoints, speedClass));
+    }
+
+    // A port refused for power still holds the device's descriptor, so name the device and what it asked for.
+    private void ReadPowerFault(Microsoft.Win32.SafeHandles.SafeFileHandle handle, int port, byte[] data, UsbNode node)
+    {
+        node.Kind = "Unavailable"; node.Name = "Port " + port + " · " + node.Status;
+        node.Notes.Add(UsbBudgets.FaultNote(node.Status));
+        if (data[4] != 18 || data[5] != 1) return;
+        node.VendorId = BitConverter.ToUInt16(data, 12).ToString("X4");
+        node.ProductId = BitConverter.ToUInt16(data, 14).ToString("X4");
+        var bcd = BitConverter.ToUInt16(data, 6);
+        node.UsbVersion = $"USB {bcd >> 8:X}.{(bcd >> 4) & 15:X}{bcd & 15:X}";
+        node.DeviceClass = ClassName(data[8]);
+        ushort language = 0x0409;
+        var langs = Descriptor(handle, port, 3, 0, 0, 255);
+        if (langs is { Length: >= 4 }) language = BitConverter.ToUInt16(langs, 2);
+        node.Manufacturer = StringDescriptor(handle, port, data[18], language);
+        node.ReportedProduct = StringDescriptor(handle, port, data[19], language);
+        node.Kind = "Device"; DeviceIdentity.ResolveName(node); node.Kind = "Unavailable";
+        node.Name += " · " + node.Status;
+        var config = Descriptor(handle, port, 2, 0, 0, 9);
+        if (config is { Length: >= 9 } && config[1] == 2)
+        {
+            node.MaxPowerMa = DecodePower(config[8], bcd);
+            node.SelfPowerCapable = (config[7] & 0x40) != 0;
+            node.Notes.Add($"The device's first configuration requests up to {node.MaxPowerMa} mA.");
+        }
+    }
     private static string ConnectionStatus(int status) => status switch { 0 => "Empty", 1 => "Connected", 2 => "Enumeration failed", 3 => "General failure", 4 => "Overcurrent", 5 => "Insufficient power", 6 => "Insufficient bandwidth", 7 => "Hub nested too deeply", 8 => "Legacy hub", 9 => "Enumerating", 10 => "Resetting", _ => "Status " + status };
     private static string ClassName(byte value) => value switch { 0 => "Defined by interfaces", 1 => "Audio", 2 => "Communications", 3 => "Human interface (HID)", 7 => "Printer", 8 => "Mass storage", 9 => "Hub", 14 => "Video", 0xE0 => "Wireless controller", 0xEF => "Composite / miscellaneous", 0xFF => "Vendor specific", _ => $"Class 0x{value:X2}" };
 
@@ -171,7 +231,8 @@ public sealed class UsbScanner
                 if (!Native.SetupDiEnumDeviceInfo(set, i, ref d)) break;
                 var key = Property(set, ref d, 9);
                 var name = Property(set, ref d, 12) ?? Property(set, ref d, 0);
-                if (key != null && name != null) names[key] = (name, Property(set, ref d, 11) ?? "");
+                var instance = new StringBuilder(512);
+                if (key != null && name != null) names[key] = (name, Property(set, ref d, 11) ?? "", Native.SetupDiGetDeviceInstanceId(set, ref d, instance, instance.Capacity, out _) ? instance.ToString() : "");
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }
@@ -218,6 +279,7 @@ internal static class Native
     [DllImport("setupapi.dll", SetLastError = true)] internal static extern bool SetupDiEnumDeviceInfo(IntPtr set, uint index, ref DeviceData dev);
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern bool SetupDiGetDeviceRegistryProperty(IntPtr set, ref DeviceData dev, uint property, out uint type, byte[] buffer, uint size, out uint needed);
     [DllImport("setupapi.dll")] internal static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
+    [DllImport("setupapi.dll", EntryPoint = "SetupDiGetDeviceInstanceIdW", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern bool SetupDiGetDeviceInstanceId(IntPtr set, ref DeviceData dev, StringBuilder id, int size, out int needed);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)] internal static extern bool DeviceIoControl(SafeFileHandle handle, uint code, [In] byte[] input, int inputSize, [Out] byte[] output, int outputSize, out int returned, IntPtr overlapped);
 }

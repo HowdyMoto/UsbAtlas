@@ -4,7 +4,7 @@ internal static class DemoData
 {
     public static Snapshot Create()
     {
-        var root = new UsbNode { Id = "demo/root", Name = "Root hub", Kind = "Root hub", PortCount = 4, Protocols = "USB 2.0 / USB 3.x", PowerSource = "System supplied" };
+        var root = new UsbNode { Id = "demo/root", Name = "Root hub", Kind = "Root hub", PortCount = 5, Protocols = "USB 2.0 / USB 3.x", PowerSource = "System supplied" };
         var hub = new UsbNode { Id = "demo/root/1", Name = "Studio desktop hub", Kind = "Hub", Port = 1, PortCount = 4, UsbVersion = "USB 3.00", Speed = "SuperSpeed · 5 Gb/s", LinkMbps = 5000, Protocols = "USB 3.x", PowerSource = "Self powered", MaxPowerMa = 0, VendorId = "2109", ProductId = "0817" };
         UsbNode Device(string id, string name, int port, double speed, int power, string cls) => new() { Id = id, Name = name, Port = port, LinkMbps = speed, Speed = speed == 5000 ? "SuperSpeed · 5 Gb/s" : speed == 480 ? "High speed · 480 Mb/s" : "Full speed · 12 Mb/s", UsbVersion = speed == 5000 ? "USB 3.00" : "USB 2.00", MaxPowerMa = power, PowerSource = "Bus powered", DeviceClass = cls, Protocols = speed == 5000 ? "USB 3.x" : "USB 2.0", Notes = ["Illustrative demo device. This is not connected hardware."] };
         hub.Children.Add(Device("demo/root/1/1", "Portable SSD", 1, 5000, 896, "Mass storage"));
@@ -15,12 +15,27 @@ internal static class DemoData
         root.Children.Add(Device("demo/root/2", "Audio interface", 2, 480, 500, "Audio"));
         root.Children.Add(Device("demo/root/3", "Mechanical keyboard", 3, 12, 100, "Human interface (HID)"));
         root.Children.Add(Device("demo/root/4", "Wireless mouse receiver", 4, 12, 100, "Human interface (HID)"));
+        // A bus-powered travel hub with its adapter unplugged and too much plugged in shows the power checks.
+        var travel = new UsbNode { Id = "demo/root/5", Name = "Travel hub", Kind = "Hub", Port = 5, PortCount = 4, UsbVersion = "USB 2.00", Speed = "High speed · 480 Mb/s", LinkMbps = 480, Protocols = "USB 2.0", PowerSource = "Bus powered", SelfPowerCapable = true, MaxPowerMa = 100, VendorId = "05E3", ProductId = "0610" };
+        travel.Children.Add(Device("demo/root/5/1", "USB flash drive", 1, 480, 200, "Mass storage"));
+        travel.Children.Add(Device("demo/root/5/2", "LED ring light", 2, 12, 500, "Human interface (HID)"));
+        travel.Children.Add(new UsbNode { Id = "demo/root/5/3", Name = "Portable hard drive · Insufficient power", Kind = "Unavailable", Port = 3, Status = "Insufficient power", UsbVersion = "USB 3.00", MaxPowerMa = 896, Protocols = "USB 2.0", Notes = [UsbBudgets.FaultNote("Insufficient power"), "Illustrative demo device. This is not connected hardware."] });
+        travel.Children.Add(new UsbNode { Id = "demo/root/5/4", Name = "Available port 4", Kind = "Empty port", Port = 4, Status = "Empty", Protocols = "USB 2.0" });
+        root.Children.Add(travel);
+        // Bandwidth a device reserves for its open periodic pipes now, and the most its configuration can reserve.
+        void Reserve(UsbNode n, double now, double peak) { n.ReservedMbps = now; n.PeakReservedMbps = peak; }
+        Reserve(hub, 0.0001, 0.0001); Reserve(travel, 0.0001, 0.0001);
+        Reserve(hub.Children[0], 0, 0); Reserve(hub.Children[1], 98.3, 196.6);
+        Reserve(root.Children[1], 4.6, 4.6); Reserve(root.Children[2], 0.0064, 0.0064); Reserve(root.Children[3], 0.064, 0.064);
+        Reserve(travel.Children[0], 0, 0); Reserve(travel.Children[1], 0.0064, 0.0064);
         root.Location = "Host";
         root.LocationEvidence = "Demo: logical root ports belong to the host controller.";
         hub.PortIsUserConnectable = true;
         hub.PortConnectorIsTypeC = true;
         hub.Location = "External";
         hub.LocationEvidence = "Illustrative demo: external desktop hub connected to a USB-C port.";
+        travel.PortIsUserConnectable = true;
+        foreach (var n in travel.Walk()) { n.Location = "External"; n.LocationEvidence = "Illustrative external demo hub."; }
         foreach (var n in root.Walk().Where(n => n.Kind == "Device"))
         {
             n.PortIsUserConnectable = true;
@@ -36,6 +51,7 @@ internal static class DemoData
             if (node.Kind is "Device" or "Hub") node.ReportedProduct = node.Name;
         }
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
+        UsbBudgets.AnalyzePower(snapshot);
         return snapshot;
     }
 }
