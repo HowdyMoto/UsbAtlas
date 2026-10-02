@@ -12,8 +12,9 @@ public partial class MainWindow
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         var originalSelection = selected;
         var target = snapshot.Nodes.First(n => n.Kind == "Device");
-        var parent = FindPath(target.Id).SkipLast(1).Last();
-        Check(treeItems.Count == snapshot.Nodes.Count(n => n.Kind != "Empty port"), "Tree must include every connected device.");
+        var parent = CardNode(FindPath(target.Id).SkipLast(1).Last());
+        // A merged root hub is part of its host's row, as on the canvas.
+        Check(treeItems.Count == snapshot.Nodes.Count(n => n.Kind != "Empty port" && !mergedHosts.ContainsKey(n.Id)), "Tree must include every connected device.");
         treeItems[parent.Id].IsExpanded = false;
         Draw();
         Check(!treeItems[parent.Id].IsExpanded, "Graph redraw lost tree expansion state.");
@@ -27,7 +28,7 @@ public partial class MainWindow
         TreePanelClick(this, new RoutedEventArgs()); UpdateLayout();
         Check(TreePanel.Visibility == Visibility.Visible && TreeColumn.ActualWidth >= 180 && selected?.Id == parent.Id, "Restoring the tree lost its size or selection.");
         Search.Text = target.Name; ApplySearch();
-        Check(treeItems.ContainsKey(target.Id) && FindPath(target.Id).All(n => treeItems.ContainsKey(n.Id)), "Filtered tree lost matching device ancestry.");
+        Check(treeItems.ContainsKey(target.Id) && FindPath(target.Id).All(n => treeItems.ContainsKey(CardNode(n).Id)), "Filtered tree lost matching device ancestry.");
         Search.Clear(); ApplySearch();
         var empties = snapshot.Nodes.Where(n => n.Kind == "Empty port").ToList();
         Check(empties.All(n => !treeItems.ContainsKey(n.Id)), "Tree must list empty ports only for a search.");
@@ -191,7 +192,7 @@ public partial class MainWindow
         var segments = new List<(string Id, Point A, Point B)>();
         foreach (var (id, route) in wireRoutes)
         {
-            var parent = FindPath(id).SkipLast(1).Last();
+            var parent = CardNode(FindPath(id).SkipLast(1).Last());
             Check(boxes.ContainsKey(id) && boxes.ContainsKey(parent.Id), $"Connection {id} is missing a card at one end.");
             Check(route.Count <= 4, $"Connection {id} bends more than twice.");
             Check(portAnchors.TryGetValue(id, out var port) ? (route[0] - port).Length < 0.01 : OnEdge(boxes[parent.Id], route[0]), $"Connection {id} does not start at its port.");
@@ -301,7 +302,12 @@ public partial class MainWindow
             Check(text.FontWeight == FontWeights.SemiBold && text.Parent is Panel row && row.Children.Cast<DependencyObject>().Any(IsGlyph),
                 $"\"{text.Text}\" uses a warning or error color without the status glyph and weight.");
         foreach (var (id, item) in cards)
-            Check(VisualDescendants(item.Card).Count(IsGlyph) == Issues((UsbNode)item.Card.Tag).Count, $"Card {id} must show one status badge per issue.");
+        {
+            var node = (UsbNode)item.Card.Tag;
+            // A host card also carries its merged root hub's issues.
+            int expected = node.Kind is "Controller" or "Root hub" ? OtherIssues(node).Count : Issues(node).Count;
+            Check(VisualDescendants(item.Card).Count(IsGlyph) == expected, $"Card {id} must show one status badge per issue.");
+        }
         static double Distance(Brush a, Brush b) { var (x, y) = (((SolidColorBrush)a).Color, ((SolidColorBrush)b).Color); return Math.Sqrt(Math.Pow(x.R - y.R, 2) + Math.Pow(x.G - y.G, 2) + Math.Pow(x.B - y.B, 2)); }
         foreach (var category in NodeVisuals.Categories)
             foreach (var severity in status) Check(Distance(Brush(category), severity) > 100, $"{category} is too close to a warning or error color.");
@@ -324,41 +330,57 @@ public partial class MainWindow
             var flaky = snapshot.Nodes.First(n => n.Id == "demo/root/3"); flaky.QuickReconnects = 3;
             snapshot.Nodes.First(n => n.Id == "demo/root/1/2").SpeedLimited = true;
             Draw(); UpdateLayout();
-            foreach (var device in snapshot.Nodes.Where(n => n.Kind == "Device" && cards.ContainsKey(n.Id)))
-                Check(Glyphs(cards[device.Id].Card).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Reserved, NodeVisuals.Metric.Power]), $"Card {device.Id} must mark link, reserved bandwidth and power with glyphs.");
-            Check(Glyphs(cards["demo/root/5"].Card).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Reserved, NodeVisuals.Metric.Power]), "Hub cards mark their link, what is reserved through them and requested power.");
-            // Bandwidth and power read as separate rows, and sockets, not a count, show which ports are used.
+            foreach (var node in snapshot.Nodes.Where(n => n.Kind is "Device" or "Hub" && n.MaxPowerMa != null && cards.ContainsKey(n.Id)))
+                Check(Glyphs(cards[node.Id].Card).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Power]), $"Card {node.Id} must mark its link rate and requested power with glyphs.");
+            // One line of figures, link then power; reserved bandwidth is the meter's job, and sockets, not
+            // a count, show which ports are used.
             foreach (var (id, item) in cards)
             {
-                var lines = VisualDescendants(item.Card).OfType<TextBlock>().Where(t => Glyphs(t).Count > 0).Select(Glyphs).ToList();
-                Check(lines.All(l => !l.Contains(NodeVisuals.Metric.Power) || l.Count == 1), $"Card {id} must show power on its own row.");
+                Check(VisualDescendants(item.Card).OfType<TextBlock>().Count(t => Glyphs(t).Count > 0) <= 1, $"Card {id} must keep its figures on one line.");
                 Check(VisualDescendants(item.Card).OfType<TextBlock>().All(t => !new System.Windows.Documents.TextRange(t.ContentStart, t.ContentEnd).Text.Contains("occupied")), $"Card {id} must not repeat port occupancy as text.");
             }
             Check(Issue(snapshot.Nodes.First(n => n.Id == "demo/root/5")) == "Hub adapter not detected · Over power budget", "Bus-power problems must be listed on the hub.");
             Check(Issue(snapshot.Nodes.First(n => n.Id == "demo/root/5/3")) == "Insufficient power", "A port refused for power must name the fault, not a generic port error.");
             Check(Issue(flaky) == "Unstable connection", "Quick reconnects must be listed as an unstable connection.");
-            // Speed and power warnings sit on the row of the number they qualify; others gather below.
+            // Speed and power warnings follow the figures they qualify, speed first; others gather below.
             List<string> Beside(string id, NodeVisuals.Metric metric) => VisualDescendants(cards[id].Card).OfType<WrapPanel>()
                 .Where(w => w.Children.OfType<TextBlock>().Any(t => Glyphs(t).Contains(metric)))
                 .SelectMany(w => VisualDescendants(w).OfType<TextBlock>().Where(t => t.FontWeight == FontWeights.SemiBold).Select(t => t.Text)).ToList();
             Check(Beside("demo/root/1/2", NodeVisuals.Metric.Link).SequenceEqual(["Reduced speed"]), "Reduced speed must sit beside the link rate.");
-            // Each device and hub with a known link and reservation gets one bar, under the connection row and above power.
+            // Hubs and streaming devices with a known link and reservation get one meter, directly under
+            // their figures: solid to what is reserved now, lighter out to the peak, labeled on both.
+            int peaked = 0;
             foreach (var (id, item) in cards)
             {
                 var node = (UsbNode)item.Card.Tag;
                 var panel = (StackPanel)item.Card.Child;
-                var bars = panel.Children.OfType<Border>().Where(b => b.Tag is NodeVisuals.LinkBarTag).ToList();
-                Check(bars.Count == (UsbBudgets.LinkUse(node) != null ? 1 : 0), $"Card {id} must show one link bar exactly when its link use is known.");
-                if (bars.Count == 0) continue;
-                var (used, capacity, _) = UsbBudgets.LinkUse(node)!.Value;
-                var fill = ((Grid)bars[0].Child).ColumnDefinitions[0].Width.Value;
-                Check(Math.Abs(fill - Math.Max(used / capacity, used > 0 ? 0.015 : 0)) < 1e-9, $"Card {id}'s bar must fill to its share of the link.");
+                var meters = panel.Children.OfType<Border>().Where(b => b.Tag is NodeVisuals.MeterTag).ToList();
+                Check(meters.Count == (ShowsMeter(node) ? 1 : 0), $"Card {id} must show a meter exactly when its reservations matter and are known.");
+                if (meters.Count == 0) continue;
+                var (now, peak, capacity, label) = MeterFor(node)!.Value;
+                var layers = (Grid)meters[0].Child;
+                var bars = (Grid)layers.Children[0];
+                double solid = Math.Clamp(now / capacity, 0, 1); if (solid > 0) solid = Math.Max(solid, 0.015);
+                double reach = Math.Max(Math.Clamp(peak / capacity, 0, 1), solid);
+                // Drawn widths, not just the requested shares: nothing in the track may stretch the fill.
+                var columns = bars.ColumnDefinitions;
+                Check(Math.Abs(columns[0].ActualWidth - solid * bars.ActualWidth) < 0.5 && Math.Abs(columns[0].ActualWidth + columns[1].ActualWidth - reach * bars.ActualWidth) < 0.5, $"Card {id}'s meter must fill to what is reserved and extend to the peak.");
+                if (reach > solid) peaked++;
                 // An empty track must look empty on every tint: surface inside, the card's edge as outline.
-                Check(bars[0].Background == Brush("Surface") && bars[0].BorderBrush == Brush(NodeVisuals.Edge(node)) && ((Border)((Grid)bars[0].Child).Children[0]).Background == Brush("Accent"), $"Card {id}'s bar must be an outlined surface track with an accent fill.");
-                int at = panel.Children.IndexOf(bars[0]);
-                bool Holds(UIElement e, NodeVisuals.Metric m) => Glyphs(e).Contains(m) && !(e is Panel p && p.Children.OfType<Border>().Any(b => b.Tag is NodeVisuals.LinkBarTag));
-                Check(Holds(panel.Children[at - 1], NodeVisuals.Metric.Link) && (node.MaxPowerMa == null || Holds(panel.Children[at + 1], NodeVisuals.Metric.Power)), $"Card {id}'s bar must sit between its connection and power rows.");
+                var fill = (Border)bars.Children[0];
+                Check(meters[0].Background == Brush("Surface") && meters[0].BorderBrush == Brush(NodeVisuals.Edge(node)) && fill.Background == Brush("Accent"), $"Card {id}'s meter must be an outlined surface track with an accent fill.");
+                // The label is drawn twice, dark across the track and light clipped to the fill, so it reads
+                // on both; screen readers hear it once.
+                var labels = layers.Children.OfType<TextBlock>().ToList();
+                double lit = Math.Max(0, fill.ActualWidth - labels[1].Margin.Left);
+                var clip = labels[1].Clip?.Bounds ?? new Rect(0, 0, 1e6, 1e6);
+                Check(labels.Count == 2 && labels.All(t => t.Text == label) && labels[0].Foreground == Brush("TextPrimary") && labels[1].Foreground == Brush("OnAccent")
+                    && (lit == 0 ? clip.IsEmpty || clip.Width == 0 : Math.Abs(clip.Width - lit) < 0.5), $"Card {id}'s meter label must read on the track and on the fill.");
+                Check(System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(labels[1]) == null, $"Card {id}'s meter label must be read aloud only once.");
+                int at = panel.Children.IndexOf(meters[0]);
+                Check(at > 0 && Glyphs(panel.Children[at - 1]).Contains(NodeVisuals.Metric.Link), $"Card {id}'s meter must sit directly under its figures.");
             }
+            Check(peaked > 0, "The sample must show a meter that extends to a higher peak.");
             Check(Beside("demo/root/5", NodeVisuals.Metric.Power).SequenceEqual(["Hub adapter not detected", "Over power budget"]), "Hub power warnings must sit beside its power request.");
             Check(Beside("demo/root/5/1", NodeVisuals.Metric.Power).SequenceEqual(["Power at risk"]), "Power at risk must sit beside the power request.");
             Check(Beside("demo/root/5/3", NodeVisuals.Metric.Power).SequenceEqual(["Insufficient power"]), "A power fault must sit beside the power request.");
@@ -527,7 +549,7 @@ public partial class MainWindow
                         Check(horizontal ? cards[child.Id].Point.X >= bounds.Right + TopologyLayout.LevelGap : cards[child.Id].Point.Y >= bounds.Bottom + TopologyLayout.LevelGap, "Variable-height parent overlaps its children.");
                 }
                 Check(portSlots.Count == snapshot.Nodes.Count(n => n.Kind == "Empty port") && cards.Values.All(c => ((UsbNode)c.Card.Tag).Kind != "Empty port"), "Empty ports must render as slots, not full cards.");
-                int logicalPorts = snapshot.Nodes.Where(n => cards.ContainsKey(n.Id) && n.Kind is "Hub" or "Root hub").Sum(n => n.Children.Count);
+                int logicalPorts = snapshot.Nodes.Where(n => n.Kind is "Hub" or "Root hub" && cards.ContainsKey(CardNode(n).Id)).Sum(n => n.Children.Count);
                 Check(portSlots.Count + connectedPorts.Count == logicalPorts, "Every logical port must be drawn on its hub.");
                 Check(portSlots.Values.All(b => ((UIElement)b.Content).Opacity < 1) && connectedPorts.Values.All(b => ((UIElement)b.Content).Opacity == 1), "Empty ports must look unoccupied.");
                 ShowDetails(); UpdateIssues(); UpdateLayout();

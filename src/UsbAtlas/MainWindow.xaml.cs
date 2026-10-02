@@ -38,7 +38,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, empty slots, search navigation, issues, power and stability issues, link/reserved/power glyphs, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link/power figures, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -67,7 +67,8 @@ public partial class MainWindow : Window
             snapshot = next;
             selected = snapshot.Nodes.FirstOrDefault(x => x.Id == id) ?? snapshot.Nodes.FirstOrDefault(x => x.Kind == "Hub") ?? snapshot.Controllers.FirstOrDefault();
             DeviceCount.Text = snapshot.Nodes.Count(x => x.Kind == "Device").ToString();
-            HubCount.Text = $"{snapshot.Nodes.Count(x => x.Kind is "Hub" or "Root hub")} / {snapshot.Controllers.Count}";
+            // A root hub merged into its host's card is counted as the host, not as a hub.
+            HubCount.Text = $"{snapshot.Nodes.Count(x => x.Kind == "Hub") + snapshot.Controllers.Where(c => MergedRoot(c) == null).Sum(c => c.Children.Count(r => r.Kind == "Root hub"))} / {snapshot.Controllers.Count}";
             PortCount.Text = snapshot.Nodes.Count(x => x.Kind == "Empty port").ToString();
             DemoButton.Content = demo ? "My devices" : "Sample";
             StatusText.Text = (demo ? "Sample topology  ·  " : "Local snapshot  ·  ") + $"Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(x => x.Kind == "Unavailable")} port errors";
@@ -225,7 +226,8 @@ public partial class MainWindow : Window
             Field("Supply capacity", "Unknown · not measured");
         }
         Section("Upstream path");
-        var chain = FindPath(node.Id);
+        // A merged root hub is part of its host, so the path reads H01 › 03.
+        var chain = FindPath(node.Id).Where(n => n.Id == node.Id || !mergedHosts.ContainsKey(n.Id)).ToList();
         var pathRow = new WrapPanel();
         foreach (var ancestor in chain)
         {
@@ -312,7 +314,7 @@ public partial class MainWindow : Window
     private void LocateClick(object sender, RoutedEventArgs e)
     {
         if (selected == null) return;
-        var targetId = selected.Kind == "Empty port" ? FindPath(selected.Id).SkipLast(1).LastOrDefault()?.Id : selected.Id;
+        var targetId = selected.Kind == "Empty port" ? FindPath(selected.Id).SkipLast(1).Select(CardNode).LastOrDefault()?.Id : selected.Id;
         if (targetId == null || !cards.TryGetValue(targetId, out var item)) return;
         ResetPan();
         SetZoom(1); GraphScroll.UpdateLayout();
@@ -447,7 +449,7 @@ public partial class MainWindow : Window
         {
             Search.Text = target.Name; ApplySearch();
             Check(cards.ContainsKey(target.Id), "Search lost the matching device.");
-            Check(FindPath(target.Id).All(n => cards.ContainsKey(n.Id)), "Search lost a matching device's ancestors.");
+            Check(FindPath(target.Id).All(n => cards.ContainsKey(CardNode(n).Id)), "Search lost a matching device's ancestors.");
             Search.Text = "__usb_atlas_no_match__"; ApplySearch();
             Check(cards.Count == 0 && EmptyMessage.Visibility == Visibility.Visible, "Empty search state is not visible.");
             Search.Text = ""; ApplySearch();
@@ -456,7 +458,7 @@ public partial class MainWindow : Window
         if (root != null)
         {
             folded.Add(root.Id); Draw();
-            Check(cards.ContainsKey(root.Id) && root.Children.All(n => !cards.ContainsKey(n.Id)), "Collapsed branch still shows descendants.");
+            Check(cards.ContainsKey(root.Id) && root.Walk().All(n => n == root || !cards.ContainsKey(n.Id)), "Collapsed branch still shows descendants.");
             folded.Remove(root.Id); Draw();
         }
         if (selected != null)

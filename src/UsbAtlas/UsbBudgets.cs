@@ -69,6 +69,20 @@ internal static class UsbBudgets
         return (total, unknown);
     }
 
+    // The most a node's link could reserve with it and everything behind it at their busiest settings.
+    // Cameras and audio reserve little while idle and far more while streaming.
+    internal static (double Mbps, int Unknown) PeakThroughLink(UsbNode n)
+    {
+        double total = Math.Max(n.PeakReservedMbps ?? 0, n.ReservedMbps ?? 0);
+        int unknown = n.ReservedMbps == null && n.PeakReservedMbps == null ? 1 : 0;
+        if (n.Kind == "Hub")
+            foreach (var child in n.Children.Where(c => c.Kind is "Device" or "Hub"))
+            {
+                var (mbps, missing) = PeakThroughLink(child); total += mbps; unknown += missing;
+            }
+        return (total, unknown);
+    }
+
     // How full a device's or hub's link is with reservations, when both sides are known.
     internal static (double Reserved, double Capacity, int Unknown)? LinkUse(UsbNode n)
     {

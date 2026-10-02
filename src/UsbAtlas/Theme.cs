@@ -16,7 +16,7 @@ internal static class Theme
         ("HostSurface", "#EAEEEF", "#202731"), ("HostBorder", "#DCE1E3", "#303A47"),
         ("Border", "#D5D9DC", "#3A4451"), ("Divider", "#E5E8EB", "#303843"),
         ("Hover", "#E9EDF2", "#303B49"), ("Pressed", "#DCE4EE", "#3A485B"),
-        ("Accent", "#4772B2", "#86ADE5"), ("Selection", "#F2F6FC", "#27364C"), ("SelectionStrong", "#DCE6F4", "#304A6E"),
+        ("Accent", "#4772B2", "#86ADE5"), ("Selection", "#F2F6FC", "#27364C"), ("SelectionStrong", "#DCE6F4", "#304A6E"), ("OnAccent", "#FFFFFF", "#14181E"),
         ("Primary", "#253448", "#3E597B"), ("PrimaryHover", "#3D516B", "#4D6B92"),
         ("Focus", "#7097CF", "#ABC8EF"), ("BorderHover", "#93A5B7", "#7B91AD"),
         ("Subtle", "#FAFBFC", "#242B34"), ("Wire", "#B8C0C5", "#596575"),

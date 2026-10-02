@@ -32,19 +32,20 @@ public partial class MainWindow
                 // The name fills the row and trims, so the tree never scrolls sideways; the tooltip has the full name.
                 var header = new DockPanel();
                 var icon = NodeVisuals.Icon(node, 16); icon.Margin = new Thickness(0, 0, 6, 0); DockPanel.SetDock(icon, Dock.Left); header.Children.Add(icon);
-                var issues = Issues(node);
+                var issues = node.Kind is "Controller" or "Root hub" ? OtherIssues(node) : Issues(node);
                 if (issues.Count > 0)
                 {
                     var glyph = NodeVisuals.StatusGlyph(issues.Max(i => i.Severity)); glyph.Margin = new Thickness(6, 0, 0, 0);
                     DockPanel.SetDock(glyph, Dock.Right); header.Children.Add(glyph);
                 }
-                header.Children.Add(new TextBlock { Text = (node.Port > 0 ? $"{node.Port:00} · " : "") + node.DisplayName, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+                header.Children.Add(new TextBlock { Text = (node.Port > 0 ? $"{node.Port:00} · " : "") + NodeVisuals.ShortName(node), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
                 var item = new TreeViewItem { Header = header, Tag = node, IsExpanded = appliedQuery.Length > 0 || !collapsedTreeBranches.Contains(node.Id), ToolTip = $"{node.DisplayName}\n{NodeVisuals.Label(node)} · {node.Status}\n{pathLabels.GetValueOrDefault(node.Id)}\n{Issue(node)}" };
                 System.Windows.Automation.AutomationProperties.SetName(item, $"{node.DisplayName}, {NodeVisuals.Label(node)}" + (node.Port > 0 ? $", port {node.Port}" : ""));
                 item.Expanded += (_, e) => { if (!syncingTree && appliedQuery.Length == 0 && ReferenceEquals(e.OriginalSource, item)) collapsedTreeBranches.Remove(node.Id); };
                 item.Collapsed += (_, e) => { if (!syncingTree && appliedQuery.Length == 0 && ReferenceEquals(e.OriginalSource, item)) collapsedTreeBranches.Add(node.Id); };
                 treeItems[node.Id] = item;
-                foreach (var child in node.Children.Where(Include).OrderBy(n => n.Port)) item.Items.Add(Create(child));
+                // As on the canvas, a controller with one root hub is one host whose children are its root ports.
+                foreach (var child in (MergedRoot(node) ?? node).Children.Where(Include).OrderBy(n => n.Port)) item.Items.Add(Create(child));
                 return item;
             }
             foreach (var root in snapshot.Controllers.Where(Visible)) DeviceTree.Items.Add(Create(root));

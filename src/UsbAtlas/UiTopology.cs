@@ -45,41 +45,38 @@ public partial class MainWindow
         _ => IssueRow.Other
     };
     private sealed record MetricRow(List<(NodeVisuals.Metric? Glyph, string Text, string Words)> Parts, List<(NodeVisuals.Severity Severity, string Text)> Issues);
-    // A card's metric rows, each value behind its glyph: the connection (link rate, reserved periodic
-    // bandwidth, USB-C) on one row and requested power on its own, each followed by its own warnings.
-    // Port sockets already show occupancy.
-    private static List<MetricRow> CardMetrics(UsbNode n)
+    // A card's one line of figures, link rate then requested power, followed by the warnings that
+    // qualify them. Reserved bandwidth lives in the meter where it can matter, the parent's socket shows
+    // USB-C, and sockets, not a count, show occupancy.
+    private static MetricRow CardFigures(UsbNode n)
     {
-        var issues = Issues(n);
-        var linkIssues = issues.Where(i => RowOf(i.Text) == IssueRow.Link).ToList();
-        var powerIssues = issues.Where(i => RowOf(i.Text) == IssueRow.Power).ToList();
-        var connection = new List<(NodeVisuals.Metric?, string, string)>();
+        var issues = Issues(n).Where(i => RowOf(i.Text) != IssueRow.Other).OrderBy(i => RowOf(i.Text)).ToList();
+        var parts = new List<(NodeVisuals.Metric?, string, string)>();
         string link = ShortSpeed(n);
-        switch (n.Kind)
-        {
-            case "Controller": connection.Add((null, $"{n.Children.Count} root buses", $"{n.Children.Count} root buses")); break;
-            case "Root hub": break;
-            // A named fault's badge already says what the status would.
-            case "Unavailable": if (linkIssues.Count == 0 && powerIssues.Count == 0) connection.Add((null, n.Status, n.Status)); break;
-            default:
-                connection.Add((NodeVisuals.Metric.Link, link, link + " link"));
-                // A hub's reservation is everything behind it sharing its upstream link.
-                if (n.ReservedMbps != null)
-                {
-                    var (reserved, _) = UsbBudgets.ReservedThroughLink(n);
-                    connection.Add((NodeVisuals.Metric.Reserved, UsbBudgets.Rate(reserved), UsbBudgets.Rate(reserved) + (n.Kind == "Hub" ? " reserved through this hub" : " reserved")));
-                }
-                break;
-        }
-        if (n.PortConnectorIsTypeC == true && n.Kind is not ("Controller" or "Root hub")) connection.Add((null, "USB-C", "USB-C port"));
-        var rows = new List<MetricRow>();
-        if (connection.Count > 0 || linkIssues.Count > 0) rows.Add(new(connection, linkIssues));
-        if (n.Kind is "Device" or "Hub" or "Unavailable" && (n.MaxPowerMa.HasValue || powerIssues.Count > 0))
-            rows.Add(new([(NodeVisuals.Metric.Power, n.MaxPowerMa is int ma ? $"{ma} mA" : "Unknown", n.MaxPowerMa is int mw ? $"{mw} mA requested" : "power request unknown")], powerIssues));
-        return rows;
+        // A named fault's badge already says what the status would.
+        if (n.Kind == "Unavailable" && issues.Count == 0) parts.Add((null, n.Status, n.Status));
+        else if (n.Kind is "Device" or "Hub") parts.Add((NodeVisuals.Metric.Link, link, link + " link"));
+        if (n.Kind is "Device" or "Hub" or "Unavailable" && (n.MaxPowerMa.HasValue || issues.Any(i => RowOf(i.Text) == IssueRow.Power)))
+            parts.Add((NodeVisuals.Metric.Power, n.MaxPowerMa is int ma ? $"{ma} mA" : "Unknown", n.MaxPowerMa is int mw ? $"{mw} mA requested" : "power request unknown"));
+        return new(parts, issues);
     }
     private static List<(NodeVisuals.Severity Severity, string Text)> OtherIssues(UsbNode n) =>
-        n.Kind is "Controller" or "Root hub" ? Issues(n) : Issues(n).Where(i => RowOf(i.Text) == IssueRow.Other).ToList();
+        n.Kind is "Controller" or "Root hub" ? Issues(n).Concat(MergedRoot(n) is UsbNode root ? Issues(root) : []).Distinct().ToList() : Issues(n).Where(i => RowOf(i.Text) == IssueRow.Other).ToList();
+    // Reserved bandwidth earns a place on a card where it can decide anything: hubs, whose upstream link
+    // everything behind them shares, and devices that stream, which reserve far more while active.
+    private static bool ShowsMeter(UsbNode n) => UsbBudgets.LinkUse(n) != null
+        && (n.Kind == "Hub" || NodeVisuals.Color(n) is "Audio" or "Video" || (n.PeakReservedMbps ?? 0) - (n.ReservedMbps ?? 0) >= 0.5);
+    private static (double Now, double Peak, double Capacity, string Label)? MeterFor(UsbNode n)
+    {
+        if (!ShowsMeter(n) || UsbBudgets.LinkUse(n) is not (var now, var capacity, _)) return null;
+        double peak = Math.Max(now, UsbBudgets.PeakThroughLink(n).Mbps);
+        bool more = peak > now + 0.01;
+        string of = " of " + UsbBudgets.Rate(capacity);
+        string label = n.Kind == "Hub"
+            ? UsbBudgets.Rate(more ? peak : now) + of + (more ? " at peak" : " reserved")
+            : more ? "up to " + UsbBudgets.Rate(peak) + of : UsbBudgets.Rate(now) + of + " reserved";
+        return (now, peak, capacity, label);
+    }
     private static string MetricHelp(UsbNode n)
     {
         var lines = new List<string>();
@@ -89,21 +86,31 @@ public partial class MainWindow
         else if (n.ReservedMbps is double reserved)
             lines.Add($"Reserved: {UsbBudgets.Rate(reserved)} of bus time held by open interrupt and isochronous pipes" + (n.PeakReservedMbps > reserved ? $", up to {UsbBudgets.Rate(n.PeakReservedMbps.Value)} when fully active" : "") + ". Bulk transfers, such as storage, reserve nothing and share what is left.");
         if (UsbBudgets.LinkUse(n) is (var used, var capacity, _))
-            lines.Add($"Bar: reservations fill {UsbBudgets.Share(used, capacity)}, the most this link reserves for timed transfers. It shows bus time set aside, not traffic measured.");
+            lines.Add($"Meter: reservations fill {UsbBudgets.Share(used, capacity)}, the most this link reserves for timed transfers; the lighter part runs to {UsbBudgets.Rate(Math.Max(used, UsbBudgets.PeakThroughLink(n).Mbps))} if everything on it streams at once. It shows bus time set aside, not traffic measured.");
         if (n.MaxPowerMa is int ma) lines.Add($"Power: requests up to {ma} mA ({ma * 0.005:0.##} W at 5 V) in its descriptor. A declared maximum, not a measurement.");
         return string.Join("\n", lines);
     }
     private static string Issue(UsbNode n) => string.Join(" · ", Issues(n).Select(i => i.Text));
     private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
     private bool Visible(UsbNode n) => visibleIds.Contains(n.Id);
-    private List<UsbNode> Children(UsbNode n) => folded.Contains(n.Id) && appliedQuery.Length == 0 ? [] : n.Children.Where(c => c.Kind != "Empty port" && Visible(c)).OrderBy(c => c.Port).ToList();
+    // On Windows each xHCI controller has one root hub, and to the user they are one thing: a host whose
+    // sockets are the root ports. They share one card; a controller with several root hubs, or none
+    // readable, keeps them apart.
+    private readonly Dictionary<string, UsbNode> mergedHosts = [];
+    private static UsbNode? MergedRoot(UsbNode n) => n.Kind == "Controller" && n.Children.Count == 1 && n.Children[0].Kind == "Root hub" ? n.Children[0] : null;
+    // The node whose card shows this one: a merged root hub is drawn by its controller.
+    private UsbNode CardNode(UsbNode n) => mergedHosts.GetValueOrDefault(n.Id) ?? n;
+    private List<UsbNode> Children(UsbNode n) => folded.Contains(n.Id) && appliedQuery.Length == 0 ? [] : (MergedRoot(n) ?? n).Children.Where(c => c.Kind != "Empty port" && Visible(c)).OrderBy(c => c.Port).ToList();
     // Every logical port is drawn on its hub, occupied or not, so the sockets themselves show occupancy.
     // Cached per drawing pass; layout queries each hub's ports many times while choosing staircases.
     private List<UsbNode> EdgePorts(UsbNode n)
     {
         if (edgePortCache.TryGetValue(n.Id, out var ports)) return ports;
-        return edgePortCache[n.Id] = n.Kind is "Hub" or "Root hub" ? n.Children.OrderBy(c => c.Port).ToList() : [];
+        return edgePortCache[n.Id] = n.Kind is "Hub" or "Root hub" ? n.Children.OrderBy(c => c.Port).ToList() : MergedRoot(n) is UsbNode root ? EdgePorts(root) : [];
     }
+    // Socket geometry: 24×16 slots, 28 apart along a vertical card's bottom edge and 20 apart down a
+    // horizontal card's right edge.
+    private const double SocketWidth = 24, SocketHeight = 16, SocketPitch = 28, SocketStep = 20;
     // Ports spread evenly along the edge; a staircase gathers them at the card's right end
     // so its column of devices can tuck under the card.
     private double? PortOffset(UsbNode parent, UsbNode child)
@@ -112,19 +119,20 @@ public partial class MainWindow
         int i = ports.FindIndex(p => p.Id == child.Id);
         if (i < 0) return null;
         double edge = horizontalTree ? HeightFor(parent) : WidthFor(parent);
-        return stackedHubs.Contains(parent.Id) ? edge - 30 - (ports.Count - 1 - i) * 38 : edge * (i + 0.5) / ports.Count;
+        return stackedHubs.Contains(parent.Id) ? edge - 22 - (ports.Count - 1 - i) * SocketPitch : edge * (i + 0.5) / ports.Count;
     }
-    private double WidthFor(UsbNode n) => horizontalTree ? CardWidth + (EdgePorts(n).Count > 0 ? 44 : 0) : Math.Max(CardWidth, EdgePorts(n).Count * 38 + 24);
+    private double WidthFor(UsbNode n) => horizontalTree ? CardWidth + (EdgePorts(n).Count > 0 ? SocketWidth + 6 : 0) : Math.Max(CardWidth, EdgePorts(n).Count * SocketPitch + 20);
+    // Card height from its rows: the name, a custom label's detected name, the figures line (taller when
+    // its warnings wrap) or a host's summary, the bandwidth meter, other warnings, and the socket strip.
     private double HeightFor(UsbNode n)
     {
-        double height = n.Kind is "Controller" or "Root hub" ? 84 : CardHeight;
-        if (n.UserLabel.Length > 0) height += 18;
-        // The base height holds one plain metric line; badges make a row taller and can wrap it.
-        if (n.Kind is not ("Controller" or "Root hub")) height += CardMetrics(n).Sum(r => RowHeight(n, r)) - 17;
-        if (UsbBudgets.LinkUse(n) != null) height += 11;
+        double height = 2 + 8 + 22 + 8;
+        if (n.UserLabel.Length > 0) height += 15;
+        height += n.Kind is "Controller" or "Root hub" ? 18 : RowHeight(n, CardFigures(n));
+        if (ShowsMeter(n)) height += 4 + 14;
         height += 24 * BadgeRows(n, OtherIssues(n));
         int ports = EdgePorts(n).Count;
-        if (ports > 0) height = horizontalTree ? Math.Max(height, ports * 30 + 16) : height + 44;
+        if (ports > 0) height = horizontalTree ? Math.Max(height, ports * SocketStep + 12) : height + 6 + SocketHeight;
         return height;
     }
     // Lines that badges, after any leading text, wrap onto, estimated from label lengths at the badge font size.
@@ -144,12 +152,14 @@ public partial class MainWindow
     private void PrepareGraph()
     {
         appliedQuery = Search.Text.Trim();
-        pathLabels.Clear(); visibleIds.Clear(); matches.Clear(); edgePortCache.Clear();
+        pathLabels.Clear(); visibleIds.Clear(); matches.Clear(); edgePortCache.Clear(); mergedHosts.Clear();
+        foreach (var controller in snapshot.Controllers) if (MergedRoot(controller) is UsbNode root) mergedHosts[root.Id] = controller;
+        // A merged root hub shares its controller's path, so root ports read H01/03.
         void Visit(UsbNode n, string path)
         {
             pathLabels[n.Id] = path;
-            foreach (var child in n.Children) Visit(child, path + "/" + (child.Port > 0 ? child.Port.ToString("00") : "root"));
-            bool match = appliedQuery.Length > 0 && Matches(n, appliedQuery);
+            foreach (var child in n.Children) Visit(child, mergedHosts.ContainsKey(child.Id) ? path : path + "/" + (child.Port > 0 ? child.Port.ToString("00") : "root"));
+            bool match = appliedQuery.Length > 0 && !mergedHosts.ContainsKey(n.Id) && Matches(n, appliedQuery);
             if (match) matches.Add(n);
             if (appliedQuery.Length == 0 || match || n.Children.Any(c => visibleIds.Contains(c.Id))) visibleIds.Add(n.Id);
         }
@@ -229,47 +239,45 @@ public partial class MainWindow
         var bounds = new Rect(x, y, width, height);
         bool host = node.Kind is "Controller" or "Root hub";
         var panel = new StackPanel();
-        // The type icon anchors the upper left; the type label and the name stack beside it. The logical
-        // path lives in the inspector, leaving the upper right to the fold button.
-        var identity = new DockPanel { Height = host ? 36 : 54 };
-        var icon = NodeVisuals.Icon(node, host ? 22 : 30); icon.Margin = new Thickness(0, 1, 9, 0); icon.VerticalAlignment = VerticalAlignment.Top;
-        DockPanel.SetDock(icon, Dock.Left); identity.Children.Add(icon);
-        if (node.Children.Any(c => c.Kind != "Empty port"))
+        // The name leads: icon, shortened name and fold button on one line. Type and location are in
+        // the tooltip, tree and inspector; the color already says what a device does.
+        var title = new DockPanel { Height = 22 };
+        var icon = NodeVisuals.Icon(node, 20); icon.Margin = new Thickness(0, 0, 7, 0);
+        DockPanel.SetDock(icon, Dock.Left); title.Children.Add(icon);
+        if ((MergedRoot(node) ?? node).Children.Any(c => c.Kind != "Empty port"))
         {
-            var fold = new Button { Content = folded.Contains(node.Id) && appliedQuery.Length == 0 ? "+" : "−", Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Top, ToolTip = "Expand / collapse branch", IsEnabled = appliedQuery.Length == 0 };
+            var fold = new Button { Content = folded.Contains(node.Id) && appliedQuery.Length == 0 ? "+" : "−", Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, ToolTip = "Expand / collapse branch", IsEnabled = appliedQuery.Length == 0 };
             fold.Click += (_, e) => { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); e.Handled = true; };
-            DockPanel.SetDock(fold, Dock.Right); identity.Children.Add(fold);
+            DockPanel.SetDock(fold, Dock.Right); title.Children.Add(fold);
         }
-        var names = new StackPanel();
-        names.Children.Add(new TextBlock { Text = NodeVisuals.Label(node), FontSize = 11, Foreground = Brush(NodeVisuals.Color(node)), TextTrimming = TextTrimming.CharacterEllipsis });
-        // Every card names its hardware at the host cards' 13 px; devices wrap to two lines.
-        names.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = 13, FontWeight = FontWeights.SemiBold, TextWrapping = host ? TextWrapping.NoWrap : TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = host ? 20 : 36, Margin = new Thickness(0, 1, 0, 0) });
-        identity.Children.Add(names);
-        panel.Children.Add(identity);
+        title.Children.Add(new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 13.5, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName });
+        panel.Children.Add(title);
         // Under a custom label, keep the detected name visible; where a name came from is in Detection details.
         if (node.UserLabel.Length > 0)
-            panel.Children.Add(new TextBlock { Text = "Detected: " + node.Name, FontSize = 10, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 2, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
-        var rows = CardMetrics(node);
-        string metric = string.Join(" · ", rows.SelectMany(r => r.Parts).Select(p => p.Words));
-        UIElement? firstMetricRow = null;
-        if (!host)
-            for (int i = 0; i < rows.Count; i++)
-            {
-                var line = NodeVisuals.MetricLine(rows[i].Parts.Select(p => (p.Glyph, p.Text)));
-                line.ToolTip = MetricHelp(node); line.VerticalAlignment = VerticalAlignment.Center;
-                if (rows[i].Issues.Count == 0) { line.Margin = new Thickness(0, i == 0 ? 4 : 2, 0, 0); panel.Children.Add(line); firstMetricRow ??= line; continue; }
-                var row = new WrapPanel { Margin = new Thickness(0, i == 0 ? 3 : 2, 0, 0) };
-                if (rows[i].Parts.Count > 0) { line.Margin = new Thickness(0, 0, 8, 0); row.Children.Add(line); }
-                foreach (var (severity, text) in rows[i].Issues) { var badge = NodeVisuals.StatusBadge(severity, text); badge.Margin = new Thickness(0, 1, 4, 1); badge.ToolTip = IssueHelp(text); row.Children.Add(badge); }
-                panel.Children.Add(row); firstMetricRow ??= row;
-            }
-        // The link bar sits under the connection row, before power.
-        if (!host && UsbBudgets.LinkUse(node) is (var use, var room, _) && rows.Count > 0)
+            panel.Children.Add(new TextBlock { Text = "Detected: " + node.Name, FontSize = 10, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
+        var figures = CardFigures(node);
+        string metric = string.Join(" · ", figures.Parts.Select(p => p.Words));
+        if (host)
+            panel.Children.Add(new TextBlock { Text = pathLabels[node.Id] + " · " + ProtocolSummary(node), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0), ToolTip = "Ports: " + ProtocolSummary(node) + "\nSupply capacity: unknown; charging limits are not queried." });
+        else if (figures.Parts.Count > 0 || figures.Issues.Count > 0)
         {
-            var bar = NodeVisuals.LinkBar(use / room, NodeVisuals.Edge(node)); bar.Margin = new Thickness(0, 4, 0, 0); bar.ToolTip = MetricHelp(node);
-            panel.Children.Insert(panel.Children.IndexOf(firstMetricRow!) + 1, bar);
+            // One line of figures; the warnings that qualify them follow on the same row and wrap below.
+            var row = new WrapPanel { Margin = new Thickness(0, 3, 0, 0) };
+            if (figures.Parts.Count > 0)
+            {
+                var line = NodeVisuals.MetricLine(figures.Parts.Select(p => (p.Glyph, p.Text)));
+                line.ToolTip = MetricHelp(node); line.VerticalAlignment = VerticalAlignment.Center; line.Margin = new Thickness(0, 0, 8, 0);
+                row.Children.Add(line);
+            }
+            foreach (var (severity, text) in figures.Issues) { var badge = NodeVisuals.StatusBadge(severity, text); badge.Margin = new Thickness(0, 1, 4, 1); badge.ToolTip = IssueHelp(text); row.Children.Add(badge); }
+            panel.Children.Add(row);
         }
-        else panel.Children.Add(new TextBlock { Text = "Ports: " + ProtocolSummary(node), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0), ToolTip = ProtocolSummary(node) + "\nSupply capacity: unknown; charging limits are not queried.\n" + metric });
+        if (MeterFor(node) is var (now, peak, capacity, label))
+        {
+            var meter = NodeVisuals.Meter(now, peak, capacity, label, NodeVisuals.Edge(node));
+            meter.Margin = new Thickness(0, 4, 0, 0); meter.ToolTip = MetricHelp(node);
+            panel.Children.Add(meter);
+        }
         var issues = OtherIssues(node);
         if (issues.Count > 0)
         {
@@ -278,8 +286,8 @@ public partial class MainWindow
             panel.Children.Add(badges);
         }
         var edgePorts = EdgePorts(node);
-        var padding = edgePorts.Count == 0 ? new Thickness(11, 7, 11, 7) : horizontalTree ? new Thickness(11, 7, 55, 7) : new Thickness(11, 7, 11, 51);
-        var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush(NodeVisuals.Fill(node)), BorderBrush = Brush(NodeVisuals.Edge(node)), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.Name + "\n" + metric + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
+        var padding = edgePorts.Count == 0 ? new Thickness(10, 8, 10, 8) : horizontalTree ? new Thickness(10, 8, 10 + SocketWidth + 6, 8) : new Thickness(10, 8, 10, 8 + 6 + SocketHeight);
+        var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush(NodeVisuals.Fill(node)), BorderBrush = Brush(NodeVisuals.Edge(node)), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.DisplayName + "\n" + NodeVisuals.Label(node) + (metric.Length > 0 ? " · " + metric : "") + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
         System.Windows.Automation.AutomationProperties.SetName(card, node.DisplayName + ", " + NodeVisuals.Label(node) + ", " + metric + ", " + Issue(node));
         card.MouseLeftButtonDown += (_, e) => { card.Focus(); SelectNode(node); if (e.ClickCount == 2 && node.Children.Count > 0 && appliedQuery.Length == 0) { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); } e.Handled = true; };
         card.KeyDown += (_, e) =>
@@ -300,13 +308,10 @@ public partial class MainWindow
         {
             var port = edgePorts[i];
             double cross = (horizontalTree ? y : x) + PortOffset(node, port)!.Value;
-            var graphic = NodeVisuals.PortGraphic(port);
-            var content = new StackPanel { Orientation = horizontalTree ? Orientation.Horizontal : Orientation.Vertical };
-            content.Children.Add(new TextBlock { Text = port.Port.ToString("00"), FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
-            if (horizontalTree) graphic.LayoutTransform = new RotateTransform(90);
-            content.Children.Add(graphic);
-            if (port.Kind == "Empty port") content.Opacity = 0.5;
-            var button = new Button { Content = content, Tag = port, Width = horizontalTree ? 40 : 34, Height = horizontalTree ? 26 : 38, Padding = new Thickness(0), ToolTip = $"Logical port {port.Port} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{(port.PortConnectorIsTypeC == true ? "USB-C receptacle reported by Windows" : "Connector shape unknown")}" };
+            // A slot with its number inside: filled when in use, outlined when empty, a pill for USB-C.
+            var number = new TextBlock { Text = port.Port.ToString("00"), FontSize = 9.5, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            if (port.Kind == "Empty port") number.Opacity = 0.5;
+            var button = new Button { Content = number, Tag = port, Width = SocketWidth, Height = SocketHeight, Padding = new Thickness(0), Template = NodeVisuals.SocketTemplate(port.PortConnectorIsTypeC == true), Cursor = Cursors.Hand, ToolTip = $"Logical port {port.Port} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{(port.PortConnectorIsTypeC == true ? "USB-C receptacle reported by Windows" : "Connector shape not reported")}" };
             System.Windows.Automation.AutomationProperties.SetName(button, $"Port {port.Port}, {port.DisplayName}");
             button.Click += (_, e) => { SelectNode(port); e.Handled = true; };
             Canvas.SetLeft(button, horizontalTree ? bounds.Right - button.Width : cross - button.Width / 2);
@@ -349,6 +354,8 @@ public partial class MainWindow
     }
     private void SelectNode(UsbNode node)
     {
+        // A merged root hub is selected as its host card.
+        node = CardNode(node);
         bool changed = selected?.Id != node.Id;
         selected = snapshot.Nodes.FirstOrDefault(n => n.Id == node.Id) ?? node;
         UpdateSelection(revealInTree: true); ShowDetails();
@@ -409,12 +416,22 @@ public partial class MainWindow
             bool upstream = chain.Contains(id);
             wire.Stroke = Brush(upstream ? "Accent" : "Wire"); wire.StrokeThickness = upstream ? 2.25 : 1.5;
         }
-        // Occupied sockets get a solid outline; empty ones fade back, so occupancy reads even on folded hubs.
-        foreach (var (id, slot) in portSlots.Concat(connectedPorts))
+        // Occupied sockets fill in the color of their wire, accent on the selected path; empty ones are
+        // outlined, so occupancy reads even on folded hubs.
+        foreach (var (id, slot) in connectedPorts)
         {
-            bool empty = portSlots.ContainsKey(id);
-            slot.Background = Brush(id == selected?.Id ? "Selection" : "Surface");
-            slot.BorderBrush = Brush(id == selected?.Id || appliedQuery.Length > 0 && Matches((UsbNode)slot.Tag, appliedQuery) ? "Accent" : empty ? "Divider" : "BorderHover");
+            string ink = chain.Contains(id) ? "Accent" : "Wire";
+            slot.Background = slot.BorderBrush = Brush(ink);
+            slot.Foreground = Brush(ink == "Accent" ? "OnAccent" : "TextPrimary");
+            slot.BorderThickness = new Thickness(1);
+        }
+        foreach (var (id, slot) in portSlots)
+        {
+            bool chosen = id == selected?.Id, match = appliedQuery.Length > 0 && Matches((UsbNode)slot.Tag, appliedQuery);
+            slot.Background = Brush(chosen ? "Selection" : "Surface");
+            slot.BorderBrush = Brush(chosen || match ? "Accent" : "Border");
+            slot.Foreground = Brush("TextPrimary");
+            slot.BorderThickness = new Thickness(chosen || match ? 2 : 1);
         }
         LocateButton.IsEnabled = selected != null && (cards.ContainsKey(selected.Id) || portSlots.ContainsKey(selected.Id));
         int index = matches.FindIndex(n => n.Id == selected?.Id);
