@@ -83,6 +83,9 @@ internal static class SelfTests
         var studio = demo.Nodes.Single(n => n.Id == "demo/root/1");
         Check(UsbBudgets.LinkUse(studio) is (var through, 3600, 0) && Near(through, 98.3001), "A hub's link use adds up everything behind it.");
         Check(UsbBudgets.LinkUse(demo.Nodes.Single(n => n.Id == "demo/root/5/3")) == null && UsbBudgets.LinkUse(demo.Controllers[0]) == null, "Unavailable ports and hosts have no single link to fill.");
+        var crowded = new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [new UsbNode { Kind = "Device", LinkMbps = 480, ReservedMbps = 300 }, new UsbNode { Kind = "Device", LinkMbps = 12, ReservedMbps = 8 }] };
+        Check(UsbBudgets.LinkNearlyFull(crowded) && !UsbBudgets.LinkNearlyFull(crowded.Children[0]) && !UsbBudgets.LinkNearlyFull(studio), "A hub is nearly full when what it carries passes 80% of what its link can reserve.");
+        Check(!UsbBudgets.LinkNearlyFull(new UsbNode { Kind = "Hub", LinkMbps = 480, Children = [new UsbNode { Kind = "Device", ReservedMbps = 380 }] }), "Without the hub's own pipe list, link use stays unknown rather than nearly full.");
         Check(UsbBudgets.Share(98.3, 384) == "26% of 384 Mb/s" && UsbBudgets.Share(0.0064, 10.8) == "<1% of 10.8 Mb/s" && UsbBudgets.Share(0, 384) == "0% of 384 Mb/s", "Share formatting.");
         var travel = demo.Nodes.Single(n => n.Id == "demo/root/5");
         Check(travel.PowerWarnings.SequenceEqual(["Hub adapter not detected", "Over power budget"]), "A self-power-capable hub on bus power, over its upstream budget, must say so.");

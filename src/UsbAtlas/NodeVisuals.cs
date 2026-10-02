@@ -80,16 +80,17 @@ internal static class NodeVisuals
     // A thin track for a link, filled by the share of it that reservations hold. The fill is a tinted
     // segment so measured traffic can later be drawn as a solid layer in the same track.
     internal const string LinkBarTag = "link-bar";
-    // On a tinted card, pass the card's edge color as the track so it stays visible against the fill.
-    internal static Border LinkBar(double fraction, string track = "Divider")
+    // The track is an empty pipe, surface-colored inside a thin outline, so the unfilled part reads as
+    // empty on every card tint and theme. On a tinted card, pass its edge color as the outline.
+    internal static Border LinkBar(double fraction, string outline = "Divider")
     {
         fraction = Math.Clamp(fraction, 0, 1);
         if (fraction > 0) fraction = Math.Max(fraction, 0.015);
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(fraction, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - fraction, GridUnitType.Star) });
-        grid.Children.Add(new Border { Background = Ink("Accent"), Opacity = 0.75, CornerRadius = new CornerRadius(2.5) });
-        return new Border { Height = 5, CornerRadius = new CornerRadius(2.5), Background = Ink(track), Child = grid, Tag = LinkBarTag, ClipToBounds = true };
+        grid.Children.Add(new Border { Background = Ink("Accent"), CornerRadius = new CornerRadius(2) });
+        return new Border { Height = 7, CornerRadius = new CornerRadius(3.5), Background = Ink("Surface"), BorderBrush = Ink(outline), BorderThickness = new Thickness(1), Child = grid, Tag = LinkBarTag, ClipToBounds = true };
     }
     // One trimming line of metrics separated by middle dots; each value may carry its glyph.
     internal static TextBlock MetricLine(IEnumerable<(Metric? Glyph, string Text)> parts, double fontSize = 11)

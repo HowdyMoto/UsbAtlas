@@ -353,6 +353,8 @@ public partial class MainWindow
                 var (used, capacity, _) = UsbBudgets.LinkUse(node)!.Value;
                 var fill = ((Grid)bars[0].Child).ColumnDefinitions[0].Width.Value;
                 Check(Math.Abs(fill - Math.Max(used / capacity, used > 0 ? 0.015 : 0)) < 1e-9, $"Card {id}'s bar must fill to its share of the link.");
+                // An empty track must look empty on every tint: surface inside, the card's edge as outline.
+                Check(bars[0].Background == Brush("Surface") && bars[0].BorderBrush == Brush(NodeVisuals.Edge(node)) && ((Border)((Grid)bars[0].Child).Children[0]).Background == Brush("Accent"), $"Card {id}'s bar must be an outlined surface track with an accent fill.");
                 int at = panel.Children.IndexOf(bars[0]);
                 bool Holds(UIElement e, NodeVisuals.Metric m) => Glyphs(e).Contains(m) && !(e is Panel p && p.Children.OfType<Border>().Any(b => b.Tag is NodeVisuals.LinkBarTag));
                 Check(Holds(panel.Children[at - 1], NodeVisuals.Metric.Link) && (node.MaxPowerMa == null || Holds(panel.Children[at + 1], NodeVisuals.Metric.Power)), $"Card {id}'s bar must sit between its connection and power rows.");
@@ -372,12 +374,26 @@ public partial class MainWindow
                 SelectNode(snapshot.Nodes.First(n => n.Id == id)); UpdateLayout();
                 var metrics = Details.Children.OfType<Grid>().First(g => g.ColumnDefinitions.Count == 3);
                 Check(Glyphs(metrics).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Reserved, NodeVisuals.Metric.Power]), $"Inspector metrics for {id} must carry their glyphs.");
+                // Values fit their column at the default inspector width, including the longest forms.
+                foreach (var value in VisualDescendants(metrics).OfType<TextBlock>().Where(t => t.FontWeight == FontWeights.SemiBold))
+                    foreach (var text in new[] { value.Text, "≥10 Gb/s", "<0.1 kb/s", "1500 mA" })
+                    {
+                        var probe = new TextBlock { Text = text, FontSize = value.FontSize, FontWeight = value.FontWeight, FontFamily = value.FontFamily };
+                        probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                        Check(probe.DesiredSize.Width <= value.ActualWidth + 0.5, $"Inspector metric \"{text}\" trims at the default inspector width.");
+                    }
                 if (id == "demo/root/5/2")
                 {
                     var values = VisualDescendants(metrics).OfType<TextBlock>().Select(t => t.Text).ToList();
                     Check(values.Contains("12 Mb/s") && values.Contains("6.4 kb/s") && values.Contains("500 mA"), "Inspector metrics must show link, reserved bandwidth and requested power.");
                 }
             }
+            // A hub whose devices reserve most of its link warns beside its link rate; the devices themselves don't.
+            var studio = snapshot.Nodes.First(n => n.Id == "demo/root/1");
+            studio.Children[0].ReservedMbps = 1500; studio.Children[1].ReservedMbps = 1500;
+            Draw(); UpdateLayout();
+            Check(Beside("demo/root/1", NodeVisuals.Metric.Link).SequenceEqual(["Link nearly full"]) && !Issue(studio.Children[0]).Contains("Link nearly full"), "A nearly full hub link must warn beside the hub's link rate.");
+            Check(cards["demo/root/1"].Card.Child.DesiredSize.Height <= cards["demo/root/1"].Card.Height - cards["demo/root/1"].Card.Padding.Top - cards["demo/root/1"].Card.Padding.Bottom - 1, "The nearly-full warning must fit on the hub card.");
         }
         finally
         {

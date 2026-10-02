@@ -33,13 +33,14 @@ public partial class MainWindow
         if (n.SpeedLimited) issues.Add((NodeVisuals.Severity.Warning, "Reduced speed"));
         foreach (var warning in n.PowerWarnings) issues.Add((NodeVisuals.Severity.Warning, warning));
         if (n.QuickReconnects > 0) issues.Add((NodeVisuals.Severity.Warning, "Unstable connection"));
+        if (UsbBudgets.LinkNearlyFull(n)) issues.Add((NodeVisuals.Severity.Warning, "Link nearly full"));
         return issues;
     }
     private enum IssueRow { Other, Link, Power }
     // Speed and power problems sit beside the number they qualify; the rest gather below the metrics.
     private static IssueRow RowOf(string issue) => issue switch
     {
-        "Reduced speed" or "Insufficient bandwidth" => IssueRow.Link,
+        "Reduced speed" or "Insufficient bandwidth" or "Link nearly full" => IssueRow.Link,
         "Insufficient power" or "Overcurrent" or "Power at risk" or "Over power budget" or "Hub adapter not detected" => IssueRow.Power,
         _ => IssueRow.Other
     };
@@ -120,7 +121,7 @@ public partial class MainWindow
         if (n.UserLabel.Length > 0) height += 18;
         // The base height holds one plain metric line; badges make a row taller and can wrap it.
         if (n.Kind is not ("Controller" or "Root hub")) height += CardMetrics(n).Sum(r => RowHeight(n, r)) - 17;
-        if (UsbBudgets.LinkUse(n) != null) height += 9;
+        if (UsbBudgets.LinkUse(n) != null) height += 11;
         height += 24 * BadgeRows(n, OtherIssues(n));
         int ports = EdgePorts(n).Count;
         if (ports > 0) height = horizontalTree ? Math.Max(height, ports * 30 + 16) : height + 44;
@@ -458,7 +459,7 @@ public partial class MainWindow
         if (count == 0) { IssuesButton.Content = new TextBlock { Text = "No issues", Foreground = Brush("TextMuted") }; IssuesButton.ClearValue(BackgroundProperty); }
         else { IssuesButton.Content = NodeVisuals.StatusContent(worst, count == 1 ? "1 issue" : $"{count} issues"); IssuesButton.Background = Brush(worst == NodeVisuals.Severity.Error ? "ErrorSurface" : "WarningSurface"); }
         IssuesButton.IsEnabled = count > 0;
-        StatusText.Text = (snapshot.IsDemo ? "Sample topology" : "Local snapshot") + $" · Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(n => n.Kind == "Unavailable")} port errors · {snapshot.Nodes.Count(n => n.ScanIncomplete)} incomplete · {snapshot.Nodes.Count(n => n.SpeedLimited)} reduced speed · {snapshot.Nodes.Count(n => UsbBudgets.IsPowerFault(n) || n.PowerWarnings.Count > 0 || n.QuickReconnects > 0)} power or stability";
+        StatusText.Text = (snapshot.IsDemo ? "Sample topology" : "Local snapshot") + $" · Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(n => n.Kind == "Unavailable")} port errors · {snapshot.Nodes.Count(n => n.ScanIncomplete)} incomplete · {snapshot.Nodes.Count(n => n.SpeedLimited)} reduced speed · {snapshot.Nodes.Count(UsbBudgets.LinkNearlyFull)} nearly full · {snapshot.Nodes.Count(n => UsbBudgets.IsPowerFault(n) || n.PowerWarnings.Count > 0 || n.QuickReconnects > 0)} power or stability";
         if (snapshot.Diagnostics.Count > 0) StatusText.Text += " · " + string.Join(" · ", snapshot.Diagnostics);
         StatusText.ToolTip = StatusText.Text;
     }

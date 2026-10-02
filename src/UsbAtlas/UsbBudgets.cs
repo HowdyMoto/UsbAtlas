@@ -77,6 +77,10 @@ internal static class UsbBudgets
         return (reserved, capacity, unknown);
     }
 
+    // Past this share of what a link can reserve, the next audio, video or input device may be refused.
+    internal const double NearlyFullShare = 0.8;
+    internal static bool LinkNearlyFull(UsbNode n) => LinkUse(n) is (var reserved, var capacity, _) && reserved / capacity >= NearlyFullShare;
+
     internal static string Share(double reserved, double capacity)
     {
         double percent = reserved / capacity * 100;

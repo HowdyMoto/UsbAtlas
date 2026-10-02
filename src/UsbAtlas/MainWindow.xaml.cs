@@ -125,6 +125,7 @@ public partial class MainWindow : Window
     {
         "Port error" => "Windows could not read this port. A device may still be connected.",
         "Reduced speed" => "A faster link is supported. Check the upstream port, hub and cable.",
+        "Link nearly full" => "Reservations already hold at least 80% of the bus time this link can set aside for timed transfers such as audio, video and input. Another device of that kind, or one that starts streaming, may be refused with Insufficient bandwidth. Move a busy device to a port on a different hub or controller.",
         "Insufficient bandwidth" => "Windows could not configure this device because the bus cannot reserve the bandwidth it asks for. Move it, or a busy audio or video device on the same controller, to another port.",
         "Insufficient power" => "Windows refused to configure this device because it asks for more power than the port can supply. Connect it to a powered hub or directly to the computer.",
         "Overcurrent" => "The device drew more current than the port allows, so Windows switched the port off. Reconnect it to a powered hub or another port; a damaged cable or device can also cause this.",
@@ -166,8 +167,8 @@ public partial class MainWindow : Window
             {
                 var stack = new StackPanel { ToolTip = help }; Grid.SetColumn(stack, column);
                 var line = new DockPanel();
-                var icon = NodeVisuals.MetricGlyph(glyph, 13); icon.Margin = new Thickness(0, 1, 4, 0); DockPanel.SetDock(icon, Dock.Left); line.Children.Add(icon);
-                line.Children.Add(new TextBlock { Text = value, FontSize = 16, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = Brush(value == NotApplicable || value == "Unknown" ? "TextMuted" : "TextPrimary") });
+                var icon = NodeVisuals.MetricGlyph(glyph, 11); icon.Margin = new Thickness(0, 1, 3, 0); DockPanel.SetDock(icon, Dock.Left); line.Children.Add(icon);
+                line.Children.Add(new TextBlock { Text = value, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = Brush(value == NotApplicable || value == "Unknown" ? "TextMuted" : "TextPrimary") });
                 stack.Children.Add(line);
                 stack.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0) });
                 metrics.Children.Add(stack);
