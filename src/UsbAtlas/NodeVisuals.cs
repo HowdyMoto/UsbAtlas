@@ -7,13 +7,19 @@ namespace UsbAtlas;
 
 internal static class NodeVisuals
 {
-    internal static string Color(UsbNode n) => n.Kind switch
+    // Color says what a device does. Hubs, hosts and ports stay neutral so devices stand out, and
+    // related types share a hue (the icon tells them apart) because pale fills need wide hue gaps.
+    internal static string Color(UsbNode n) => n.Kind != "Device" ? "Neutral" : n.DeviceType switch
     {
-        "Controller" or "Root hub" => "HostRole",
-        "Hub" when n.Location == "Internal" => "HostRole",
-        "Hub" when n.Location == "External" => "HubRole",
-        "Hub" or "Empty port" or "Unavailable" => "UnknownRole", _ => "DeviceRole"
+        "Keyboard" or "Mouse" or "HID / controls" => "Input",
+        "Game controller" or "VR headset" => "Gaming",
+        "Audio" => "Audio",
+        "Camera / video" or "Billboard" => "Video",
+        "Storage" => "Storage",
+        "Wireless" or "Serial / communications" or "Printer" => "Connectivity",
+        _ => "Neutral"
     };
+    internal static readonly string[] Categories = ["Neutral", "Input", "Gaming", "Audio", "Video", "Storage", "Connectivity"];
     // A card's fill and outline share its icon and label hue.
     internal static string Fill(UsbNode n) => Color(n) + "Fill";
     internal static string Edge(UsbNode n) => Color(n) + "Edge";
@@ -158,7 +164,7 @@ internal static class NodeVisuals
         }
         else if (host)
         {
-            graphic.Children.Add(new Path { Data = Geometry.Parse("M1,9 H30 M6,4 V14 M13,4 V14 M20,4 V14 M27,4 V14"), Stroke = Ink("HostRole"), StrokeThickness = 1.5 });
+            graphic.Children.Add(new Path { Data = Geometry.Parse("M1,9 H30 M6,4 V14 M13,4 V14 M20,4 V14 M27,4 V14"), Stroke = Ink("Neutral"), StrokeThickness = 1.5 });
         }
         else
         {

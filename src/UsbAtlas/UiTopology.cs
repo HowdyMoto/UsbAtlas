@@ -395,10 +395,13 @@ public partial class MainWindow
         {
             var node = (UsbNode)item.Card.Tag;
             bool match = appliedQuery.Length > 0 && Matches(node, appliedQuery);
-            // Cards wear their role's tint; the selection takes the stronger selection blue so it still stands out.
-            item.Card.Background = Brush(id == selected?.Id ? "SelectionStrong" : NodeVisuals.Fill(node));
-            item.Card.BorderBrush = Brush(id == selected?.Id || item.Card.IsKeyboardFocusWithin || match ? "Accent" : NodeVisuals.Edge(node));
-            item.Card.BorderThickness = new Thickness(id == selected?.Id || match ? 2 : 1);
+            // Fill always says what a device does; selection is an accent outline with a soft glow, so it
+            // never reads as another category.
+            bool chosen = id == selected?.Id;
+            item.Card.Background = Brush(NodeVisuals.Fill(node));
+            item.Card.BorderBrush = Brush(chosen || item.Card.IsKeyboardFocusWithin || match ? "Accent" : NodeVisuals.Edge(node));
+            item.Card.BorderThickness = new Thickness(chosen || match ? 2 : 1);
+            item.Card.Effect = chosen ? new System.Windows.Media.Effects.DropShadowEffect { Color = ((SolidColorBrush)Brush("Accent")).Color, BlurRadius = 14, ShadowDepth = 0, Opacity = 0.75 } : null;
         }
         foreach (var (id, wire) in wires)
         {

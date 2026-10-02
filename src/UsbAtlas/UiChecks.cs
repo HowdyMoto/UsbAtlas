@@ -268,15 +268,25 @@ public partial class MainWindow
             foreach (var child in VisualDescendants(VisualTreeHelper.GetChild(root, i))) yield return child;
     }
 
-    // Each card wears its role's fill (the selected card the selection fill), and the role tints stay
-    // distinct from each other and from the selection.
+    // Every card wears its category's fill, selected or not; hubs, hosts and ports are neutral; only the
+    // selected card glows; and category fills and inks stay distinct from one another.
     private void VerifyRoleFills()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         foreach (var (id, item) in cards)
-            Check(item.Card.Background == Brush(id == selected?.Id ? "SelectionStrong" : NodeVisuals.Fill((UsbNode)item.Card.Tag)), $"Card {id} does not wear its role fill.");
-        var fills = new[] { "HostRoleFill", "HubRoleFill", "DeviceRoleFill", "UnknownRoleFill", "SelectionStrong" }.Select(k => ((SolidColorBrush)Brush(k)).Color).ToList();
-        Check(fills.Distinct().Count() == fills.Count, "Role fills must differ from each other and from the selection.");
+        {
+            var node = (UsbNode)item.Card.Tag;
+            Check(item.Card.Background == Brush(NodeVisuals.Fill(node)), $"Card {id} does not wear its category fill.");
+            Check(node.Kind == "Device" || NodeVisuals.Color(node) == "Neutral", $"Hub, host or port card {id} must be neutral.");
+            Check(item.Card.Effect != null == (id == selected?.Id), $"Only the selected card may glow ({id}).");
+        }
+        static Color Of(string key) => ((SolidColorBrush)Brush(key)).Color;
+        static double Distance(Color x, Color y) => Math.Sqrt(Math.Pow(x.R - y.R, 2) + Math.Pow(x.G - y.G, 2) + Math.Pow(x.B - y.B, 2));
+        var categories = NodeVisuals.Categories;
+        Check(categories.Select(c => Of(c + "Fill")).Distinct().Count() == categories.Length, "Category fills must differ from one another.");
+        for (int i = 0; i < categories.Length; i++)
+            for (int j = i + 1; j < categories.Length; j++)
+                Check(Distance(Of(categories[i]), Of(categories[j])) > 40, $"{categories[i]} and {categories[j]} inks are too alike to tell apart.");
     }
 
     // Warning and error colors appear only as semibold text beside a status glyph, every issue on a
@@ -293,8 +303,8 @@ public partial class MainWindow
         foreach (var (id, item) in cards)
             Check(VisualDescendants(item.Card).Count(IsGlyph) == Issues((UsbNode)item.Card.Tag).Count, $"Card {id} must show one status badge per issue.");
         static double Distance(Brush a, Brush b) { var (x, y) = (((SolidColorBrush)a).Color, ((SolidColorBrush)b).Color); return Math.Sqrt(Math.Pow(x.R - y.R, 2) + Math.Pow(x.G - y.G, 2) + Math.Pow(x.B - y.B, 2)); }
-        foreach (var role in new[] { "HostRole", "HubRole", "DeviceRole", "UnknownRole" })
-            foreach (var severity in status) Check(Distance(Brush(role), severity) > 100, $"{role} is too close to a warning or error color.");
+        foreach (var category in NodeVisuals.Categories)
+            foreach (var severity in status) Check(Distance(Brush(category), severity) > 100, $"{category} is too close to a warning or error color.");
     }
 
     // Cards mark link rate, reserved bandwidth and requested power with their glyphs, power problems
