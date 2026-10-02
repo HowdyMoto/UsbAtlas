@@ -18,14 +18,19 @@ repository they are under `src/UsbAtlas/`.
 These fonts retain their OFL license when embedded in USB Atlas. The OFL does
 not require the application code to use the OFL.
 
-## Google Material Icons: device_hub
+## Google Material Symbols
 
 - Copyright Google.
-- Source: https://github.com/google/material-design-icons/blob/master/src/hardware/device_hub/materialicons/24px.svg
-- Files: `Assets/Icons/device-hub.svg` and the hub geometry in `NodeVisuals.cs`.
+- Source: https://github.com/google/material-design-icons (`symbols/web/<name>/materialsymbolsoutlined`),
+  Outlined style, weight 400, 24 px; `warning` and `error` use the filled variants.
+- Icons: album, bluetooth, bolt, cable, developer_board, device_hub, devices_other,
+  display_external_input, error, hard_drive, head_mounted_device, headphones,
+  keyboard, mouse, print, save, schedule, sd_card, sports_esports, swap_vert,
+  tune, usb, usb_off, videocam, warning.
+- Files: the SVG path data, unchanged, in `MaterialSymbols.cs`.
 - License: Apache License 2.0; full text in `Assets/Icons/LICENSE.txt`.
-- Modification: the SVG path was converted to WPF PathGeometry and its fill
-  is supplied by the application theme. Other pictograms are defined locally.
+- Modification: the paths are drawn as WPF geometry, shifted into a square
+  design box, and filled with colors from the application theme.
 - Additional attribution: `Assets/Icons/NOTICE.txt`.
 
 ## USB ID Repository

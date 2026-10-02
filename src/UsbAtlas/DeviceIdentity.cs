@@ -87,6 +87,9 @@ internal static class DeviceIdentity
                 {
                     1 => "Audio", 2 or 10 => "Serial / communications", 3 when sub == 1 && protocol == 1 => "Keyboard",
                     3 when sub == 1 && protocol == 2 => "Mouse", 3 => "HID / controls", 7 => "Printer",
+                    // Mass storage: MMC-5 (ATAPI) is optical, UFI and SFF-8070i are floppy-style, and the
+                    // UAS protocol is used by fast disk enclosures. Everything else reports SCSI over bulk-only.
+                    8 when sub == 2 => "Optical drive", 8 when sub is 4 or 5 => "Floppy drive", 8 when protocol == 0x62 => "External drive",
                     8 => "Storage", 14 => "Camera / video", 0xE0 => "Wireless", 17 => "Billboard", _ => null
                 };
                 if (function != null && !result.Contains(function)) result.Add(function);
@@ -112,14 +115,41 @@ internal static class DeviceIdentity
             _ => null
         };
         if (namedType != null) { node.DeviceType = namedType; node.TypeEvidence = "Inferred from the device product name."; return; }
-        foreach (var type in new[] { "Camera / video", "Audio", "Storage", "Keyboard", "Mouse", "Printer", "Wireless", "Serial / communications", "HID / controls", "Billboard" })
+        foreach (var type in new[] { "Camera / video", "Audio", "Optical drive", "Floppy drive", "External drive", "Storage", "Keyboard", "Mouse", "Printer", "Wireless", "Serial / communications", "HID / controls", "Billboard" })
             if (node.InterfaceFunctions.Contains(type))
-            { node.DeviceType = type; node.TypeEvidence = "Reported by the active USB configuration's interface descriptors."; return; }
+            {
+                node.DeviceType = type; node.TypeEvidence = "Reported by the active USB configuration's interface descriptors.";
+                RefineStorage(node, name);
+                return;
+            }
         node.DeviceType = node.DeviceClass switch
         {
             "Audio" => "Audio", "Video" => "Camera / video", "Mass storage" => "Storage", "Human interface (HID)" => "HID / controls",
             "Printer" => "Printer", "Wireless controller" => "Wireless", "Communications" => "Serial / communications", _ => "USB device"
         };
         node.TypeEvidence = node.DeviceType == "USB device" ? "Specific function not reported; generic USB device shown." : "Reported by the USB device class.";
+        RefineStorage(node, name);
+    }
+
+    internal static readonly string[] StorageTypes = ["External drive", "Optical drive", "Card reader", "Flash drive", "Floppy drive", "Storage"];
+    internal static bool IsStorage(string deviceType) => StorageTypes.Contains(deviceType);
+
+    // USB tells optical and floppy drives apart by subclass and fast enclosures by the UAS protocol, but
+    // flash drives, card readers and disk enclosures all report plain SCSI storage; their names decide.
+    private static void RefineStorage(UsbNode node, string name)
+    {
+        if (!IsStorage(node.DeviceType)) return;
+        string? named = name switch
+        {
+            var s when s.Contains("dvd") || s.Contains("cd-rom") || s.Contains("cdrom") || s.Contains("blu-ray") || s.Contains("bd-re") || s.Contains("super multi") || s.Contains("optical") => "Optical drive",
+            var s when s.Contains("card reader") || s.Contains("cardreader") || s.Contains("sd reader") || s.Contains("multi-card") || s.Contains("multicard") => "Card reader",
+            var s when s.Contains("floppy") => "Floppy drive",
+            var s when s.Contains("flash") || s.Contains("thumb") || s.Contains("usb stick") || s.Contains("pen drive") || s.Contains("cruzer") || s.Contains("datatraveler") || s.Contains("jumpdrive") => "Flash drive",
+            var s when s.Contains("ssd") || s.Contains("hdd") || s.Contains("hard drive") || s.Contains("hard disk") || s.Contains("nvme") || s.Contains("portable drive") || s.Contains("external drive") => "External drive",
+            _ => null
+        };
+        if (named == null || named == node.DeviceType) return;
+        node.DeviceType = named;
+        node.TypeEvidence = "Mass storage; the kind of drive is inferred from the product name.";
     }
 }

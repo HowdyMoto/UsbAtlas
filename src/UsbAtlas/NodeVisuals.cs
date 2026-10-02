@@ -15,7 +15,7 @@ internal static class NodeVisuals
         "Game controller" or "VR headset" => "Gaming",
         "Audio" => "Audio",
         "Camera / video" or "Billboard" => "Video",
-        "Storage" => "Storage",
+        var type when DeviceIdentity.IsStorage(type) => "Storage",
         "Wireless" or "Serial / communications" or "Printer" => "Connectivity",
         _ => "Neutral"
     };
@@ -33,22 +33,24 @@ internal static class NodeVisuals
     };
     internal static Brush Ink(string hex) => Theme.Brush(hex);
 
-    // Warnings and errors share one look everywhere: a shape-coded glyph (triangle for a warning,
-    // circle for an error) beside semibold text in a color nothing else uses, usually on a tinted pill.
+    // Every icon is a Google Material Symbol drawn in one ink at the requested size.
+    internal static Viewbox Symbol(string name, Brush ink, double size)
+    {
+        var canvas = new Canvas { Width = MaterialSymbols.DesignSize, Height = MaterialSymbols.DesignSize };
+        canvas.Children.Add(new Path { Data = MaterialSymbols.Shape(name), Fill = ink });
+        return new Viewbox { Width = size, Height = size, Child = canvas };
+    }
+
+    // Warnings and errors share one look everywhere: a shape-coded glyph (filled triangle for a warning,
+    // filled circle for an error) beside semibold text in a color nothing else uses, usually on a tinted pill.
     internal enum Severity { Warning, Error }
     internal const string StatusGlyphTag = "status-glyph";
     internal static string StatusColor(Severity s) => s == Severity.Error ? "Error" : "Warning";
-    internal static FrameworkElement StatusGlyph(Severity s, double size = 12)
+    internal static FrameworkElement StatusGlyph(Severity s, double size = 13)
     {
-        var canvas = new Canvas { Width = 12, Height = 12 };
-        if (s == Severity.Error) canvas.Children.Add(new Ellipse { Width = 12, Height = 12, Fill = Ink("Error") });
-        else canvas.Children.Add(new Path { Data = Geometry.Parse("M6,1 L11.4,10.8 H0.6 Z"), Fill = Ink("Warning"), Stroke = Ink("Warning"), StrokeThickness = 1, StrokeLineJoin = PenLineJoin.Round });
-        canvas.Children.Add(new Path
-        {
-            Data = Geometry.Parse(s == Severity.Error ? "M5.3,2.6 H6.7 V7.2 H5.3 Z M6,8.1 A0.85,0.85 0 1 1 6,9.8 A0.85,0.85 0 1 1 6,8.1 Z" : "M5.35,4 H6.65 V7.6 H5.35 Z M6,8.3 A0.75,0.75 0 1 1 6,9.8 A0.75,0.75 0 1 1 6,8.3 Z"),
-            Fill = Ink("StatusInk")
-        });
-        return new Viewbox { Width = size, Height = size, Child = canvas, Tag = StatusGlyphTag, VerticalAlignment = VerticalAlignment.Center };
+        var glyph = Symbol(s == Severity.Error ? "error" : "warning", Ink(StatusColor(s)), size);
+        glyph.Tag = StatusGlyphTag; glyph.VerticalAlignment = VerticalAlignment.Center;
+        return glyph;
     }
     // Glyph and text without a surface, for hosts that provide their own (such as a button).
     internal static FrameworkElement StatusContent(Severity s, string text)
@@ -64,21 +66,16 @@ internal static class NodeVisuals
         Background = Ink(s == Severity.Error ? "ErrorSurface" : "WarningSurface"), CornerRadius = new CornerRadius(4),
         Padding = new Thickness(5, 2, 7, 2), HorizontalAlignment = HorizontalAlignment.Left, Child = StatusContent(s, text)
     };
-    // Metric glyphs mark what a number measures: opposed arrows for the negotiated link, a clock for
-    // bus time a device reserves, and a bolt for the power it requests. Neutral ink; never a status color.
+    // Metric glyphs mark what a number measures: swap_vert for the negotiated link, schedule for bus
+    // time a device reserves, and bolt for the power it requests. Neutral ink; never a status color.
+    // Material Symbols leave a margin inside their square, so the glyph is drawn a little larger than the text.
     internal enum Metric { Link, Reserved, Power }
     internal const string MetricGlyphTag = "metric-glyph";
     internal static FrameworkElement MetricGlyph(Metric m, double size = 11)
     {
-        var canvas = new Canvas { Width = 14, Height = 14 };
-        var ink = Ink("TextSecondary");
-        canvas.Children.Add(m switch
-        {
-            Metric.Link => new Path { Data = Geometry.Parse("M4,12.5 V1.5 M1.2,4.3 L4,1.5 L6.8,4.3 M10,1.5 V12.5 M7.2,9.7 L10,12.5 L12.8,9.7"), Stroke = ink, StrokeThickness = 1.4, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round },
-            Metric.Reserved => new Path { Data = Geometry.Parse("M7,1.5 A5.5,5.5 0 1 1 6.99,1.5 Z M7,4 V7.2 L9.4,8.6"), Stroke = ink, StrokeThickness = 1.4, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round },
-            _ => new Path { Data = Geometry.Parse("M8.4,0.8 L2.6,8 H6.4 L5.4,13.2 L11.4,5.6 H7.5 Z"), Fill = ink, Stroke = ink, StrokeThickness = 0.6, StrokeLineJoin = PenLineJoin.Round }
-        });
-        return new Viewbox { Width = size, Height = size, Child = canvas, Tag = MetricGlyphTag, Uid = m.ToString() };
+        var glyph = Symbol(m switch { Metric.Link => "swap_vert", Metric.Reserved => "schedule", _ => "bolt" }, Ink("TextSecondary"), Math.Round(size * 1.2));
+        glyph.Tag = MetricGlyphTag; glyph.Uid = m.ToString();
+        return glyph;
     }
     // A thin track for a link, filled by the share of it that reservations hold. The fill is a tinted
     // segment so measured traffic can later be drawn as a solid layer in the same track.
@@ -110,37 +107,26 @@ internal static class NodeVisuals
         }
         return line;
     }
-    internal static FrameworkElement Icon(UsbNode n, double size = 36)
+    // The Material Symbol for each kind of node and device type. Google has no USB-stick symbol, so
+    // flash drives use the USB trident.
+    internal static string SymbolName(UsbNode n) => n.Kind switch
     {
-        if (n.Kind == "Hub")
+        "Controller" or "Root hub" => "developer_board",
+        "Hub" => "device_hub",
+        "Empty port" => "usb",
+        "Unavailable" => "usb_off",
+        _ => n.DeviceType switch
         {
-            // Google Material Icons device_hub, Apache-2.0. SVG path converted to WPF geometry.
-            var hub = new Path { Data = Geometry.Parse("M17 16l-4-4V8.82C14.16 8.4 15 7.3 15 6c0-1.66-1.34-3-3-3S9 4.34 9 6c0 1.3.84 2.4 2 2.82V12l-4 4H3v5h5v-3.05l4-4.2 4 4.2V21h5v-5h-4z"), Fill = Ink(Color(n)) };
-            var hubCanvas = new Canvas { Width = 24, Height = 24 }; hubCanvas.Children.Add(hub);
-            return new Viewbox { Width = size, Height = size, Child = hubCanvas };
+            "Keyboard" => "keyboard", "Mouse" => "mouse", "HID / controls" => "tune",
+            "Game controller" => "sports_esports", "VR headset" => "head_mounted_device",
+            "Audio" => "headphones", "Camera / video" => "videocam", "Billboard" => "display_external_input",
+            "External drive" or "Storage" => "hard_drive", "Optical drive" => "album", "Card reader" => "sd_card",
+            "Flash drive" => "usb", "Floppy drive" => "save",
+            "Wireless" => "bluetooth", "Serial / communications" => "cable", "Printer" => "print",
+            _ => "devices_other"
         }
-        var kind = n.Kind is "Controller" or "Root hub" ? "Board" : n.Kind == "Hub" ? "Hub" : n.DeviceType;
-        var path = kind switch
-        {
-            "Board" => "M4,4 H28 V28 H4 Z M11,10 H21 V21 H11 Z M1,9 H4 M1,16 H4 M1,23 H4 M28,9 H31 M28,16 H31 M28,23 H31 M9,1 V4 M16,1 V4 M23,1 V4 M9,28 V31 M16,28 V31 M23,28 V31",
-            "Keyboard" => "M2,8 H30 V25 H2 Z M6,12 H8 M12,12 H14 M18,12 H20 M24,12 H26 M6,16 H8 M12,16 H14 M18,16 H20 M24,16 H26 M7,21 H25",
-            "Mouse" => "M7,13 C7,0 25,0 25,13 V21 C25,34 7,34 7,21 Z M16,4 V15 M7,15 H25 M16,8 V11",
-            "Storage" => "M6,3 H26 V29 H6 Z M10,7 H22 V19 H10 Z M11,25 H13 M19,25 H22",
-            "Camera / video" => "M3,9 H23 V25 H3 Z M8,9 L11,5 H18 L21,9 M23,14 L30,10 V25 L23,21 M17,17 A5,5 0 1 1 7,17 A5,5 0 1 1 17,17",
-            "Audio" => "M4,20 V15 C4,0 28,0 28,15 V20 M4,17 H10 V28 H4 Z M22,17 H28 V28 H22 Z",
-            "Game controller" => "M9,9 H23 C28,9 29,18 30,24 Q29,30 24,25 L20,21 H12 L8,25 Q2,30 2,24 C3,18 4,9 9,9 Z M7,15 H15 M11,11 V19 M23,13 V15 M26,17 V19",
-            "VR headset" => "M3,11 H29 V25 H20 L16,21 L12,25 H3 Z M7,11 V6 H25 V11 M8,16 H12 M20,16 H24",
-            "Wireless" => "M2,10 Q16,-1 30,10 M7,16 Q16,8 25,16 M12,22 Q16,18 20,22 M15,28 H17",
-            "Printer" => "M8,12 V3 H24 V12 M8,24 H3 V12 H29 V24 H24 M8,20 H24 V30 H8 Z M23,16 H25",
-            "HID / controls" => "M3,5 H29 V28 H3 Z M8,11 H12 M10,9 V13 M21,11 H24 M8,21 H12 M19,20 H24 M21,18 V23",
-            "Serial / communications" => "M3,8 H29 V25 H3 Z M8,13 V16 M13,13 V16 M18,13 V16 M23,13 V16 M11,21 H21 M10,3 V8 M22,3 V8",
-            "Billboard" => "M3,4 H29 V24 H3 Z M16,24 V29 M10,29 H22 M15,8 H17 M16,13 V20",
-            _ => "M10,3 H22 V13 H26 V29 H6 V13 H10 Z M14,6 V10 M18,6 V10 M11,19 H21 M11,24 H17"
-        };
-        var canvas = new Canvas { Width = 32, Height = 32 };
-        canvas.Children.Add(new Path { Data = Geometry.Parse(path), Stroke = Ink(Color(n)), StrokeThickness = 1.6, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round });
-        return new Viewbox { Width = size, Height = size, Child = canvas, Stretch = Stretch.Uniform };
-    }
+    };
+    internal static FrameworkElement Icon(UsbNode n, double size = 36) => Symbol(SymbolName(n), Ink(Color(n)), size);
 
     internal static FrameworkElement PortGraphic(UsbNode n)
     {

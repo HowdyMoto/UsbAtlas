@@ -1,6 +1,6 @@
 # USB Atlas
 
-A native Windows USB topology explorer built with WPF and .NET 10. No third-party NuGet packages, driver installation, or administrator manifest required. Bundled fonts and the hub icon are credited in [Third-party notices](THIRD-PARTY-NOTICES.md).
+A native Windows USB topology explorer built with WPF and .NET 10. No third-party NuGet packages, driver installation, or administrator manifest required. Bundled fonts and Google Material Symbols icons are credited in [Third-party notices](THIRD-PARTY-NOTICES.md).
 
 ## License
 
@@ -9,7 +9,7 @@ USB Atlas's original code is licensed under the [MIT License](LICENSE), copyrigh
 subject to the license terms.
 
 Bundled Geist/Geist Mono fonts remain under SIL OFL 1.1. The Google Material
-`device_hub` icon and its converted WPF geometry remain subject to Apache 2.0.
+Symbols icons and their WPF geometry remain subject to Apache 2.0.
 The bundled USB ID database uses its BSD-3-Clause licensing option.
 See [Third-party notices](THIRD-PARTY-NOTICES.md) for attribution and license files.
 
@@ -84,6 +84,11 @@ are named from the bundled offline USB ID database. Those entries usually name t
 maker of the chip inside (a hub in a Dell monitor may appear as Realtek), not the
 retail brand; **Add your own label** can rename it. Detection details record where
 each name came from, along with the original USB strings, Windows name and lookup results.
+
+**Storage kinds:** USB itself reports optical drives, floppy drives and fast (UAS) drive
+enclosures. Flash drives, card readers and ordinary disk enclosures all report plain SCSI
+storage, so their product names decide; a drive with an uninformative name is shown as
+generic storage. USB never says whether a disk is a hard drive or an SSD.
 
 **Saved labels:** stored in `%LOCALAPPDATA%/UsbAtlas/device-labels.json`. A unique
 VID/PID/serial identity follows a device between ports. Devices without a unique

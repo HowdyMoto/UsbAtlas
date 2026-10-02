@@ -36,7 +36,18 @@ internal static class SelfTests
         Check(keyboard.DeviceType == "Keyboard", "Identify composite keyboards from boot interface descriptors.");
         Check(DeviceIdentity.ReadInterfaceFunctions([9, 2, 11, 0, 0, 1, 0, 128, 0, 0, 4]).Count == 0, "Zero-length malformed descriptors must terminate safely.");
         Check(DeviceIdentity.ReadInterfaceFunctions(keyboardConfig[..15]).Count == 0, "Truncated interfaces must not be read.");
-        Check(demo.Nodes.First(x => x.Name == "Portable SSD").DeviceType == "Storage", "Demo storage device type.");
+        // Storage kinds: the interface reports optical, floppy and UAS drives; names refine plain SCSI storage.
+        static List<string> Interface(byte cls, byte sub, byte protocol) => DeviceIdentity.ReadInterfaceFunctions([9, 2, 18, 0, 1, 1, 0, 128, 50, 9, 4, 0, 0, 2, cls, sub, protocol, 0]);
+        static UsbNode Identified(string name, List<string> functions) { var n = new UsbNode { Name = name, InterfaceFunctions = functions }; DeviceIdentity.Identify(n); return n; }
+        Check(Identified("Uninformative product", Interface(8, 2, 0x50)).DeviceType == "Optical drive", "ATAPI mass storage is an optical drive.");
+        Check(Identified("Uninformative product", Interface(8, 4, 0)).DeviceType == "Floppy drive", "UFI mass storage is a floppy drive.");
+        Check(Identified("Uninformative product", Interface(8, 6, 0x62)).DeviceType == "External drive", "UAS mass storage is a drive enclosure.");
+        Check(Identified("Uninformative product", Interface(8, 6, 0x50)).DeviceType == "Storage", "Plain SCSI storage stays generic without a telling name.");
+        Check(Identified("Hitachi-LG Portable Super Multi Drive", Interface(8, 6, 0x50)).DeviceType == "Optical drive", "Optical drives that report plain SCSI are recognized by name.");
+        Check(Identified("Generic USB3.0 Card Reader", Interface(8, 6, 0x50)).DeviceType == "Card reader", "Card readers are recognized by name.");
+        Check(Identified("SanDisk Cruzer Blade", Interface(8, 6, 0x50)).DeviceType == "Flash drive", "Flash drives are recognized by name.");
+        Check(Identified("LED flash ring light", Interface(3, 0, 0)).DeviceType == "HID / controls", "Storage names must not reclassify devices without storage.");
+        Check(demo.Nodes.First(x => x.Name == "Portable SSD").DeviceType == "External drive", "Demo SSD is an external drive.");
         BudgetTests(demo);
         IdentityTests.Run();
     }

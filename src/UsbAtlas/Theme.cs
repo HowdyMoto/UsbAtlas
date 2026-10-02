@@ -33,8 +33,7 @@ internal static class Theme
         ("Connectivity", "#177257", "#7DD3AE"), ("ConnectivityFill", "#D3F2E2", "#143A2B"), ("ConnectivityEdge", "#8DD3B3", "#25684B"),
         // Reserved for warnings and errors, always with a status glyph; no role color comes near them.
         ("Warning", "#9A5B00", "#F5B544"), ("WarningSurface", "#FDF0D5", "#3B2D12"),
-        ("Error", "#B42318", "#FF7A6E"), ("ErrorSurface", "#FDE7E5", "#43201F"),
-        ("StatusInk", "#FFFFFF", "#15181D")
+        ("Error", "#B42318", "#FF7A6E"), ("ErrorSurface", "#FDE7E5", "#43201F")
     ];
     public static Brush Brush(string key) => (Brush)Application.Current.FindResource(key);
     public static void Initialize(string[] args)
