@@ -21,8 +21,14 @@ internal static class Theme
         ("Focus", "#7097CF", "#ABC8EF"), ("BorderHover", "#93A5B7", "#7B91AD"),
         ("Subtle", "#FAFBFC", "#242B34"), ("Wire", "#B8C0C5", "#596575"),
         ("WireDot", "#929FA8", "#8B9AAF"), ("HostRole", "#586A80", "#A6B8CE"),
-        ("HubRole", "#7562A8", "#B5A6E3"), ("DeviceRole", "#4E7B74", "#8ABCB0"),
-        ("UnknownRole", "#737B83", "#A2ADB9"), ("Success", "#4E7B65", "#92C5A7"),
+        ("HubRole", "#6B58A0", "#B5A6E3"), ("DeviceRole", "#466F69", "#8ABCB0"),
+        ("UnknownRole", "#656D75", "#A2ADB9"), ("Success", "#4E7B65", "#92C5A7"),
+        // Card fills and outlines in each role's hue, so a card's kind reads before its label does.
+        // Role labels keep at least 4.5:1 contrast on their own fill; unknown stays neutral.
+        ("HostRoleFill", "#E6ECF7", "#26303E"), ("HostRoleEdge", "#C3CEDF", "#3D4B60"),
+        ("HubRoleFill", "#EEE8FA", "#302A45"), ("HubRoleEdge", "#CFC3EA", "#4B4168"),
+        ("DeviceRoleFill", "#E2F3EE", "#1F3733"), ("DeviceRoleEdge", "#B5D9CF", "#2F5550"),
+        ("UnknownRoleFill", "#FFFFFF", "#1E232B"), ("UnknownRoleEdge", "#D5D9DC", "#3A4451"),
         // Reserved for warnings and errors, always with a status glyph; no role color comes near them.
         ("Warning", "#9A5B00", "#F5B544"), ("WarningSurface", "#FDF0D5", "#3B2D12"),
         ("Error", "#B42318", "#FF7A6E"), ("ErrorSurface", "#FDE7E5", "#43201F"),

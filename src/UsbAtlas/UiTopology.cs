@@ -24,7 +24,6 @@ public partial class MainWindow
     private List<UsbNode> matches = [];
     private readonly DispatcherTimer searchTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private string appliedQuery = "";
-    private bool Compact => CompactDensity.IsChecked == true;
     private static List<(NodeVisuals.Severity Severity, string Text)> Issues(UsbNode n)
     {
         var issues = new List<(NodeVisuals.Severity, string)>();
@@ -92,7 +91,7 @@ public partial class MainWindow
     private double WidthFor(UsbNode n) => horizontalTree ? CardWidth + (EdgePorts(n).Count > 0 ? 44 : 0) : Math.Max(CardWidth, EdgePorts(n).Count * 38 + 24);
     private double HeightFor(UsbNode n)
     {
-        double height = n.Kind is "Controller" or "Root hub" ? (Compact ? 84 : 100) : Compact ? CardHeight : 138;
+        double height = n.Kind is "Controller" or "Root hub" ? 84 : CardHeight;
         if (n.UserLabel.Length > 0) height += 18;
         if (HasPowerRow(n)) height += 17;
         height += 24 * BadgeRows(n);
@@ -202,7 +201,7 @@ public partial class MainWindow
         var panel = new StackPanel();
         // The type icon anchors the upper left; the type label and the name stack beside it. The logical
         // path lives in the inspector, leaving the upper right to the fold button.
-        var identity = new DockPanel { Height = host ? 36 : Compact ? 62 : 70 };
+        var identity = new DockPanel { Height = host ? 36 : 62 };
         var icon = NodeVisuals.Icon(node, host ? 22 : 30); icon.Margin = new Thickness(0, 1, 9, 0); icon.VerticalAlignment = VerticalAlignment.Top;
         DockPanel.SetDock(icon, Dock.Left); identity.Children.Add(icon);
         if (node.Children.Any(c => c.Kind != "Empty port"))
@@ -213,7 +212,7 @@ public partial class MainWindow
         }
         var names = new StackPanel();
         names.Children.Add(new TextBlock { Text = NodeVisuals.Label(node), FontSize = 11, Foreground = Brush(NodeVisuals.Color(node)), TextTrimming = TextTrimming.CharacterEllipsis });
-        names.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = host ? 13 : 16, FontWeight = FontWeights.SemiBold, TextWrapping = host ? TextWrapping.NoWrap : TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = host ? 20 : Compact ? 44 : 52, Margin = new Thickness(0, 1, 0, 0) });
+        names.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = host ? 13 : 16, FontWeight = FontWeights.SemiBold, TextWrapping = host ? TextWrapping.NoWrap : TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = host ? 20 : 44, Margin = new Thickness(0, 1, 0, 0) });
         identity.Children.Add(names);
         panel.Children.Add(identity);
         // Under a custom label, keep the detected name visible; where a name came from is in Detection details.
@@ -238,7 +237,7 @@ public partial class MainWindow
         }
         var edgePorts = EdgePorts(node);
         var padding = edgePorts.Count == 0 ? new Thickness(11, 7, 11, 7) : horizontalTree ? new Thickness(11, 7, 55, 7) : new Thickness(11, 7, 11, 51);
-        var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush("Surface"), BorderBrush = Brush("Border"), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.Name + "\n" + metric + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
+        var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush(NodeVisuals.Fill(node)), BorderBrush = Brush(NodeVisuals.Edge(node)), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.Name + "\n" + metric + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
         System.Windows.Automation.AutomationProperties.SetName(card, node.DisplayName + ", " + NodeVisuals.Label(node) + ", " + metric + ", " + Issue(node));
         card.MouseLeftButtonDown += (_, e) => { card.Focus(); SelectNode(node); if (e.ClickCount == 2 && node.Children.Count > 0 && appliedQuery.Length == 0) { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); } e.Handled = true; };
         card.KeyDown += (_, e) =>
@@ -353,9 +352,11 @@ public partial class MainWindow
         var chain = FindPath(selected?.Id ?? "").Select(n => n.Id).ToHashSet();
         foreach (var (id, item) in cards)
         {
-            bool match = appliedQuery.Length > 0 && Matches((UsbNode)item.Card.Tag, appliedQuery);
-            item.Card.Background = Brush(id == selected?.Id ? "Selection" : "Surface");
-            item.Card.BorderBrush = Brush(id == selected?.Id || item.Card.IsKeyboardFocusWithin || match ? "Accent" : "Border");
+            var node = (UsbNode)item.Card.Tag;
+            bool match = appliedQuery.Length > 0 && Matches(node, appliedQuery);
+            // Cards wear their role's tint; the selection takes the stronger selection blue so it still stands out.
+            item.Card.Background = Brush(id == selected?.Id ? "SelectionStrong" : NodeVisuals.Fill(node));
+            item.Card.BorderBrush = Brush(id == selected?.Id || item.Card.IsKeyboardFocusWithin || match ? "Accent" : NodeVisuals.Edge(node));
             item.Card.BorderThickness = new Thickness(id == selected?.Id || match ? 2 : 1);
         }
         foreach (var (id, wire) in wires)
@@ -395,7 +396,6 @@ public partial class MainWindow
         if (e.Key == Key.Enter) { NextMatch(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1); e.Handled = true; }
         if (e.Key == Key.Escape) { Search.Clear(); ApplySearch(); e.Handled = true; }
     }
-    private void DensityClick(object sender, RoutedEventArgs e) => FitClick(sender, e);
     private void InspectorClick(object sender, RoutedEventArgs e)
     {
         bool hide = InspectorPanel.Visibility == Visibility.Visible;

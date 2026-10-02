@@ -14,6 +14,9 @@ internal static class NodeVisuals
         "Hub" when n.Location == "External" => "HubRole",
         "Hub" or "Empty port" or "Unavailable" => "UnknownRole", _ => "DeviceRole"
     };
+    // A card's fill and outline share its icon and label hue.
+    internal static string Fill(UsbNode n) => Color(n) + "Fill";
+    internal static string Edge(UsbNode n) => Color(n) + "Edge";
     internal static string Label(UsbNode n) => n.Kind switch
     {
         "Controller" => "Host controller", "Root hub" => "Root ports",

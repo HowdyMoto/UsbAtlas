@@ -268,6 +268,17 @@ public partial class MainWindow
             foreach (var child in VisualDescendants(VisualTreeHelper.GetChild(root, i))) yield return child;
     }
 
+    // Each card wears its role's fill (the selected card the selection fill), and the role tints stay
+    // distinct from each other and from the selection.
+    private void VerifyRoleFills()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        foreach (var (id, item) in cards)
+            Check(item.Card.Background == Brush(id == selected?.Id ? "SelectionStrong" : NodeVisuals.Fill((UsbNode)item.Card.Tag)), $"Card {id} does not wear its role fill.");
+        var fills = new[] { "HostRoleFill", "HubRoleFill", "DeviceRoleFill", "UnknownRoleFill", "SelectionStrong" }.Select(k => ((SolidColorBrush)Brush(k)).Color).ToList();
+        Check(fills.Distinct().Count() == fills.Count, "Role fills must differ from each other and from the selection.");
+    }
+
     // Warning and error colors appear only as semibold text beside a status glyph, every issue on a
     // card has its badge, and no role color can be mistaken for a status color.
     private void VerifyStatusStyling()
@@ -436,7 +447,7 @@ public partial class MainWindow
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         var savedSnapshot = snapshot; var savedSelection = selected;
-        bool savedHorizontal = horizontalTree, savedCompact = Compact;
+        bool savedHorizontal = horizontalTree;
         try
         {
             snapshot = DemoData.Create();
@@ -449,10 +460,9 @@ public partial class MainWindow
             hub.NameSource = "USB ID lookup";
             hub.UserLabel = "Dell monitor KVM with a longer personal label";
             selected = hub;
-            foreach (bool compact in new[] { true, false })
             foreach (bool horizontal in new[] { false, true })
             {
-                CompactDensity.IsChecked = compact; horizontalTree = horizontal; FitClick(this, new RoutedEventArgs()); UpdateLayout();
+                horizontalTree = horizontal; FitClick(this, new RoutedEventArgs()); UpdateLayout();
                 VerifyWireRouting();
                 var items = cards.Values.ToList();
                 for (int i = 0; i < items.Count; i++)
@@ -471,6 +481,7 @@ public partial class MainWindow
                 Check(portSlots.Values.All(b => ((UIElement)b.Content).Opacity < 1) && connectedPorts.Values.All(b => ((UIElement)b.Content).Opacity == 1), "Empty ports must look unoccupied.");
                 ShowDetails(); UpdateIssues(); UpdateLayout();
                 VerifyStatusStyling();
+                VerifyRoleFills();
                 foreach (var (id, slot) in portSlots.Concat(connectedPorts))
                 {
                     var edge = horizontal ? new Point(Canvas.GetLeft(slot) + slot.Width, Canvas.GetTop(slot) + slot.Height / 2)
@@ -480,7 +491,7 @@ public partial class MainWindow
                         Check((((PathGeometry)wire.Data).Figures[0].StartPoint - edge).Length < 0.01, "Connection must start at its own port graphic.");
                 }
             }
-            horizontalTree = false; CompactDensity.IsChecked = true; FitClick(this, new RoutedEventArgs());
+            horizontalTree = false; FitClick(this, new RoutedEventArgs());
             var target = snapshot.Nodes.First(n => n.Kind == "Device");
             var originalCard = cards[target.Id].Card;
             SelectNode(target);
@@ -504,7 +515,7 @@ public partial class MainWindow
         finally
         {
             Search.Clear(); searchTimer.Stop(); folded.Clear();
-            snapshot = savedSnapshot; selected = savedSelection; horizontalTree = savedHorizontal; CompactDensity.IsChecked = savedCompact;
+            snapshot = savedSnapshot; selected = savedSelection; horizontalTree = savedHorizontal;
             OrientationButton.Content = horizontalTree ? "Horizontal" : "Vertical";
             FitClick(this, new RoutedEventArgs()); ShowDetails(); UpdateIssues();
         }
