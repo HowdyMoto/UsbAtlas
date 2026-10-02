@@ -8,7 +8,7 @@ namespace UsbAtlas;
 // Layout and routing work in the vertical frame; horizontal trees are transposed.
 internal static class TopologyLayout
 {
-    internal const double CardWidth = 290, CardHeight = 118, Gap = 16, LevelGap = 28;
+    internal const double CardWidth = 290, CardHeight = 110, Gap = 16, LevelGap = 28;
     // Fan geometry: drop below a port, spacing between turning lanes, clearance above the child row.
     internal const double Stub = 12, LaneSpacing = 8, Clearance = 14, StackClearance = 20;
 

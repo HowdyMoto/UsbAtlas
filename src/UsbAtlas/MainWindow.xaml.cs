@@ -125,6 +125,7 @@ public partial class MainWindow : Window
     {
         "Port error" => "Windows could not read this port. A device may still be connected.",
         "Reduced speed" => "A faster link is supported. Check the upstream port, hub and cable.",
+        "Insufficient bandwidth" => "Windows could not configure this device because the bus cannot reserve the bandwidth it asks for. Move it, or a busy audio or video device on the same controller, to another port.",
         "Insufficient power" => "Windows refused to configure this device because it asks for more power than the port can supply. Connect it to a powered hub or directly to the computer.",
         "Overcurrent" => "The device drew more current than the port allows, so Windows switched the port off. Reconnect it to a powered hub or another port; a damaged cable or device can also cause this.",
         "Power at risk" => "This device declares more current than its port is guaranteed to supply, so it may disconnect or misbehave under load. See Detection details.",
@@ -194,6 +195,15 @@ public partial class MainWindow : Window
             Field("Power source", Reported(node.PowerSource));
             Field("At nominal 5 V", attached && node.MaxPowerMa is int draw ? $"{draw * 0.005:0.##} W declared" : Reported(""));
             Field("Peak reserved", attached && node.PeakReservedMbps is double peak ? $"Up to {UsbBudgets.Rate(peak)} when active" : Reported(""));
+            if (UsbBudgets.LinkUse(node) is (var use, var room, _))
+            {
+                var usage = new DockPanel { ToolTip = MetricHelp(node) };
+                var share = new TextBlock { Text = UsbBudgets.Share(use, room), FontSize = 12, Margin = new Thickness(8, 0, 0, 0) };
+                DockPanel.SetDock(share, Dock.Right); usage.Children.Add(share);
+                var bar = NodeVisuals.LinkBar(use / room); bar.VerticalAlignment = VerticalAlignment.Center; usage.Children.Add(bar);
+                Field("Link use", usage);
+            }
+            else Field("Link use", attached ? "Not reported" : Reported(""));
             Section("Hub");
             Field("Logical ports", hub ? node.PortCount.ToString() : NotApplicable);
             Field("Downstream", hub ? ProtocolSummary(node) : NotApplicable);

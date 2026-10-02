@@ -48,11 +48,46 @@ internal static class UsbBudgets
     internal static double PeakPeriodicMbps(List<Endpoint> endpoints, int speedClass) =>
         endpoints.GroupBy(e => e.Interface).Sum(i => i.GroupBy(e => e.Alternate).Max(alt => alt.Sum(e => PeriodicMbps(e.Attributes, e.MaxPacket, e.Interval, speedClass, e.BytesPerInterval))));
 
+    // The most payload the host will reserve for periodic transfers on a link: 90% of a low- or
+    // full-speed frame, 80% of a high-speed microframe, and 90% of SuperSpeed bus time after line
+    // encoding (8b/10b at 5 Gb/s, 128b/132b beyond). SuperSpeedPlus lane rates aren't resolved, so 10 Gb/s is assumed.
+    internal static double? ReservableMbps(UsbNode n) => n.LinkMbps switch
+    {
+        1.5 => 1.35, 12 => 10.8, 480 => 384, 5000 => 3600,
+        _ => n.Speed.StartsWith("SuperSpeedPlus", StringComparison.Ordinal) ? 10000 * 128.0 / 132 * 0.9 : null
+    };
+
+    // Reservations that share a node's upstream link: its own and, for a hub, everything behind it.
+    internal static (double Mbps, int Unknown) ReservedThroughLink(UsbNode n)
+    {
+        double total = n.ReservedMbps ?? 0; int unknown = n.ReservedMbps == null ? 1 : 0;
+        if (n.Kind == "Hub")
+            foreach (var child in n.Children.Where(c => c.Kind is "Device" or "Hub"))
+            {
+                var (mbps, missing) = ReservedThroughLink(child); total += mbps; unknown += missing;
+            }
+        return (total, unknown);
+    }
+
+    // How full a device's or hub's link is with reservations, when both sides are known.
+    internal static (double Reserved, double Capacity, int Unknown)? LinkUse(UsbNode n)
+    {
+        if (n.Kind is not ("Device" or "Hub") || n.ReservedMbps == null || ReservableMbps(n) is not double capacity) return null;
+        var (reserved, unknown) = ReservedThroughLink(n);
+        return (reserved, capacity, unknown);
+    }
+
+    internal static string Share(double reserved, double capacity)
+    {
+        double percent = reserved / capacity * 100;
+        return (percent is > 0 and < 1 ? "<1" : $"{Math.Round(percent):0}") + "% of " + Rate(capacity);
+    }
+
     internal static string Rate(double mbps) => mbps switch
     {
         0 => "0 Mb/s",
         >= 1000 => $"{mbps / 1000:0.#} Gb/s",
-        >= 10 => $"{mbps:0} Mb/s",
+        >= 100 => $"{mbps:0} Mb/s",
         >= 1 => $"{mbps:0.#} Mb/s",
         < 0.0001 => "<0.1 kb/s",
         _ => $"{mbps * 1000:0.#} kb/s"

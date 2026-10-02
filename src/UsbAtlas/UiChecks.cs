@@ -312,10 +312,11 @@ public partial class MainWindow
         {
             snapshot = DemoData.Create();
             var flaky = snapshot.Nodes.First(n => n.Id == "demo/root/3"); flaky.QuickReconnects = 3;
+            snapshot.Nodes.First(n => n.Id == "demo/root/1/2").SpeedLimited = true;
             Draw(); UpdateLayout();
             foreach (var device in snapshot.Nodes.Where(n => n.Kind == "Device" && cards.ContainsKey(n.Id)))
                 Check(Glyphs(cards[device.Id].Card).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Reserved, NodeVisuals.Metric.Power]), $"Card {device.Id} must mark link, reserved bandwidth and power with glyphs.");
-            Check(Glyphs(cards["demo/root/5"].Card).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Power]), "Hub cards mark their link and requested power.");
+            Check(Glyphs(cards["demo/root/5"].Card).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Reserved, NodeVisuals.Metric.Power]), "Hub cards mark their link, what is reserved through them and requested power.");
             // Bandwidth and power read as separate rows, and sockets, not a count, show which ports are used.
             foreach (var (id, item) in cards)
             {
@@ -326,6 +327,30 @@ public partial class MainWindow
             Check(Issue(snapshot.Nodes.First(n => n.Id == "demo/root/5")) == "Hub adapter not detected · Over power budget", "Bus-power problems must be listed on the hub.");
             Check(Issue(snapshot.Nodes.First(n => n.Id == "demo/root/5/3")) == "Insufficient power", "A port refused for power must name the fault, not a generic port error.");
             Check(Issue(flaky) == "Unstable connection", "Quick reconnects must be listed as an unstable connection.");
+            // Speed and power warnings sit on the row of the number they qualify; others gather below.
+            List<string> Beside(string id, NodeVisuals.Metric metric) => VisualDescendants(cards[id].Card).OfType<WrapPanel>()
+                .Where(w => w.Children.OfType<TextBlock>().Any(t => Glyphs(t).Contains(metric)))
+                .SelectMany(w => VisualDescendants(w).OfType<TextBlock>().Where(t => t.FontWeight == FontWeights.SemiBold).Select(t => t.Text)).ToList();
+            Check(Beside("demo/root/1/2", NodeVisuals.Metric.Link).SequenceEqual(["Reduced speed"]), "Reduced speed must sit beside the link rate.");
+            // Each device and hub with a known link and reservation gets one bar, under the connection row and above power.
+            foreach (var (id, item) in cards)
+            {
+                var node = (UsbNode)item.Card.Tag;
+                var panel = (StackPanel)item.Card.Child;
+                var bars = panel.Children.OfType<Border>().Where(b => b.Tag is NodeVisuals.LinkBarTag).ToList();
+                Check(bars.Count == (UsbBudgets.LinkUse(node) != null ? 1 : 0), $"Card {id} must show one link bar exactly when its link use is known.");
+                if (bars.Count == 0) continue;
+                var (used, capacity, _) = UsbBudgets.LinkUse(node)!.Value;
+                var fill = ((Grid)bars[0].Child).ColumnDefinitions[0].Width.Value;
+                Check(Math.Abs(fill - Math.Max(used / capacity, used > 0 ? 0.015 : 0)) < 1e-9, $"Card {id}'s bar must fill to its share of the link.");
+                int at = panel.Children.IndexOf(bars[0]);
+                bool Holds(UIElement e, NodeVisuals.Metric m) => Glyphs(e).Contains(m) && !(e is Panel p && p.Children.OfType<Border>().Any(b => b.Tag is NodeVisuals.LinkBarTag));
+                Check(Holds(panel.Children[at - 1], NodeVisuals.Metric.Link) && (node.MaxPowerMa == null || Holds(panel.Children[at + 1], NodeVisuals.Metric.Power)), $"Card {id}'s bar must sit between its connection and power rows.");
+            }
+            Check(Beside("demo/root/5", NodeVisuals.Metric.Power).SequenceEqual(["Hub adapter not detected", "Over power budget"]), "Hub power warnings must sit beside its power request.");
+            Check(Beside("demo/root/5/1", NodeVisuals.Metric.Power).SequenceEqual(["Power at risk"]), "Power at risk must sit beside the power request.");
+            Check(Beside("demo/root/5/3", NodeVisuals.Metric.Power).SequenceEqual(["Insufficient power"]), "A power fault must sit beside the power request.");
+            Check(!Beside("demo/root/3", NodeVisuals.Metric.Power).Contains("Unstable connection") && !Beside("demo/root/3", NodeVisuals.Metric.Link).Contains("Unstable connection"), "Other issues stay below the metrics.");
             foreach (var (id, item) in cards)
                 Check(item.Card.Child.DesiredSize.Height <= item.Card.Height - item.Card.Padding.Top - item.Card.Padding.Bottom - 1, $"Card {id} content, including issue badges, exceeds its height.");
             VerifyStatusStyling();

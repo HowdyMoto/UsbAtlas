@@ -67,6 +67,12 @@ internal static class SelfTests
         UsbScanner.ReadOpenPipes(pipes, 40, 2, endpoints, truncated);
         Check(truncated.ReservedMbps == null && truncated.OpenPipes.Count == 0, "A pipe list longer than the returned data must stay unknown.");
 
+        Check(UsbBudgets.ReservableMbps(new UsbNode { LinkMbps = 480 }) == 384 && UsbBudgets.ReservableMbps(new UsbNode { LinkMbps = 12 }) == 10.8 && UsbBudgets.ReservableMbps(new UsbNode { LinkMbps = 5000 }) == 3600, "Reservable capacity follows the periodic limits of each speed.");
+        Check(Math.Abs(UsbBudgets.ReservableMbps(new UsbNode { Speed = "SuperSpeedPlus · 10 Gb/s or higher" })!.Value - 8727.27) < 0.01 && UsbBudgets.ReservableMbps(new UsbNode()) == null, "Unresolved SuperSpeedPlus assumes 10 Gb/s; unknown links have no capacity.");
+        var studio = demo.Nodes.Single(n => n.Id == "demo/root/1");
+        Check(UsbBudgets.LinkUse(studio) is (var through, 3600, 0) && Near(through, 98.3001), "A hub's link use adds up everything behind it.");
+        Check(UsbBudgets.LinkUse(demo.Nodes.Single(n => n.Id == "demo/root/5/3")) == null && UsbBudgets.LinkUse(demo.Controllers[0]) == null, "Unavailable ports and hosts have no single link to fill.");
+        Check(UsbBudgets.Share(98.3, 384) == "26% of 384 Mb/s" && UsbBudgets.Share(0.0064, 10.8) == "<1% of 10.8 Mb/s" && UsbBudgets.Share(0, 384) == "0% of 384 Mb/s", "Share formatting.");
         var travel = demo.Nodes.Single(n => n.Id == "demo/root/5");
         Check(travel.PowerWarnings.SequenceEqual(["Hub adapter not detected", "Over power budget"]), "A self-power-capable hub on bus power, over its upstream budget, must say so.");
         Check(demo.Nodes.Where(n => n.PowerWarnings.Contains("Power at risk")).Select(n => n.Id).SequenceEqual(["demo/root/5/1", "demo/root/5/2"]), "Devices declaring more than a bus-powered port guarantees are at risk.");
