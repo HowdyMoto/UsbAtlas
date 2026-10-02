@@ -94,6 +94,10 @@ internal static class UsbBudgets
     // Past this share of what a link can reserve, the next audio, video or input device may be refused.
     internal const double NearlyFullShare = 0.8;
     internal static bool LinkNearlyFull(UsbNode n) => LinkUse(n) is (var reserved, var capacity, _) && reserved / capacity >= NearlyFullShare;
+    // Idle cameras and audio reserve almost nothing, so a link can look empty until they stream. This
+    // flags a link whose known peaks would not fit at once; a link already nearly full warns as that instead.
+    internal static bool CouldExceedWhenStreaming(UsbNode n) =>
+        !LinkNearlyFull(n) && LinkUse(n) is (_, var capacity, _) && PeakThroughLink(n).Mbps > capacity;
 
     internal static string Share(double reserved, double capacity)
     {

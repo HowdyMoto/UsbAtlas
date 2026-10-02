@@ -416,6 +416,12 @@ public partial class MainWindow
             Draw(); UpdateLayout();
             Check(Beside("demo/root/1", NodeVisuals.Metric.Link).SequenceEqual(["Link nearly full"]) && !Issue(studio.Children[0]).Contains("Link nearly full"), "A nearly full hub link must warn beside the hub's link rate.");
             Check(cards["demo/root/1"].Card.Child.DesiredSize.Height <= cards["demo/root/1"].Card.Height - cards["demo/root/1"].Card.Padding.Top - cards["demo/root/1"].Card.Padding.Bottom - 1, "The nearly-full warning must fit on the hub card.");
+            // Idle devices whose peaks overflow the link warn before they stream.
+            studio.Children[0].ReservedMbps = 0; studio.Children[0].PeakReservedMbps = 2000;
+            studio.Children[1].ReservedMbps = 100; studio.Children[1].PeakReservedMbps = 2000;
+            Draw(); UpdateLayout();
+            Check(Beside("demo/root/1", NodeVisuals.Metric.Link).SequenceEqual(["Could exceed when streaming"]), "Peaks that overflow a hub's link must warn beside its link rate while the devices are idle.");
+            Check(cards["demo/root/1"].Card.Child.DesiredSize.Height <= cards["demo/root/1"].Card.Height - cards["demo/root/1"].Card.Padding.Top - cards["demo/root/1"].Card.Padding.Bottom - 1, "The streaming warning must fit on the hub card.");
         }
         finally
         {

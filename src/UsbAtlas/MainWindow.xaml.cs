@@ -126,6 +126,7 @@ public partial class MainWindow : Window
     {
         "Port error" => "Windows could not read this port. A device may still be connected.",
         "Reduced speed" => "A faster link is supported. Check the upstream port, hub and cable.",
+        "Could exceed when streaming" => "The devices sharing this link can reserve more, at their peak, than the link can set aside for timed transfers. They fit now because some are idle; once enough cameras, microphones or audio devices start streaming at the same time, Windows may refuse one with Insufficient bandwidth. Move a streaming device to a port on a different hub or controller.",
         "Link nearly full" => "Reservations already hold at least 80% of the bus time this link can set aside for timed transfers such as audio, video and input. Another device of that kind, or one that starts streaming, may be refused with Insufficient bandwidth. Move a busy device to a port on a different hub or controller.",
         "Insufficient bandwidth" => "Windows could not configure this device because the bus cannot reserve the bandwidth it asks for. Move it, or a busy audio or video device on the same controller, to another port.",
         "Insufficient power" => "Windows refused to configure this device because it asks for more power than the port can supply. Connect it to a powered hub or directly to the computer.",

@@ -86,6 +86,12 @@ internal static class SelfTests
         var crowded = new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [new UsbNode { Kind = "Device", LinkMbps = 480, ReservedMbps = 300 }, new UsbNode { Kind = "Device", LinkMbps = 12, ReservedMbps = 8 }] };
         Check(UsbBudgets.LinkNearlyFull(crowded) && !UsbBudgets.LinkNearlyFull(crowded.Children[0]) && !UsbBudgets.LinkNearlyFull(studio), "A hub is nearly full when what it carries passes 80% of what its link can reserve.");
         Check(!UsbBudgets.LinkNearlyFull(new UsbNode { Kind = "Hub", LinkMbps = 480, Children = [new UsbNode { Kind = "Device", ReservedMbps = 380 }] }), "Without the hub's own pipe list, link use stays unknown rather than nearly full.");
+        UsbNode Kiyo() => new() { Kind = "Device", LinkMbps = 480, ReservedMbps = 0.032, PeakReservedMbps = 197.44 };
+        var cameras = new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [Kiyo(), Kiyo()] };
+        Check(UsbBudgets.CouldExceedWhenStreaming(cameras) && !UsbBudgets.LinkNearlyFull(cameras), "Two idle webcams that need 395 Mb/s at peak overflow a USB 2 hub's 384 Mb/s.");
+        Check(!UsbBudgets.CouldExceedWhenStreaming(new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [Kiyo()] }), "One webcam's peak fits a USB 2 hub.");
+        Check(!UsbBudgets.CouldExceedWhenStreaming(crowded) && !UsbBudgets.CouldExceedWhenStreaming(cameras.Children[0]), "A link already nearly full warns only as nearly full; a device that fits its own link is fine.");
+        Check(!UsbBudgets.CouldExceedWhenStreaming(new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [new UsbNode { Kind = "Device" }, Kiyo()] }), "Devices without reservation data add nothing to the peak.");
         Check(UsbBudgets.Share(98.3, 384) == "26% of 384 Mb/s" && UsbBudgets.Share(0.0064, 10.8) == "<1% of 10.8 Mb/s" && UsbBudgets.Share(0, 384) == "0% of 384 Mb/s", "Share formatting.");
         var travel = demo.Nodes.Single(n => n.Id == "demo/root/5");
         Check(travel.PowerWarnings.SequenceEqual(["Hub adapter not detected", "Over power budget"]), "A self-power-capable hub on bus power, over its upstream budget, must say so.");
