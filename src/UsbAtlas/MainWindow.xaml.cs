@@ -30,6 +30,9 @@ public partial class MainWindow : Window
     public MainWindow(bool demo, bool render, bool verifyUi = false, bool horizontal = false)
     {
         InitializeComponent(); this.demo = demo; this.render = render;
+        var searchGlyph = NodeVisuals.Symbol("search", Theme.Brush("TextMuted"), 16);
+        ((System.Windows.Shapes.Path)((Canvas)searchGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextMuted");
+        SearchIcon.Content = searchGlyph;
         horizontalTree = horizontal;
         OrientationButton.Content = horizontalTree ? "Horizontal" : "Vertical";
         ThemeButton.Content = Theme.IsDark ? "Light mode" : "Dark mode";
@@ -38,7 +41,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link/power figures, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { VerifySearchInput(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link/power figures, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();

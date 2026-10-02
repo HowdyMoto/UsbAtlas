@@ -7,6 +7,31 @@ namespace UsbAtlas;
 
 public partial class MainWindow
 {
+    private void VerifySearchInput()
+    {
+        var original = Search.Text;
+        try
+        {
+            Search.Text = "USB webcam gyjp 123";
+            Search.UpdateLayout(); UpdateLayout();
+            var start = Search.GetRectFromCharacterIndex(0);
+            var end = Search.GetRectFromCharacterIndex(Search.Text.Length - 1, true);
+            if (start.IsEmpty || end.IsEmpty || start.Top < 0 || start.Bottom > Search.ActualHeight - 1 || end.Bottom > Search.ActualHeight - 1)
+                throw new Exception("Search text is vertically clipped.");
+            if (Math.Abs((start.Top + start.Bottom) / 2 - Search.ActualHeight / 2) > 2)
+                throw new Exception("Search text is not vertically centered.");
+            if (start.Left < SearchIcon.Margin.Left + SearchIcon.ActualWidth + 4)
+                throw new Exception("Search text overlaps the magnifying glass.");
+            var box = (FrameworkElement)Search.Parent;
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)box.ActualWidth, (int)box.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(box);
+            var png = new System.Windows.Media.Imaging.PngBitmapEncoder();
+            png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+            using var stream = System.IO.File.Create("search-preview.png");
+            png.Save(stream);
+        }
+        finally { Search.Text = original; searchTimer.Stop(); }
+    }
     private void VerifyDeviceTree()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }

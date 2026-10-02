@@ -32,8 +32,9 @@
     </StackPanel>
     <Button x:Name="TreeButton" Content="Hide tree" Click="TreePanelClick" DockPanel.Dock="Left" Padding="8,3" Margin="0,0,10,0" ToolTip="Show or hide the device tree"/>
     <Grid Width="190" DockPanel.Dock="Left" HorizontalAlignment="Left">
-     <TextBox x:Name="Search" TextChanged="SearchChanged" KeyDown="SearchKeyDown" ToolTip="Search names, IDs, serials, types, paths or issues. Enter: next; Shift+Enter: previous; Escape: clear." Padding="9,5" AutomationProperties.Name="Search devices"/>
-     <TextBlock Text="Find a device…" Foreground="{DynamicResource TextMuted}" Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=Search}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+     <TextBox x:Name="Search" TextChanged="SearchChanged" KeyDown="SearchKeyDown" ToolTip="Search names, IDs, serials, types, paths or issues. Enter: next; Shift+Enter: previous; Escape: clear." Padding="32,0,9,0" VerticalContentAlignment="Center" AutomationProperties.Name="Search devices"/>
+     <ContentControl x:Name="SearchIcon" Width="16" Height="16" Margin="9,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False" Focusable="False"/>
+     <TextBlock Text="Find a device…" Foreground="{DynamicResource TextMuted}" Margin="33,0,9,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=Search}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
     </Grid>
    </DockPanel>
   </Border>
