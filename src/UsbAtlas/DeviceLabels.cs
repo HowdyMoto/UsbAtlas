@@ -35,18 +35,34 @@ internal sealed class DeviceLabels
             : $"port|{node.Kind}|{node.Id}|{node.VendorId}|{node.ProductId}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes((snapshot.IsDemo ? "demo|" : "hardware|") + identity)));
     }
+    private static string PortKey(UsbNode node, Snapshot snapshot)
+    {
+        var parent = snapshot.Nodes.FirstOrDefault(n => n.Children.Any(c => c.Id == node.Id));
+        return parent == null ? "" : "port-name|" + Key(parent, snapshot) + "|" + node.Port;
+    }
+    private static string SnapKey(UsbNode node, Snapshot snapshot) => "snap|" + PortKey(node, snapshot) + "|" + node.VendorId + ":" + node.ProductId + "|" + node.Serial;
+    internal bool TrySetSnap(UsbNode node, Snapshot snapshot, bool enabled, out string error)
+    {
+        var parent = snapshot.Nodes.FirstOrDefault(n => n.Children.Contains(node));
+        if (node.Kind != "Hub" || parent?.Kind != "Hub") { error = "Select a hub connected directly to another hub."; return false; }
+        if (enabled && parent.Children.Any(n => n.Id != node.Id && n.SnapToParentHub)) { error = "This hub already has a snapped downstream stage. Unlink that stage first."; return false; }
+        return Set(node, snapshot, enabled ? "linked" : "", false, out error, true);
+    }
+    internal bool TrySetPort(UsbNode node, Snapshot snapshot, string label, out string error) => Set(node, snapshot, label, true, out error);
     internal void Apply(Snapshot snapshot)
     {
-        foreach (var node in snapshot.Nodes) node.UserLabel = labels.GetValueOrDefault(Key(node, snapshot), "");
+        foreach (var node in snapshot.Nodes) { node.UserLabel = labels.GetValueOrDefault(Key(node, snapshot), ""); node.PortLabel = labels.GetValueOrDefault(PortKey(node, snapshot), ""); node.SnapToParentHub = labels.GetValueOrDefault(SnapKey(node, snapshot), "") == "linked"; }
     }
-    internal bool TrySet(UsbNode node, Snapshot snapshot, string label, out string error)
+    internal bool TrySet(UsbNode node, Snapshot snapshot, string label, out string error) => Set(node, snapshot, label, false, out error);
+    private bool Set(UsbNode node, Snapshot snapshot, string label, bool port, out string error, bool snap = false)
     {
         error = "";
         if (LoadError != null) { error = LoadError + " Existing file has been preserved."; return false; }
         label = label.Trim();
         if (label.Length > 100 || label.Any(char.IsControl)) { error = "Use a label of at most 100 characters on one line."; return false; }
         var next = new Dictionary<string, string>(labels);
-        string key = Key(node, snapshot);
+        string key = snap ? SnapKey(node, snapshot) : port ? PortKey(node, snapshot) : Key(node, snapshot);
+        if (key.Length == 0) { error = "Select a numbered port on a hub."; return false; }
         if (label.Length == 0) next.Remove(key); else next[key] = label;
         string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try

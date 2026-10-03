@@ -51,20 +51,21 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 ## Explore
 
 - Select a controller, hub, device, or numbered port to inspect it. The inspector keeps the same rows in the same places for every port, device and hub, so you can click from port to port to compare them. — marks a row that doesn't apply (nothing attached, or not a hub); Not reported marks a value an attached device left out. Copy details and your label follow the comparable rows.
-- The left device tree provides traditional expandable branches in port order. Selection stays synchronized with the graph and inspector. Selecting a tree entry brings its card into view at the current zoom and briefly rings it; clicking the selected entry again finds it after you have panned away. Selecting on the canvas highlights the entry in the tree and scrolls to it. Drag its divider to resize it, or use **Hide tree / Show tree** to collapse and restore the panel. Search applies to both views; the tree lists empty ports only when they match a search.
-- **Add your own label** in the inspector gives hardware a recognizable name, such as “Dell monitor KVM”. Save applies it to cards and search; Reset restores the detected name. The detected identity remains visible underneath.
+- The left device tree provides traditional expandable branches in port order. Selection stays synchronized with the graph and inspector. Selecting a tree entry brings its card into view at the current zoom and briefly rings it; clicking the selected entry again finds it after you have panned away. Selecting on the canvas highlights the entry in the tree and scrolls to it. Drag its divider to resize it, or use **Hide / Show devices** to collapse and restore the panel. Search applies to both views; the tree lists empty ports only when they match a search.
+- Click the name or pencil in **Properties** to edit a label in place and give hardware a recognizable name, such as “Dell monitor KVM”. Save or Enter applies it to cards and search; Cancel or Escape discards edits, and Reset restores the detected name. The detected identity remains visible underneath.
 - Search names, VID:PID, manufacturers, serials, device types, logical paths, or issue labels such as “Reduced speed”. Matches are outlined and the first result is selected and revealed. Enter / Shift+Enter moves between results; Escape clears search. Ancestors remain visible for context.
 - Tab through cards and controls. Arrow keys on a card move between visible nodes; Enter or Space selects without rebuilding the graph.
 - Double-click a hub/controller, or use its +/− button, to fold a branch. Search temporarily reveals matching descendants without discarding folded state.
-- Drag the inspector divider to resize it, or use **Hide inspector / Show inspector** to reclaim the graph area.
-- Pan by dragging empty canvas, or right/middle dragging anywhere. Mouse wheel zooms around the pointer. **Readable** reflows the graph at 100% and opens on the first host controller, **Overview** fits the graph, **Locate** centers the selection, and the zoom percentage resets to 100%.
-- **Vertical / Horizontal** changes tree direction and preserves selection and folded branches.
-- Every logical port appears as a numbered socket along the hub's bottom edge in Vertical mode and its right edge in Horizontal mode. A socket in use is filled in the color of its connection, accent blue along the selected path; an empty one is only outlined. USB-C sockets are pill-shaped. Empty ports never take a full device card. USB 3 hubs often report two logical ports per physical socket (USB 2 and USB 3), so a hub can show more sockets than it has. Hubs with many ports grow along the port edge to keep each socket readable.
-- Connections never cross. A hub's devices sit in one row in port order, and their connections fan out from the ports, bending at most twice. When the window is too narrow, a hub with only end devices lists them as a staircase beside it, read top to bottom, with its ports gathered at the card's right end. Rows never wrap; if the graph is still wider than the window, scroll or use **Overview**.
+- Drag the inspector divider to resize it, or use **Hide / Show properties** to reclaim the graph area.
+- Oversized topologies open on a focused branch and its upstream path. The tree still lists all devices. **Show all branches** restores the full graph; **Focus branch** isolates the selection, and selecting another tree branch updates the focus. Focused views hide unrelated branches and sockets, with a visible note.
+- Pan by dragging empty canvas, or right/middle dragging anywhere. Mouse wheel zooms around the pointer. **100% view** reflows the graph at actual size, **Fit all** fits the graph, **Center selection** centers the selection, and the zoom percentage resets to 100%.
+- **Layout** offers explicit Vertical and Horizontal choices and changes tree direction and preserves selection and folded branches.
+- Every logical port appears as a numbered socket along the hub's bottom edge in Vertical mode and its right edge in Horizontal mode. A socket in use is filled in the color of its connection, accent blue along the selected path; an empty one is only outlined. USB-C sockets are pill-shaped and labeled C. A — identifies a port reported as not USB-C, and ? means Windows did not report the connector type. A legend appears beneath the graph; non-USB-C does not establish an exact connector shape. Empty ports never take a full device card. USB 3 hubs often report two logical ports per physical socket (USB 2 and USB 3), so a hub can show more sockets than it has. Hubs with many ports grow along the port edge to keep each socket readable.
+- Connections never cross. A hub's devices sit in one row in port order, and their connections fan out from the ports, bending at most twice. When the window is too narrow, a hub with only end devices lists them as a staircase beside it, read top to bottom, with its ports gathered at the card's right end. Rows never wrap; if the graph is still wider than the window, scroll or use **Fit all**.
 - The issue button lists reduced-speed links, incomplete scans, port failures, power problems, unstable connections and scan diagnostics. Select a hardware issue to reveal its node. See **Power checks** below for what each power issue means.
 - The graph, tree and inspector rescan automatically when Windows reports USB devices being connected or disconnected. Rescans wait for the burst of notifications to settle. The status bar names what was connected or disconnected, and newly connected devices briefly ring.
 - Click **Refresh**, press **F5**, or enable ten-second auto-refresh. A thin progress bar appears at the top of the canvas while scanning and fades out over 180 ms. Even instant scans remain briefly visible. Unchanged scans preserve graph controls and inspector state.
-- Export the snapshot as JSON. **Sample** switches to labeled demo hardware; **My devices** returns to local hardware.
+- Export the snapshot as JSON. Demo hardware is available through `--demo` when launching from the command line.
 
 ## Visual language
 
@@ -86,7 +87,7 @@ Hub location is inferred from Windows port accessibility and topology, and label
 take priority over generic descriptions. Devices that report only a generic name
 are named from the bundled offline USB ID database. Those entries usually name the
 maker of the chip inside (a hub in a Dell monitor may appear as Realtek), not the
-retail brand; **Add your own label** can rename it. Detection details record where
+retail brand; clicking its name or pencil in Properties can rename it. Detection details record where
 each name came from, along with the original USB strings, Windows name and lookup results.
 
 **Storage kinds:** USB itself reports optical drives, floppy drives and fast (UAS) drive
@@ -129,7 +130,9 @@ The meter's full width is the most the host will reserve for timed transfers on 
 
 Many hubs report themselves as self-powered whether or not an adapter is connected, so the bus-power checks can only catch hubs that report honestly.
 
-**Topology:** USB 2/3 companion logical ports can refer to the same physical socket. An external USB 3 hub may appear as two hubs. This app does not infer physical connector type from USB version. Empty counts are logical ports. Errors and inaccessible hubs remain visible; a scan can be partial if hardware changes during enumeration.
+**Topology:** Windows-reported companion-port mappings identify confirmed USB 2/3 hub pairs, labeled on cards and linked from Properties. USB 2 hub sections at their native 480 Mb/s do not receive a Reduced speed warning. Ports reported as inaccessible to users are marked as internal connections; enclosure boundaries remain unknown.
+
+USB 2/3 companion logical ports can refer to the same physical socket. An external USB 3 hub may appear as two hubs. This app does not infer physical connector type from USB version. Empty counts are logical ports. Errors and inaccessible hubs remain visible; a scan can be partial if hardware changes during enumeration.
 
 Snapshots and exports may contain serial numbers. Scans are local; the application makes no network requests and does not reset, disable, or reconfigure devices.
 
@@ -160,3 +163,5 @@ Native layout and IOCTL constants are checked against the installed Windows SDK 
 Connector detection uses Microsoft's [USB port connector properties](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ns-usbioctl-_usb_port_connector_properties) and [port flags](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ns-usbioctl-_usb_port_properties).
 
 `--verify-ui` checks actual WPF card bounds, connections, filtering, folding, selection scrolling and fit. Every connection must be orthogonal, start at its port, end on its own card, avoid other cards and never cross or touch another; rows must keep port order without wrapping, including crowded hubs at several widths. It also exercises both directions with variable-height cards and 31 empty slots, search navigation, issue search, inspector collapse/restore, selection reuse, tree and canvas selection sync, and device-change rescans (simulated notifications; plug in a real device to confirm on hardware). Results are written to `ui-test.txt`. `--compact` opens the minimum supported window size; `--wide` uses a 3840×1560 window. These off-screen checks do not replace native mouse/keyboard testing.
+
+Name a socket by selecting its port and using **Port name** in Properties. Names stay with the hub port when attached devices change, appear in the tree, and are searchable. To arrange the chips inside a multi-stage hub, select each downstream hub and choose **Snap to upstream hub** under **Arrange hub stages**. The vertical layout places linked stages side by side inside a user-defined enclosure outline while retaining the real connection lines and port numbers. **Unlink from upstream hub** restores the normal layout; the horizontal layout always shows the original hierarchy. Names and grouping are saved locally.

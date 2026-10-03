@@ -162,14 +162,14 @@ internal static class NodeVisuals
         var possible = new Border { Background = Ink("Accent"), Opacity = 0.3 }; Grid.SetColumn(possible, 1); bars.Children.Add(possible);
         T Text<T>(T text, string ink) where T : TextBlock
         {
-            text.Text = label; text.FontSize = 10; text.FontWeight = FontWeights.SemiBold; text.Foreground = Ink(ink);
+            text.Text = label; text.FontSize = 11; text.FontWeight = FontWeights.SemiBold; text.Foreground = Ink(ink);
             text.Margin = new Thickness(6, 0, 0, 0); text.VerticalAlignment = VerticalAlignment.Center; text.HorizontalAlignment = HorizontalAlignment.Left;
             return text;
         }
         var light = Text(new UnspokenText { Clip = Geometry.Empty }, "OnAccent");
         fill.SizeChanged += (_, e) => light.Clip = new RectangleGeometry(new Rect(0, 0, Math.Max(0, e.NewSize.Width - 6), 40));
         var layers = new Grid { Children = { bars, Text(new TextBlock(), "TextPrimary"), light } };
-        return new Border { Height = 14, CornerRadius = new CornerRadius(3), Background = Ink("Surface"), BorderBrush = Ink(outline), BorderThickness = new Thickness(1), Child = layers, Tag = MeterTag, ClipToBounds = true };
+        return new Border { Height = 18, CornerRadius = new CornerRadius(3), Background = Ink("Surface"), BorderBrush = Ink(outline), BorderThickness = new Thickness(1), Child = layers, Tag = MeterTag, ClipToBounds = true };
     }
 
     // A second drawing of text that is already read aloud, kept out of the accessibility tree.
@@ -183,7 +183,7 @@ internal static class NodeVisuals
     internal static ControlTemplate SocketTemplate(bool typeC)
     {
         var chrome = new FrameworkElementFactory(typeof(Border), "Chrome");
-        chrome.SetValue(Border.CornerRadiusProperty, new CornerRadius(typeC ? 8 : 3));
+        chrome.SetValue(Border.CornerRadiusProperty, new CornerRadius(typeC ? 11 : 3));
         chrome.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
         chrome.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
         chrome.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));

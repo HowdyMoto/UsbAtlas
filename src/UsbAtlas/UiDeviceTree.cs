@@ -13,15 +13,15 @@ public partial class MainWindow
     private readonly HashSet<string> collapsedTreeBranches = [];
     private bool syncingTree, treeRebuilt;
     private string treeSignature = "", treeSelectionId = "";
-    private double treePanelWidth = 240;
+    private double treePanelWidth = 280;
 
     private void UpdateDeviceTree()
     {
         if (DeviceTree == null) return;
         // Empty ports are sockets on the canvas; the tree lists them only when they match a search.
-        bool Include(UsbNode n) => Visible(n) && (n.Kind != "Empty port" || appliedQuery.Length > 0);
+        bool Include(UsbNode n) => Visible(n) && (n.Kind != "Empty port" || n.PortLabel.Length > 0 || appliedQuery.Length > 0);
         var nodes = snapshot.Nodes.Where(Include).ToList();
-        string signature = System.Text.Json.JsonSerializer.Serialize(new { Theme.IsDark, appliedQuery, Nodes = nodes.Select(n => new { n.Id, n.DisplayName, n.Kind, n.Port, n.Status, n.Location, Issue = Issue(n) }) });
+        string signature = System.Text.Json.JsonSerializer.Serialize(new { Theme.IsDark, appliedQuery, Nodes = nodes.Select(n => new { n.Id, n.DisplayName, n.PortLabel, n.Kind, n.Port, n.Status, n.Location, Issue = Issue(n) }) });
         if (signature == treeSignature) return;
         syncingTree = true;
         try
@@ -38,8 +38,8 @@ public partial class MainWindow
                     var glyph = NodeVisuals.StatusGlyph(issues.Max(i => i.Severity)); glyph.Margin = new Thickness(6, 0, 0, 0);
                     DockPanel.SetDock(glyph, Dock.Right); header.Children.Add(glyph);
                 }
-                header.Children.Add(new TextBlock { Text = (node.Port > 0 ? $"{node.Port:00} · " : "") + NodeVisuals.ShortName(node), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
-                var item = new TreeViewItem { Header = header, Tag = node, IsExpanded = appliedQuery.Length > 0 || !collapsedTreeBranches.Contains(node.Id), ToolTip = $"{node.DisplayName}\n{NodeVisuals.Label(node)} · {node.Status}\n{pathLabels.GetValueOrDefault(node.Id)}\n{Issue(node)}" };
+                header.Children.Add(new TextBlock { FontSize = 13, Text = (node.Port > 0 ? $"{node.Port:00} · " : "") + (node.PortLabel.Length > 0 ? node.PortLabel + " → " : "") + NodeVisuals.ShortName(node), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+                var item = new TreeViewItem { Header = header, Tag = node, IsExpanded = appliedQuery.Length > 0 || !collapsedTreeBranches.Contains(node.Id), ToolTip = $"{node.DisplayName}\n{NodeVisuals.Label(node)} · {node.Status}\n{pathLabels.GetValueOrDefault(node.Id)}\n{HubRelationships.Description(node, snapshot)}\n{Issue(node)}" };
                 System.Windows.Automation.AutomationProperties.SetName(item, $"{node.DisplayName}, {NodeVisuals.Label(node)}" + (node.Port > 0 ? $", port {node.Port}" : ""));
                 item.Expanded += (_, e) => { if (!syncingTree && appliedQuery.Length == 0 && ReferenceEquals(e.OriginalSource, item)) collapsedTreeBranches.Remove(node.Id); };
                 item.Collapsed += (_, e) => { if (!syncingTree && appliedQuery.Length == 0 && ReferenceEquals(e.OriginalSource, item)) collapsedTreeBranches.Add(node.Id); };
@@ -102,10 +102,16 @@ public partial class MainWindow
     private void ShowOnCanvas(UsbNode node)
     {
         bool redraw = false;
+        if (focusedIds != null && !focusedIds.Contains(node.Id))
+        {
+            focusedBranch = (node.Kind == "Device" ? FindPath(node.Id).LastOrDefault(n => n.Kind == "Hub") ?? node : node).Id;
+            redraw = true;
+        }
         foreach (var ancestor in FindPath(node.Id).SkipLast(1)) redraw |= folded.Remove(ancestor.Id);
         if (redraw) Draw();
         SelectNode(snapshot.Nodes.FirstOrDefault(n => n.Id == node.Id) ?? node);
         RevealSelection(); Pulse(node);
+        if (focusedBranch != null) FrameSelectionPath();
     }
 
     private void TreePanelClick(object sender, RoutedEventArgs e)
@@ -116,7 +122,7 @@ public partial class MainWindow
         TreeColumn.Width = new GridLength(hide ? 0 : treePanelWidth);
         TreeSplitterColumn.Width = new GridLength(hide ? 0 : 5);
         TreePanel.Visibility = TreeSplitter.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
-        TreeButton.Content = hide ? "Show tree" : "Hide tree";
+        TreeButton.Visibility = hide ? Visibility.Visible : Visibility.Collapsed;
         UpdateLayout(); FitSidePanels();
     }
 

@@ -59,6 +59,7 @@ public sealed class UsbScanner
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
+        HubRelationships.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         if (snapshot.Controllers.Count == 0) snapshot.Diagnostics.Add("No USB host controllers were returned by Windows.");
         return snapshot;
@@ -67,6 +68,7 @@ public sealed class UsbScanner
     private void ReadHub(string path, UsbNode hub, int depth)
     {
         if (depth > 12 || !visited.Add(path)) { hub.ScanIncomplete = true; hub.Notes.Add("Repeated or excessively deep hub path; enumeration stopped."); return; }
+        hub.HubSymbolicLink = path;
         using var handle = Open(path);
         if (handle.IsInvalid) { hub.ScanIncomplete = true; hub.Notes.Add("Hub details unavailable: " + Error()); return; }
         var info = new byte[76];
@@ -88,7 +90,12 @@ public sealed class UsbScanner
             hub.Children.Add(node);
             var connector = new byte[4096]; Put(connector, 0, port);
             if (Query(handle, 278, connector, out var connectorReturned) && connectorReturned >= 16)
+            {
                 DeviceIdentity.ApplyPortProperties(node, BitConverter.ToUInt32(connector, 8));
+                node.CompanionPortNumber = BitConverter.ToUInt16(connector, 14);
+                if (connectorReturned > 16)
+                    node.CompanionHubSymbolicLink = Encoding.Unicode.GetString(connector, 16, (Math.Min(connectorReturned, connector.Length) - 16) & ~1).Split('\0')[0];
+            }
             DeviceIdentity.AssignLocation(node, hub);
             var v2 = new byte[16]; Put(v2, 0, port); Put(v2, 4, 16); Put(v2, 8, 7);
             var hasV2 = Query(handle, 279, v2, out returned) && returned >= 16;

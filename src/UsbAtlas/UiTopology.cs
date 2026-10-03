@@ -10,12 +10,13 @@ public partial class MainWindow
 {
     private const double CardWidth = TopologyLayout.CardWidth, CardHeight = TopologyLayout.CardHeight;
     private bool readableView = true, arranging, horizontalTree;
-    private double layoutWidth = 1100, inspectorWidth = 310;
+    private double layoutWidth = 1100, inspectorWidth = 330;
     private double ReadingScale => 1;
     private readonly HashSet<string> visibleIds = [];
     private readonly Dictionary<string, string> pathLabels = [];
     private readonly Dictionary<string, System.Windows.Shapes.Path> wires = [];
     private readonly Dictionary<string, List<Point>> wireRoutes = [];
+    private readonly HashSet<string> snappedWires = [];
     private readonly Dictionary<string, Button> portSlots = [];
     private readonly Dictionary<string, Button> connectedPorts = [];
     private readonly Dictionary<string, Point> portAnchors = [];
@@ -30,7 +31,7 @@ public partial class MainWindow
         // A port refused for power or bandwidth names the fault; anything else unavailable is a generic port error.
         if (n.Kind == "Unavailable") issues.Add((NodeVisuals.Severity.Error, UsbBudgets.IsPowerFault(n) || n.Status == "Insufficient bandwidth" ? n.Status : "Port error"));
         if (n.ScanIncomplete) issues.Add((NodeVisuals.Severity.Warning, "Scan incomplete"));
-        if (n.SpeedLimited) issues.Add((NodeVisuals.Severity.Warning, "Reduced speed"));
+        if (n.SpeedLimited && !n.IsUsb2Companion && !HubRelationships.Usb2HubAtNativeSpeed(n)) issues.Add((NodeVisuals.Severity.Warning, "Reduced speed"));
         foreach (var warning in n.PowerWarnings) issues.Add((NodeVisuals.Severity.Warning, warning));
         if (n.QuickReconnects > 0) issues.Add((NodeVisuals.Severity.Warning, "Unstable connection"));
         if (UsbBudgets.LinkNearlyFull(n)) issues.Add((NodeVisuals.Severity.Warning, "Link nearly full"));
@@ -92,7 +93,7 @@ public partial class MainWindow
         return string.Join("\n", lines);
     }
     private static string Issue(UsbNode n) => string.Join(" · ", Issues(n).Select(i => i.Text));
-    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
+    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
     private bool Visible(UsbNode n) => visibleIds.Contains(n.Id);
     // On Windows each xHCI controller has one root hub, and to the user they are one thing: a host whose
     // sockets are the root ports. They share one card; a controller with several root hubs, or none
@@ -101,17 +102,17 @@ public partial class MainWindow
     private static UsbNode? MergedRoot(UsbNode n) => n.Kind == "Controller" && n.Children.Count == 1 && n.Children[0].Kind == "Root hub" ? n.Children[0] : null;
     // The node whose card shows this one: a merged root hub is drawn by its controller.
     private UsbNode CardNode(UsbNode n) => mergedHosts.GetValueOrDefault(n.Id) ?? n;
-    private List<UsbNode> Children(UsbNode n) => folded.Contains(n.Id) && appliedQuery.Length == 0 ? [] : (MergedRoot(n) ?? n).Children.Where(c => c.Kind != "Empty port" && Visible(c)).OrderBy(c => c.Port).ToList();
+    private List<UsbNode> Children(UsbNode n) => folded.Contains(n.Id) && appliedQuery.Length == 0 ? [] : (MergedRoot(n) ?? n).Children.Where(c => c.Kind != "Empty port" && Visible(c) && (focusedIds == null || focusedIds.Contains(c.Id))).OrderBy(c => c.Port).ToList();
     // Every logical port is drawn on its hub, occupied or not, so the sockets themselves show occupancy.
     // Cached per drawing pass; layout queries each hub's ports many times while choosing staircases.
     private List<UsbNode> EdgePorts(UsbNode n)
     {
         if (edgePortCache.TryGetValue(n.Id, out var ports)) return ports;
-        return edgePortCache[n.Id] = n.Kind is "Hub" or "Root hub" ? n.Children.OrderBy(c => c.Port).ToList() : MergedRoot(n) is UsbNode root ? EdgePorts(root) : [];
+        return edgePortCache[n.Id] = n.Kind is "Hub" or "Root hub" ? n.Children.Where(c => focusedIds == null || focusedIds.Contains(c.Id)).OrderBy(c => c.Port).ToList() : MergedRoot(n) is UsbNode root ? EdgePorts(root) : [];
     }
     // Socket geometry: 24×16 slots, 28 apart along a vertical card's bottom edge and 20 apart down a
     // horizontal card's right edge.
-    private const double SocketWidth = 24, SocketHeight = 16, SocketPitch = 28, SocketStep = 20;
+    private const double SocketWidth = 42, SocketHeight = 22, SocketPitch = 46, SocketStep = 28;
     // Ports spread evenly along the edge; a staircase gathers them at the card's right end
     // so its column of devices can tuck under the card.
     private double? PortOffset(UsbNode parent, UsbNode child)
@@ -128,9 +129,10 @@ public partial class MainWindow
     private double HeightFor(UsbNode n)
     {
         double height = 2 + 8 + 22 + 8;
-        if (n.UserLabel.Length > 0) height += 15;
-        height += n.Kind is "Controller" or "Root hub" ? 18 : RowHeight(n, CardFigures(n));
-        if (ShowsMeter(n)) height += 4 + 14;
+        if (n.UserLabel.Length > 0) height += 16;
+        if (HubRelationships.CardLabel(n).Length > 0) height += 19;
+        height += n.Kind is "Controller" or "Root hub" ? 20 : RowHeight(n, CardFigures(n));
+        if (ShowsMeter(n)) height += 4 + 18;
         height += 24 * BadgeRows(n, OtherIssues(n));
         int ports = EdgePorts(n).Count;
         if (ports > 0) height = horizontalTree ? Math.Max(height, ports * SocketStep + 12) : height + 6 + SocketHeight;
@@ -174,10 +176,10 @@ public partial class MainWindow
         string? focusId = null;
         for (var hit = Keyboard.FocusedElement as DependencyObject; hit != null; hit = hit is Visual ? VisualTreeHelper.GetParent(hit) : LogicalTreeHelper.GetParent(hit))
             if (hit is FrameworkElement { Tag: UsbNode n }) { focusId = n.Id; break; }
-        PrepareGraph();
+        PrepareGraph(); PrepareFocus();
         UpdateDeviceTree();
-        Graph.Children.Clear(); cards.Clear(); wires.Clear(); wireRoutes.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear();
-        var roots = snapshot.Controllers.Where(Visible).ToList();
+        Graph.Children.Clear(); cards.Clear(); wires.Clear(); wireRoutes.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear();
+        var roots = snapshot.Controllers.Where(n => Visible(n) && (focusedIds == null || focusedIds.Contains(n.Id))).ToList();
         const double margin = 16, controllerGap = 24;
         var layouts = ArrangeLayouts(roots, layoutWidth - margin * 2, controllerGap);
         // Controllers are siblings like any other row, so they sit side by side and never wrap;
@@ -185,7 +187,7 @@ public partial class MainWindow
         double top = 12, left = margin, rowHeight = 0, maxRight = 0;
         foreach (var tree in layouts)
         {
-            if (left > margin && horizontalTree) { top += rowHeight + 36; left = margin; rowHeight = 0; }
+            if (left > margin && (horizontalTree || left + tree.Width > layoutWidth)) { top += rowHeight + 36; left = margin; rowHeight = 0; }
             Place(tree, left, top);
             left += tree.Width + controllerGap;
             rowHeight = Math.Max(rowHeight, tree.Height);
@@ -194,9 +196,9 @@ public partial class MainWindow
         top += rowHeight + 36;
         Graph.Width = Math.Max(CardWidth + margin * 2, maxRight);
         Graph.Height = Math.Max(200, top);
-        EmptyMessage.Text = snapshot.Controllers.Count == 0 ? "No USB controllers found. Try Refresh or Sample." : "No matching devices. Press Escape to clear search.";
+        EmptyMessage.Text = snapshot.Controllers.Count == 0 ? "No USB controllers found. Try Refresh." : "No matching devices. Press Escape to clear search.";
         EmptyMessage.Visibility = cards.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        UpdateSelection();
+        UpdateSelection(); UpdateGraphHint();
         if (focusId != null)
         {
             if (portSlots.TryGetValue(focusId, out var slot)) slot.Focus();
@@ -209,7 +211,7 @@ public partial class MainWindow
     private List<TopologyLayout.Item> ArrangeLayouts(List<UsbNode> roots, double available, double gap)
     {
         stackedHubs.Clear(); stackableHubs.Clear();
-        List<TopologyLayout.Item> Measure() => roots.Select(r => TopologyLayout.Measure(r, Children, horizontalTree, WidthFor, HeightFor, PortOffset, stackedHubs)).ToList();
+        List<TopologyLayout.Item> Measure() => roots.Select(r => TopologyLayout.Measure(r, Children, horizontalTree, WidthFor, HeightFor, PortOffset, stackedHubs, SnappedStages)).ToList();
         var layouts = Measure();
         if (horizontalTree) return layouts;
         static IEnumerable<TopologyLayout.Item> Flatten(TopologyLayout.Item item) => item.Children.SelectMany(Flatten).Prepend(item);
@@ -234,6 +236,7 @@ public partial class MainWindow
     }
     private void Place(TopologyLayout.Item layout, double left, double top)
     {
+        if (layout.SnappedStages != null) { PlaceSnapped(layout, left, top); return; }
         var node = layout.Node;
         double height = HeightFor(node), width = WidthFor(node);
         double x = left + layout.CardX, y = top + layout.CardY;
@@ -251,15 +254,18 @@ public partial class MainWindow
             fold.Click += (_, e) => { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); e.Handled = true; };
             DockPanel.SetDock(fold, Dock.Right); title.Children.Add(fold);
         }
-        title.Children.Add(new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 13.5, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName });
+        title.Children.Add(new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName });
         panel.Children.Add(title);
+        var relationship = HubRelationships.CardLabel(node);
+        if (relationship.Length > 0)
+            panel.Children.Add(new TextBlock { Text = relationship, FontSize = 12, Foreground = Brush("TextSecondary"), Height = 19, ToolTip = HubRelationships.Description(node, snapshot) });
         // Under a custom label, keep the detected name visible; where a name came from is in Detection details.
         if (node.UserLabel.Length > 0)
-            panel.Children.Add(new TextBlock { Text = "Detected: " + node.Name, FontSize = 10, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
+            panel.Children.Add(new TextBlock { Text = "Detected: " + node.Name, FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
         var figures = CardFigures(node);
         string metric = string.Join(" · ", figures.Parts.Select(p => p.Words));
         if (host)
-            panel.Children.Add(new TextBlock { Text = pathLabels[node.Id] + " · " + ProtocolSummary(node), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0), ToolTip = "Ports: " + ProtocolSummary(node) + "\nSupply capacity: unknown; charging limits are not queried." });
+            panel.Children.Add(new TextBlock { Text = pathLabels[node.Id] + " · " + ProtocolSummary(node), FontSize = 12, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0), ToolTip = "Ports: " + ProtocolSummary(node) + "\nSupply capacity: unknown; charging limits are not queried." });
         else if (figures.Parts.Count > 0 || figures.Issues.Count > 0)
         {
             // One line of figures; the warnings that qualify them follow on the same row and wrap below.
@@ -270,7 +276,7 @@ public partial class MainWindow
                 line.ToolTip = MetricHelp(node); line.VerticalAlignment = VerticalAlignment.Center; line.Margin = new Thickness(0, 0, 8, 0);
                 row.Children.Add(line);
             }
-            foreach (var (severity, text) in figures.Issues) { var badge = NodeVisuals.StatusBadge(severity, text); badge.Margin = new Thickness(0, 1, 4, 1); badge.ToolTip = IssueHelp(text); row.Children.Add(badge); }
+            foreach (var (severity, text) in figures.Issues) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 1, 4, 1);  row.Children.Add(badge); }
             panel.Children.Add(row);
         }
         if (MeterFor(node) is var (now, peak, capacity, label))
@@ -283,7 +289,7 @@ public partial class MainWindow
         if (issues.Count > 0)
         {
             var badges = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
-            foreach (var (severity, text) in issues) { var badge = NodeVisuals.StatusBadge(severity, text); badge.Margin = new Thickness(0, 0, 4, 0); badge.ToolTip = IssueHelp(text); badges.Children.Add(badge); }
+            foreach (var (severity, text) in issues) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 0, 4, 0);  badges.Children.Add(badge); }
             panel.Children.Add(badges);
         }
         var edgePorts = EdgePorts(node);
@@ -310,10 +316,10 @@ public partial class MainWindow
             var port = edgePorts[i];
             double cross = (horizontalTree ? y : x) + PortOffset(node, port)!.Value;
             // A slot with its number inside: filled when in use, outlined when empty, a pill for USB-C.
-            var number = new TextBlock { Text = port.Port.ToString("00"), FontSize = 9.5, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            if (port.Kind == "Empty port") number.Opacity = 0.5;
-            var button = new Button { Content = number, Tag = port, Width = SocketWidth, Height = SocketHeight, Padding = new Thickness(0), Template = NodeVisuals.SocketTemplate(port.PortConnectorIsTypeC == true), Cursor = Cursors.Hand, ToolTip = $"Logical port {port.Port} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{(port.PortConnectorIsTypeC == true ? "USB-C receptacle reported by Windows" : "Connector shape not reported")}" };
-            System.Windows.Automation.AutomationProperties.SetName(button, $"Port {port.Port}, {port.DisplayName}");
+            var number = new TextBlock { Text = port.Port.ToString("00") + (port.PortConnectorIsTypeC == true ? " C" : port.PortConnectorIsTypeC == false ? " —" : " ?"), FontSize = 11.5, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            if (port.Kind == "Empty port") number.Opacity = 0.85;
+            var button = new Button { Content = number, Tag = port, Width = SocketWidth, Height = SocketHeight, Padding = new Thickness(0), Template = NodeVisuals.SocketTemplate(port.PortConnectorIsTypeC == true), Cursor = Cursors.Hand, ToolTip = $"Logical port {port.Port}{(port.PortLabel.Length > 0 ? " · " + port.PortLabel : "")} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{(port.PortConnectorIsTypeC == true ? "USB-C receptacle reported by Windows" : port.PortConnectorIsTypeC == false ? "Windows reports this port is not USB-C; exact connector shape is not reported" : "Connector type unknown; Windows did not report it")}" };
+            System.Windows.Automation.AutomationProperties.SetName(button, $"Port {port.Port}, {(port.PortConnectorIsTypeC == true ? "USB-C" : port.PortConnectorIsTypeC == false ? "Not USB-C" : "Unknown connector")}, {port.DisplayName}");
             button.Click += (_, e) => { SelectNode(port); e.Handled = true; };
             Canvas.SetLeft(button, horizontalTree ? bounds.Right - button.Width : cross - button.Width / 2);
             Canvas.SetTop(button, horizontalTree ? cross - button.Height / 2 : bounds.Bottom - button.Height);
@@ -324,9 +330,17 @@ public partial class MainWindow
         var children = layout.Children;
         var childCards = children.Select(c => new Rect(left + c.X + c.CardX, top + c.Y + c.CardY, WidthFor(c.Node), HeightFor(c.Node))).ToList();
         var anchors = children.Select(c => portAnchors.TryGetValue(c.Node.Id, out var anchor) ? anchor : (Point?)null).ToList();
-        var routes = TopologyLayout.Route(bounds, anchors, childCards, layout.Stacked, horizontalTree);
+        var routes = layout.SnappedColumn ? childCards.Select((child, i) =>
+        {
+            var start = anchors[i]!.Value;
+            double laneY = y + HeightFor(node) + 32 + (children.Count - i) * 8;
+            double laneX = left + layout.Width - 8 - (children.Count - 1 - i) * 8;
+            double entryY = child.Y + child.Height / 2;
+            return new List<Point> { start, new(start.X, laneY), new(laneX, laneY), new(laneX, entryY), new(child.Right, entryY) };
+        }).ToList() : TopologyLayout.Route(bounds, anchors, childCards, layout.Stacked, horizontalTree);
         for (int i = 0; i < children.Count; i++)
         {
+            if (layout.SnappedColumn) snappedWires.Add(children[i].Node.Id);
             AddWire(children[i].Node.Id, routes[i]);
             Place(children[i], left + children[i].X, top + children[i].Y);
         }
@@ -442,6 +456,7 @@ public partial class MainWindow
     }
     private void ApplySearch()
     {
+        focusedBranch = null; FocusBranchButton.Content = "Focus branch";
         searchTimer.Stop(); ResetPan(); Draw();
         if (matches.Count > 0) { SelectNode(matches[0]); LocateClick(this, new RoutedEventArgs()); }
         else { GraphScroll.ScrollToTop(); GraphScroll.ScrollToLeftEnd(); ShowDetails(); }
@@ -467,7 +482,7 @@ public partial class MainWindow
         InspectorColumn.Width = new GridLength(hide ? 0 : inspectorWidth);
         SplitterColumn.Width = new GridLength(hide ? 0 : 5);
         InspectorPanel.Visibility = InspectorSplitter.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
-        InspectorButton.Content = hide ? "Show inspector" : "Hide inspector";
+        InspectorButton.Visibility = hide ? Visibility.Visible : Visibility.Collapsed;
         UpdateLayout(); FitSidePanels();
     }
     private void UpdateIssues()
@@ -477,7 +492,7 @@ public partial class MainWindow
         if (count == 0) { IssuesButton.Content = new TextBlock { Text = "No issues", Foreground = Brush("TextMuted") }; IssuesButton.ClearValue(BackgroundProperty); }
         else { IssuesButton.Content = NodeVisuals.StatusContent(worst, count == 1 ? "1 issue" : $"{count} issues"); IssuesButton.Background = Brush(worst == NodeVisuals.Severity.Error ? "ErrorSurface" : "WarningSurface"); }
         IssuesButton.IsEnabled = count > 0;
-        StatusText.Text = (snapshot.IsDemo ? "Sample topology" : "Local snapshot") + $" · Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(n => n.Kind == "Unavailable")} port errors · {snapshot.Nodes.Count(n => n.ScanIncomplete)} incomplete · {snapshot.Nodes.Count(n => n.SpeedLimited)} reduced speed · {snapshot.Nodes.Count(UsbBudgets.LinkNearlyFull)} nearly full · {snapshot.Nodes.Count(UsbBudgets.CouldExceedWhenStreaming)} could exceed · {snapshot.Nodes.Count(n => UsbBudgets.IsPowerFault(n) || n.PowerWarnings.Count > 0 || n.QuickReconnects > 0)} power or stability";
+        StatusText.Text = (snapshot.IsDemo ? "Demo hardware" : "Local scan") + $" · Updated {snapshot.CapturedAt:T}" + (count > 0 ? $" · {count} items need attention" : " · No issues detected");
         if (snapshot.Diagnostics.Count > 0) StatusText.Text += " · " + string.Join(" · ", snapshot.Diagnostics);
         StatusText.ToolTip = StatusText.Text;
     }
@@ -487,7 +502,7 @@ public partial class MainWindow
         foreach (var node in snapshot.Nodes.Where(n => Issue(n).Length > 0))
         {
             var item = new MenuItem { Header = $"{Issue(node)} — {node.DisplayName} ({pathLabels.GetValueOrDefault(node.Id)})", Icon = NodeVisuals.StatusGlyph(Issues(node).Max(i => i.Severity)) };
-            item.Click += (_, _) => { Search.Clear(); searchTimer.Stop(); foreach (var ancestor in FindPath(node.Id)) folded.Remove(ancestor.Id); Draw(); SelectNode(node); LocateClick(this, new RoutedEventArgs()); };
+            item.Click += (_, _) => { Search.Clear(); searchTimer.Stop(); foreach (var ancestor in FindPath(node.Id)) folded.Remove(ancestor.Id); Draw(); ShowOnCanvas(node); };
             menu.Items.Add(item);
         }
         foreach (var diagnostic in snapshot.Diagnostics) menu.Items.Add(new MenuItem { Header = diagnostic, IsEnabled = false, Icon = NodeVisuals.StatusGlyph(NodeVisuals.Severity.Warning) });

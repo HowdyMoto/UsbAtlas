@@ -48,6 +48,25 @@
    </ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style TargetType="ToolTip"><Setter Property="FontFamily" Value="{StaticResource UiFont}"/><Setter Property="MaxWidth" Value="380"/><Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/><Setter Property="Padding" Value="10"/></Style>
+  <Style x:Key="WarningButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border x:Name="Focus" BorderThickness="1" BorderBrush="Transparent" CornerRadius="4"><ContentPresenter/></Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Focus" Property="BorderBrush" Value="{DynamicResource BorderHover}"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="EditableNameButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+   <Setter Property="Background" Value="Transparent"/><Setter Property="BorderBrush" Value="Transparent"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4"><ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/></Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
   <Style TargetType="TextBox">
    <Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/><Setter Property="BorderBrush" Value="{DynamicResource Border}"/><Setter Property="CaretBrush" Value="{DynamicResource TextPrimary}"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox"><Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4"><ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/></Border><ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>

@@ -12,6 +12,14 @@ internal static class SelfTests
         Check(UsbScanner.DecodeSpeed(0, 0).Item2 == 1.5, "Low-speed decoding.");
         Check(UsbScanner.DecodeSpeed(1, 0).Item2 == 12, "Full-speed decoding.");
         Check(UsbScanner.DecodeSpeed(2, 0).Item2 == 480, "High-speed decoding.");
+        var usb2 = new UsbNode { Id = "two", Kind = "Hub", Port = 1, VendorId = "0BDA", LinkMbps = 480, SpeedLimited = true, CompanionPortNumber = 2, CompanionHubSymbolicLink = "root" };
+        var usb3 = new UsbNode { Id = "three", Kind = "Hub", Port = 2, VendorId = "0BDA", LinkMbps = 5000 };
+        var root = new UsbNode { Id = "root", Kind = "Root hub", HubSymbolicLink = @"\\?\root", Children = [usb2, usb3] };
+        var companionSnapshot = new Snapshot { Controllers = [root] };
+        HubRelationships.Analyze(companionSnapshot);
+        Check(usb2.IsUsb2Companion && usb2.CompanionHubId == usb3.Id && !usb3.IsUsb2Companion, "Companion hubs must pair from the Windows port mapping.");
+        usb2.CompanionPortNumber = 9; HubRelationships.Analyze(companionSnapshot);
+        Check(!usb2.IsUsb2Companion && usb2.CompanionHubId.Length == 0, "Matching names or VID alone must not pair hubs.");
         var demo = DemoData.Create();
         Check(demo.IsDemo, "Sample data must be explicitly identified.");
         Check(demo.Nodes.Count(x => x.Kind == "Device") == 7, "Recursive topology traversal.");

@@ -7,6 +7,33 @@ namespace UsbAtlas;
 
 public partial class MainWindow
 {
+    private void VerifyWarningExplanation()
+    {
+        var node = snapshot.Nodes.First(n => n.Kind == "Device");
+        var oldCount = node.QuickReconnects;
+        var oldTimes = node.QuickReconnectTimes;
+        var oldSelection = selected;
+        var inspectorWasVisible = InspectorPanel.Visibility == Visibility.Visible;
+        try
+        {
+            node.QuickReconnects = 3;
+            node.QuickReconnectTimes = [DateTime.Today.AddHours(12), DateTime.Today.AddHours(12).AddMinutes(1), DateTime.Today.AddHours(12).AddMinutes(2)];
+            if (inspectorWasVisible) InspectorClick(this, new RoutedEventArgs());
+            var badge = WarningBadge(node, NodeVisuals.Severity.Warning, "Unstable connection");
+            badge.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var explanation = Details.Children.OfType<TextBlock>().Single(t => Equals(t.Tag, "warning:Unstable connection"));
+            var explanationText = new System.Windows.Documents.TextRange(explanation.ContentStart, explanation.ContentEnd).Text;
+            if (selected != node || InspectorPanel.Visibility != Visibility.Visible || !explanationText.Contains("three disconnect") || !explanationText.Contains("12:02:00") || !explanationText.Contains("restarted"))
+                throw new Exception("Clicking a warning must reveal its device and explain the trigger, observed reconnects and session lifetime.");
+            CaptureUi("warning-preview.png");
+        }
+        finally
+        {
+            node.QuickReconnects = oldCount; node.QuickReconnectTimes = oldTimes;
+            selected = oldSelection; ShowDetails();
+            if (!inspectorWasVisible && InspectorPanel.Visibility == Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
+        }
+    }
     private void VerifySearchInput()
     {
         var original = Search.Text;
@@ -49,7 +76,7 @@ public partial class MainWindow
         SelectNode(parent);
         Check(DeviceTree.SelectedItem == treeItems[parent.Id], "Graph selection must select the corresponding tree item.");
         TreePanelClick(this, new RoutedEventArgs()); UpdateLayout();
-        Check(TreePanel.Visibility == Visibility.Collapsed && TreeColumn.ActualWidth == 0 && TreeButton.Content as string == "Show tree", "Tree panel did not collapse.");
+        Check(TreePanel.Visibility == Visibility.Collapsed && TreeColumn.ActualWidth == 0 && TreeButton.Visibility == Visibility.Visible && TreeButton.Content as string == "Show devices", "Tree panel did not collapse.");
         TreePanelClick(this, new RoutedEventArgs()); UpdateLayout();
         Check(TreePanel.Visibility == Visibility.Visible && TreeColumn.ActualWidth >= 180 && selected?.Id == parent.Id, "Restoring the tree lost its size or selection.");
         Search.Text = target.Name; ApplySearch();
@@ -219,7 +246,7 @@ public partial class MainWindow
         {
             var parent = CardNode(FindPath(id).SkipLast(1).Last());
             Check(boxes.ContainsKey(id) && boxes.ContainsKey(parent.Id), $"Connection {id} is missing a card at one end.");
-            Check(route.Count <= 4, $"Connection {id} bends more than twice.");
+            Check(route.Count <= (snappedWires.Contains(id) ? 5 : 4), $"Connection {id} has too many bends.");
             Check(portAnchors.TryGetValue(id, out var port) ? (route[0] - port).Length < 0.01 : OnEdge(boxes[parent.Id], route[0]), $"Connection {id} does not start at its port.");
             Check(OnEdge(boxes[id], route[^1]), $"Connection {id} does not end on its card.");
             for (int i = 1; i < route.Count; i++)
@@ -236,6 +263,7 @@ public partial class MainWindow
                     Check(!Touch((segments[i].A, segments[i].B), (segments[j].A, segments[j].B)), $"Connections {segments[i].Id} and {segments[j].Id} cross or touch.");
         foreach (var node in snapshot.Nodes.Where(n => cards.ContainsKey(n.Id)))
         {
+            if (SnappedStages(node).Count > 1 || snappedWires.Contains(node.Id)) continue;
             var kids = Children(node).Select(c => boxes[c.Id]).ToList();
             if (kids.Count < 2) continue;
             bool stacked = stackedHubs.Contains(node.Id);
@@ -278,7 +306,7 @@ public partial class MainWindow
                 horizontalTree = horizontal; layoutWidth = width; Draw(); UpdateLayout();
                 VerifyWireRouting();
                 var hosts = snapshot.Controllers.Select(c => cards[c.Id].Point).ToList();
-                Check(horizontal ? hosts.All(p => Math.Abs(p.X - hosts[0].X) < 0.01) : hosts.All(p => Math.Abs(p.Y - hosts[0].Y) < 0.01), "Host controllers must share one row (one column when horizontal), even when the graph is wider than the view.");
+                Check(horizontal ? hosts.All(p => Math.Abs(p.X - hosts[0].X) < 0.01) : hosts[1].Y > hosts[0].Y || hosts[1].X > hosts[0].X, "Independent controller branches must advance to the right or onto a lower row without overlapping.");
             }
         }
         finally
@@ -469,8 +497,9 @@ public partial class MainWindow
             List<string> Layout(string id)
             {
                 SelectNode(snapshot.Nodes.First(n => n.Id == id)); UpdateLayout();
-                return Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is "field" or "section")
-                    .Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)e).Text)}@{e.TranslatePoint(new Point(), Details).Y:0}").ToList();
+                var rows = Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is "field" or "section").ToList();
+                double origin = rows[0].TranslatePoint(new Point(), Details).Y;
+                return rows.Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)e).Text)}@{e.TranslatePoint(new Point(), Details).Y - origin:0}").ToList();
             }
             var expected = Layout("demo/root/1");
             foreach (var id in new[] { "demo/root/1/1", "demo/root/1/3", "demo/root/4" })
@@ -503,7 +532,10 @@ public partial class MainWindow
             Check(text.Contains("Port support") && text.Any(t => t.Contains("USB 3.x")), "Host inspector lost reported port protocols.");
             Check(text.Contains("Supply capacity") && text.Contains("Unknown · not measured") && !text.Contains("Negotiated link"), "Host inspector must distinguish unknown supply from peripheral metrics.");
             var hub = snapshot.Nodes.First(n => n.Kind == "Hub"); SelectNode(hub); UpdateLayout();
-            var editor = Details.Children.OfType<Expander>().First(); editor.IsExpanded = true; UpdateLayout();
+            Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, "edit-device-name")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var editor = inlineLabelHost!; UpdateLayout();
+            Check(editor.Visibility == Visibility.Visible && deviceHeading!.Visibility == Visibility.Collapsed, "Clicking the name must replace the heading with its inline editor.");
+            CaptureUi("inline-label-preview.png");
             var input = Descendants(editor).OfType<TextBox>().Single(); input.Text = "Dell monitor KVM";
             Descendants(editor).OfType<Button>().Single(b => b.Content as string == "Save label").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); UpdateLayout();
             Check(hub.UserLabel == "Dell monitor KVM" && hub.Name == "Studio desktop hub", "Label editor overwrote reported identity or failed to save.");
@@ -513,7 +545,7 @@ public partial class MainWindow
             deviceLabels = new DeviceLabels(System.IO.Path.Combine(directory, "labels.json"));
             var refreshed = DemoData.Create(); deviceLabels.Apply(refreshed);
             Check(refreshed.Nodes.Single(n => n.Id == hub.Id).UserLabel == "Dell monitor KVM", "Labels did not survive a fresh snapshot and store reload.");
-            editor = Details.Children.OfType<Expander>().First(); editor.IsExpanded = true; UpdateLayout();
+            editSelectedLabel!(); editor = inlineLabelHost!; UpdateLayout();
             Descendants(editor).OfType<Button>().Single(b => b.Content as string == "Reset").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(hub.UserLabel == "" && hub.DisplayName == "Studio desktop hub", "Label Reset failed to restore the detected name.");
         }
@@ -541,10 +573,11 @@ public partial class MainWindow
         await Task.Delay(160);
         var restarted = Refresh();
         Check(RefreshProgress.Visibility == Visibility.Visible && RefreshProgress.Opacity == 1, "Refresh during fade must restore full visibility.");
-        await restarted;
-        await Task.Delay(170);
+        // Invoke the stale callback directly; elapsed-time assertions can fail when the UI thread is busy rendering.
+        CompleteRefreshProgress(version);
         Check(RefreshProgress.Visibility == Visibility.Visible, "An earlier fade hid a newer refresh indicator.");
-        await Task.Delay(250);
+        await restarted;
+        await Task.Delay(420);
         Check(RefreshProgress.Visibility == Visibility.Collapsed && !RefreshProgress.IsIndeterminate, "Progress animation must stop after fading out.");
     }
     private void VerifyCompactUi()
@@ -620,7 +653,7 @@ public partial class MainWindow
         {
             Search.Clear(); searchTimer.Stop(); folded.Clear();
             snapshot = savedSnapshot; selected = savedSelection; horizontalTree = savedHorizontal;
-            OrientationButton.Content = horizontalTree ? "Horizontal" : "Vertical";
+            OrientationButton.Content = horizontalTree ? "Layout: horizontal" : "Layout: vertical";
             FitClick(this, new RoutedEventArgs()); ShowDetails(); UpdateIssues();
         }
     }

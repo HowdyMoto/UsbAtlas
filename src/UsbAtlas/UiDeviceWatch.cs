@@ -103,6 +103,7 @@ internal sealed class ReconnectTracker
         {
             var times = returns[node.InstanceId];
             node.QuickReconnects = times.Count;
+            node.QuickReconnectTimes = [.. times];
             node.Notes.Add($"Dropped and came back within seconds {times.Count} times this session, most recently at {times[^1]:T}. Repeated quick reconnects usually mean the device is short of power, or a cable or connector is faulty.");
         }
     }

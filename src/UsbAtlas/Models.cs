@@ -10,6 +10,8 @@ public sealed class UsbNode
     public string LookupVendor { get; set; } = "";
     public string LookupProduct { get; set; } = "";
     public string NameSource { get; set; } = "Reported name";
+    public bool SnapToParentHub { get; set; }
+    public string PortLabel { get; set; } = "";
     public string UserLabel { get; set; } = "";
     [System.Text.Json.Serialization.JsonIgnore]
     public string DisplayName => UserLabel.Length > 0 ? UserLabel : Name;
@@ -33,7 +35,13 @@ public sealed class UsbNode
     public double? PeakReservedMbps { get; set; }
     public List<string> OpenPipes { get; set; } = [];
     public string InstanceId { get; set; } = "";
+    public string HubSymbolicLink { get; set; } = "";
+    public string CompanionHubSymbolicLink { get; set; } = "";
+    public int CompanionPortNumber { get; set; }
+    public string CompanionHubId { get; set; } = "";
+    public bool IsUsb2Companion { get; set; }
     public int QuickReconnects { get; set; }
+    public List<DateTime> QuickReconnectTimes { get; set; } = [];
     public string VendorId { get; set; } = "";
     public string ProductId { get; set; } = "";
     public string Manufacturer { get; set; } = "";

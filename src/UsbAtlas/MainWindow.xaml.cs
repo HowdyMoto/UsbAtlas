@@ -33,15 +33,18 @@ public partial class MainWindow : Window
         var searchGlyph = NodeVisuals.Symbol("search", Theme.Brush("TextMuted"), 16);
         ((System.Windows.Shapes.Path)((Canvas)searchGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextMuted");
         SearchIcon.Content = searchGlyph;
+        var copyGlyph = NodeVisuals.Symbol("content_copy", Brush("TextPrimary"), 14);
+        ((System.Windows.Shapes.Path)((Canvas)copyGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextPrimary");
+        CopyDetailsIcon.Content = copyGlyph;
         horizontalTree = horizontal;
-        OrientationButton.Content = horizontalTree ? "Horizontal" : "Vertical";
+        OrientationButton.Content = horizontalTree ? "Layout: horizontal" : "Layout: vertical";
         ThemeButton.Content = Theme.IsDark ? "Light mode" : "Dark mode";
         Loaded += async (_, _) =>
         {
             await Refresh();
             if (verifyUi)
             {
-                try { VerifySearchInput(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link/power figures, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link/power figures, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -54,7 +57,7 @@ public partial class MainWindow : Window
     private async Task Refresh()
     {
         if (busy) return;
-        busy = true; RefreshButton.IsEnabled = false; DemoButton.IsEnabled = false;
+        busy = true; RefreshButton.IsEnabled = false;
         ShowRefreshProgress();
         StatusText.Text = "Scanning controllers, hubs and device descriptors…";
         try
@@ -69,23 +72,18 @@ public partial class MainWindow : Window
             bool changed = JsonSerializer.Serialize(snapshot.Controllers) != JsonSerializer.Serialize(next.Controllers) || !snapshot.Diagnostics.SequenceEqual(next.Diagnostics);
             snapshot = next;
             selected = snapshot.Nodes.FirstOrDefault(x => x.Id == id) ?? snapshot.Nodes.FirstOrDefault(x => x.Kind == "Hub") ?? snapshot.Controllers.FirstOrDefault();
-            DeviceCount.Text = snapshot.Nodes.Count(x => x.Kind == "Device").ToString();
-            // A root hub merged into its host's card is counted as the host, not as a hub.
-            HubCount.Text = $"{snapshot.Nodes.Count(x => x.Kind == "Hub") + snapshot.Controllers.Where(c => MergedRoot(c) == null).Sum(c => c.Children.Count(r => r.Kind == "Root hub"))} / {snapshot.Controllers.Count}";
-            PortCount.Text = snapshot.Nodes.Count(x => x.Kind == "Empty port").ToString();
-            DemoButton.Content = demo ? "My devices" : "Sample";
             StatusText.Text = (demo ? "Sample topology  ·  " : "Local snapshot  ·  ") + $"Updated {snapshot.CapturedAt:T} · {snapshot.Nodes.Count(x => x.Kind == "Unavailable")} port errors";
             if (snapshot.Diagnostics.Count > 0) StatusText.Text += " · " + string.Join(" · ", snapshot.Diagnostics);
             UpdateIssues();
             if (deviceLabels.LoadError != null) StatusText.Text += " · Saved labels unavailable";
             if (changed) { Draw(); ShowDetails(); }
-            if (fitNext) { GraphScroll.UpdateLayout(); FitClick(this, new RoutedEventArgs()); fitNext = false; }
+            if (fitNext) { GraphScroll.UpdateLayout(); FitClick(this, new RoutedEventArgs()); OpenInitialView(); fitNext = false; }
             if (before != null) ReportConnections(before, Occupants(snapshot));
         }
         catch (Exception ex) { StatusText.Text = "Scan failed: " + ex.Message; EmptyMessage.Text = "Could not read USB devices. See status below; refresh to retry."; EmptyMessage.Visibility = Visibility.Visible; }
         finally
         {
-            busy = false; RefreshButton.IsEnabled = true; DemoButton.IsEnabled = true; FadeRefreshProgress();
+            busy = false; RefreshButton.IsEnabled = true; FadeRefreshProgress();
             if (rescanQueued) { rescanQueued = false; QueueDeviceRescan(); }
         }
     }
@@ -107,15 +105,16 @@ public partial class MainWindow : Window
             BeginTime = TimeSpan.FromMilliseconds(Math.Max(0, 120 - Stopwatch.GetElapsedTime(refreshStarted).TotalMilliseconds)),
             FillBehavior = FillBehavior.Stop
         };
-        fade.Completed += (_, _) =>
-        {
-            if (version != refreshIndicatorVersion) return;
-            RefreshProgress.Visibility = Visibility.Collapsed;
-            RefreshProgress.IsIndeterminate = false;
-            RefreshProgress.BeginAnimation(OpacityProperty, null);
-            RefreshProgress.Opacity = 0;
-        };
+        fade.Completed += (_, _) => CompleteRefreshProgress(version);
         RefreshProgress.BeginAnimation(OpacityProperty, fade);
+    }
+    private void CompleteRefreshProgress(int version)
+    {
+        if (version != refreshIndicatorVersion) return;
+        RefreshProgress.Visibility = Visibility.Collapsed;
+        RefreshProgress.IsIndeterminate = false;
+        RefreshProgress.BeginAnimation(OpacityProperty, null);
+        RefreshProgress.Opacity = 0;
     }
     private async void WindowKeyDown(object sender, KeyEventArgs e)
     {
@@ -137,16 +136,59 @@ public partial class MainWindow : Window
         "Power at risk" => "This device declares more current than its port is guaranteed to supply, so it may disconnect or misbehave under load. See Detection details.",
         "Over power budget" => "The devices behind this bus-powered hub declare more current, in total, than its upstream port is guaranteed to supply. See Detection details.",
         "Hub adapter not detected" => "This hub can run from its own power supply but is running on bus power. If it has an adapter, check that it is plugged in.",
-        "Unstable connection" => "This device has repeatedly dropped and reconnected within seconds. That usually means it is short of power, or a cable or connector is faulty.",
+        "Unstable connection" => "USB Atlas observed at least three disconnect-and-reconnect cycles within five minutes, each returning within 30 seconds. This records reconnects, not their cause: unplugging, restarting or changing USB modes can trigger it, as can power interruptions or a loose cable. The warning stays until USB Atlas is restarted.",
         _ => "Enumeration is incomplete; counts may omit downstream devices. See Detection details."
     };
     // One layout per kind of selection, so ports can be compared by flipping between them: every port,
     // device and hub shows the same rows in the same places. "—" marks a row that doesn't apply or has
     // nothing attached; "Not reported" marks a value an attached device left out. Content that varies
     // (explanations, actions, evidence) follows the comparable rows.
+    private static string WarningExplanation(UsbNode node, string issue)
+    {
+        var explanation = IssueHelp(issue);
+        if (issue == "Reduced speed") explanation += $"\nObserved link: {ShortSpeed(node)}. Windows reports capability for a faster connection; the exact achievable rate is not measured.";
+        if (issue == "Unstable connection")
+        {
+            explanation += $"\nObserved this session: {node.QuickReconnects} quick reconnects.";
+            if (node.QuickReconnectTimes.Count > 0)
+                explanation += "\nReconnect times: " + string.Join(", ", node.QuickReconnectTimes.Select(t => t.ToString("HH:mm:ss"))) + " (local time).";
+        }
+        return explanation;
+    }
+    private Button WarningBadge(UsbNode node, NodeVisuals.Severity severity, string issue)
+    {
+        var badge = new Button { Content = NodeVisuals.StatusBadge(severity, issue), Style = (Style)FindResource("WarningButton"), Padding = new Thickness(0), Tag = "warning-action" };
+        badge.Cursor = Cursors.Hand;
+        badge.Focusable = true;
+        System.Windows.Automation.AutomationProperties.SetName(badge, "Explain " + issue);
+        void Explain()
+        {
+            SelectNode(node);
+            if (InspectorPanel.Visibility != Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
+            UpdateLayout();
+            Details.Children.OfType<FrameworkElement>().FirstOrDefault(x => Equals(x.Tag, "warning:" + issue))?.BringIntoView();
+        }
+        badge.Click += (_, e) => { Explain(); e.Handled = true; };
+        badge.ToolTip = "Click to explain. " + WarningExplanation(node, issue);
+        return badge;
+    }
+    private void CopyDetailsClick(object sender, RoutedEventArgs e)
+    {
+        if (selected is not UsbNode node) return;
+        try
+        {
+            Clipboard.SetText(JsonSerializer.Serialize(node, new JsonSerializerOptions { WriteIndented = true }));
+            StatusText.Text = "Device details copied.";
+        }
+        catch (Exception ex) { StatusText.Text = "Clipboard unavailable: " + ex.Message; }
+    }
     private void ShowDetails()
     {
+        restoreLabelFocus = inlineLabelHost?.IsKeyboardFocusWithin == true;
+        if (editingLabelId != selected?.Id) { editingLabelId = null; labelDraft = null; }
+        editSelectedLabel = null;
         Details.Children.Clear();
+        CopyDetailsButton.IsEnabled = selected is not null;
         if (selected is not UsbNode node) { Text("Select a device", 22); Text("Inspect a connection to see its link, power and path through your hardware.", 12, "TextMuted"); return; }
         if (appliedQuery.Length > 0 && !Matches(node, appliedQuery)) Text("Selection is outside the search results.", 11, "TextMuted");
         if (!cards.ContainsKey(node.Id) && !portSlots.ContainsKey(node.Id)) Text("Selection is hidden by a collapsed branch or filter.", 11, "TextMuted");
@@ -156,13 +198,30 @@ public partial class MainWindow : Window
         // Fixed-height heading, role line and status row keep everything below in place.
         var heading = new DockPanel { Height = 48, Margin = new Thickness(0, 0, 0, 4) };
         var symbol = NodeVisuals.Icon(node, 26); symbol.Margin = new Thickness(0, 0, 8, 0); DockPanel.SetDock(symbol, Dock.Left); heading.Children.Add(symbol);
-        heading.Children.Add(new TextBlock { Text = node.DisplayName, FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, LineHeight = 24, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, MaxHeight = 48, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName });
+        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, LineHeight = 24, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, MaxHeight = 48, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName };
+        if (node.Kind is not ("Empty port" or "Unavailable"))
+        {
+            var nameRow = new DockPanel();
+            var pencil = new System.Windows.Shapes.Path { Data = Geometry.Parse("M2,10 L2,14 L6,14 L14,6 L10,2 Z M9,3 L13,7"), Stroke = Brush("TextMuted"), StrokeThickness = 1.4, Width = 16, Height = 16, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            pencil.SetResourceReference(Shape.StrokeProperty, "TextMuted");
+            DockPanel.SetDock(pencil, Dock.Right); nameRow.Children.Add(pencil); nameRow.Children.Add(name);
+            var editName = new Button { Content = nameRow, Padding = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Stretch, ToolTip = "Click to edit your device label", Tag = "edit-device-name" };
+            editName.Style = (Style)FindResource("EditableNameButton");
+            System.Windows.Automation.AutomationProperties.SetName(editName, "Edit label for " + node.DisplayName);
+            editName.Click += (_, _) => editSelectedLabel?.Invoke();
+            heading.Children.Add(editName);
+        }
+        else heading.Children.Add(name);
         Details.Children.Add(heading);
-        Details.Children.Add(new TextBlock { Text = NodeVisuals.Label(node) + " · " + node.Status + (node.UserLabel.Length > 0 ? " · detected as " + node.Name : ""), FontSize = 11, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = node.UserLabel.Length > 0 ? "Detected name: " + node.Name : null });
-        var status = new WrapPanel { Height = 22, Margin = new Thickness(0, 5, 0, 6), ClipToBounds = true };
-        foreach (var (severity, text) in Issues(node)) { var badge = NodeVisuals.StatusBadge(severity, text); badge.Margin = new Thickness(0, 0, 4, 0); badge.ToolTip = IssueHelp(text); status.Children.Add(badge); }
-        if (status.Children.Count == 0) status.Children.Add(new TextBlock { Text = "No issues", FontSize = 11, Foreground = Brush("TextMuted"), VerticalAlignment = VerticalAlignment.Center });
+        deviceHeading = heading;
+        inlineLabelHost = new ContentControl { Visibility = Visibility.Collapsed };
+        Details.Children.Add(inlineLabelHost);
+        Details.Children.Add(new TextBlock { Text = (HubRelationships.CardLabel(node).Length > 0 ? HubRelationships.CardLabel(node) : NodeVisuals.Label(node)) + " · " + node.Status + (node.UserLabel.Length > 0 ? " · detected as " + node.Name : ""), FontSize = 12, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = node.UserLabel.Length > 0 ? "Detected name: " + node.Name : null });
+        var status = new WrapPanel { MinHeight = 22, Margin = new Thickness(0, 5, 0, 6) };
+        foreach (var (severity, text) in Issues(node)) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 0, 4, 0);  status.Children.Add(badge); }
+        if (status.Children.Count == 0) status.Children.Add(new TextBlock { Text = "No issues", FontSize = 12, Foreground = Brush("TextMuted"), VerticalAlignment = VerticalAlignment.Center });
         Details.Children.Add(status);
+
 
         if (!host)
         {
@@ -175,7 +234,7 @@ public partial class MainWindow : Window
                 var icon = NodeVisuals.MetricGlyph(glyph, 11); icon.Margin = new Thickness(0, 1, 3, 0); DockPanel.SetDock(icon, Dock.Left); line.Children.Add(icon);
                 line.Children.Add(new TextBlock { Text = value, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = Brush(value == NotApplicable || value == "Unknown" ? "TextMuted" : "TextPrimary") });
                 stack.Children.Add(line);
-                stack.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0) });
+                stack.Children.Add(new TextBlock { Text = label, FontSize = 13, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0) });
                 metrics.Children.Add(stack);
             }
             string unread = node.Kind == "Unavailable" ? "Unknown" : NotApplicable;
@@ -186,14 +245,7 @@ public partial class MainWindow : Window
             Metric(NodeVisuals.Metric.Power, node.MaxPowerMa is int ma && node.Kind != "Empty port" ? $"{ma} mA" : attached ? "Unknown" : unread, "Power request", 2,
                 "The most current the device's active configuration says it will draw. A declared maximum, not a measurement.");
             Details.Children.Add(metrics);
-            Section("Port");
-            Field("Logical path", pathLabels.GetValueOrDefault(node.Id, NotApplicable));
-            Field("Port number", node.Port.ToString("00"));
-            Field("Port supports", node.Protocols);
-            Field("Connector", NodeVisuals.Connector(node));
-            Field("Location", node.Location == "Unknown" ? "Not reported" : node.Location + " · inferred");
-            Field("Supply capacity", "Unknown · not measured");
-            Section("Attached device");
+            Section("Device identity & connection");
             Field("VID / PID", attached && node.VendorId.Length > 0 ? $"{node.VendorId} : {node.ProductId}" : Reported(""));
             Field("Manufacturer", Reported(node.Manufacturer));
             Field("Serial", Reported(node.Serial));
@@ -210,6 +262,14 @@ public partial class MainWindow : Window
                 Field("Link use", usage);
             }
             else Field("Link use", attached ? "Not reported" : Reported(""));
+            Section("Port");
+            Field("Logical path", pathLabels.GetValueOrDefault(node.Id, NotApplicable));
+            Field("Port number", node.Port.ToString("00"));
+            Field("Port name", PortNameEditor(node));
+            Field("Port supports", node.Protocols);
+            Field("Connector", NodeVisuals.Connector(node));
+            Field("Location", node.Location == "Unknown" ? "Not reported" : node.Location + " · inferred");
+            Field("Supply capacity", "Unknown · not measured");
             Section("Hub");
             Field("Logical ports", hub ? node.PortCount.ToString() : NotApplicable);
             Field("Downstream", hub ? ProtocolSummary(node) : NotApplicable);
@@ -241,10 +301,30 @@ public partial class MainWindow : Window
             if (ancestor != chain.Last()) pathRow.Children.Add(new TextBlock { Text = "›", Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 4, 0) });
         }
         Details.Children.Add(pathRow);
-        foreach (var (_, text) in Issues(node)) Text(IssueHelp(text), 11, "TextSecondary");
-        var copy = new Button { Content = "Copy details", Padding = new Thickness(8, 3, 8, 3), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 8) };
-        copy.Click += (_, _) => { try { Clipboard.SetText(JsonSerializer.Serialize(node, new JsonSerializerOptions { WriteIndented = true })); StatusText.Text = "Device details copied."; } catch (Exception ex) { StatusText.Text = "Clipboard unavailable: " + ex.Message; } }; Details.Children.Add(copy);
+
+        foreach (var (_, issue) in Issues(node))
+        {
+            var explanation = new TextBlock {  FontSize = 12, Foreground = Brush("TextSecondary"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12), Tag = "warning:" + issue };
+            explanation.Inlines.Add(new System.Windows.Documents.Run(issue + " · " + NodeVisuals.ShortName(node)) { FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary") });
+            explanation.Inlines.Add(new System.Windows.Documents.LineBreak());
+            explanation.Inlines.Add(new System.Windows.Documents.Run(WarningExplanation(node, issue)));
+            Details.Children.Add(explanation);
+        }
         AddLabelEditor(node);
+        var relationship = HubRelationships.Description(node, snapshot);
+        if (relationship.Length > 0)
+        {
+            Text("How this hub is connected", 14, "TextPrimary");
+            Text(relationship, 13, "TextSecondary");
+            var companion = snapshot.Nodes.FirstOrDefault(n => n.Id == node.CompanionHubId);
+            if (companion != null)
+            {
+                var pair = new Button { Content = "View " + (node.IsUsb2Companion ? "USB 3" : "USB 2") + " side", HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(8, 4, 8, 4) };
+                pair.Click += (_, _) => ShowOnCanvas(companion);
+                Details.Children.Add(pair);
+            }
+        }
+        AddHubSnapControls(node);
         var evidence = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
         var notes = new List<string> { node.LocationEvidence };
         notes.Add("Name source: " + node.NameSource + ".");
@@ -253,7 +333,7 @@ public partial class MainWindow : Window
         if (node.WindowsManufacturer.Length > 0) notes.Add("Windows INF manufacturer: " + node.WindowsManufacturer + " (may identify the driver supplier).");
         if (node.LookupVendor.Length > 0) notes.Add("USB ID vendor: " + node.LookupVendor);
         if (node.LookupProduct.Length > 0) notes.Add("USB ID product: " + node.LookupProduct);
-        if (node.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase)) notes.Add("This device doesn't report its own product name, so its name comes from the public USB ID database. That usually names the maker of the chip inside, such as Realtek, rather than the brand of the hub, dock or monitor. Use Add your own label to name it yourself.");
+        if (node.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase)) notes.Add("This device doesn't report its own product name, so its name comes from the public USB ID database. That usually names the maker of the chip inside, such as Realtek, rather than the brand of the hub, dock or monitor. Click the name or pencil in Properties to name it yourself.");
         else if (node.LookupVendor.Length > 0) notes.Add("USB ID database entries usually name the maker of the chip inside rather than the retail brand.");
         if (host) notes.Add("Port support summarizes reported logical-port capabilities, including empty ports. USB revision and a single negotiated upstream link do not apply to this host summary.");
         if (node.Kind is "Controller" or "Root hub" or "Hub" or "Empty port") notes.Add("Supply capacity, USB-C charging limits and Power Delivery contracts are not queried. Device-declared draw is not the hub's available supply.");
@@ -291,13 +371,13 @@ public partial class MainWindow : Window
     private void Field(string label, string value)
     {
         bool missing = value is NotApplicable or "Not reported" || value.StartsWith("Unknown", StringComparison.Ordinal);
-        Field(label, new TextBlock { Text = value, FontSize = 12, Foreground = Brush(missing ? "TextMuted" : "TextPrimary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value });
+        Field(label, new TextBlock { Text = value, FontSize = 13, Foreground = Brush(missing ? "TextMuted" : "TextPrimary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value });
     }
     private void Field(string label, FrameworkElement value)
     {
         var row = new Grid { Margin = new Thickness(0, 0, 0, 5), Tag = "field", MinHeight = 18 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) }); row.ColumnDefinitions.Add(new ColumnDefinition());
-        row.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(112) }); row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.Children.Add(new TextBlock { Text = label, FontSize = 13, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
         value.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(value, 1); row.Children.Add(value);
         Details.Children.Add(row);
     }
@@ -329,7 +409,6 @@ public partial class MainWindow : Window
         GraphScroll.UpdateLayout();
     }
     private async void RefreshClick(object sender, RoutedEventArgs e) => await Refresh();
-    private async void DemoClick(object sender, RoutedEventArgs e) { demo = !demo; folded.Clear(); fitNext = true; await Refresh(); }
     private void SearchChanged(object sender, TextChangedEventArgs e) { searchTimer.Stop(); searchTimer.Start(); }
     private void SetZoom(double value) { readableView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; ZoomLabel.Text = $"{value:P0}"; }
     private void ZoomIn(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX * 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
@@ -345,7 +424,7 @@ public partial class MainWindow : Window
             layoutWidth = Math.Max(CardWidth + 48, (GraphScroll.ActualWidth - 32) / scale);
             Draw(); SetZoom(scale); readableView = true;
             GraphScroll.UpdateLayout();
-            // Rows never wrap, so a graph larger than the view opens on its first host, not its corner.
+            // At reading size, open on the selected path rather than an arbitrary corner.
             var host = snapshot.Controllers.Where(c => cards.ContainsKey(c.Id)).Select(c => cards[c.Id]).FirstOrDefault();
             double across = host.Card == null ? 0 : horizontalTree ? host.Point.Y + host.Card.Height / 2 - GraphScroll.ViewportHeight / 2 : host.Point.X + host.Card.Width / 2 - GraphScroll.ViewportWidth / 2;
             if (horizontalTree) { GraphScroll.ScrollToHorizontalOffset(0); GraphScroll.ScrollToVerticalOffset(Math.Max(0, across)); }
@@ -362,10 +441,20 @@ public partial class MainWindow : Window
     }
     private void OrientationClick(object sender, RoutedEventArgs e)
     {
-        horizontalTree = !horizontalTree;
-        OrientationButton.Content = horizontalTree ? "Horizontal" : "Vertical";
+        var menu = new ContextMenu();
+        foreach (bool horizontal in new[] { false, true })
+        {
+            var item = new MenuItem { Header = horizontal ? "Horizontal" : "Vertical", IsCheckable = true, IsChecked = horizontalTree == horizontal };
+            item.Click += (_, _) => SetOrientation(horizontal);
+            menu.Items.Add(item);
+        }
+        menu.PlacementTarget = OrientationButton; menu.IsOpen = true;
+    }
+    private void SetOrientation(bool horizontal)
+    {
+        horizontalTree = horizontal;
+        OrientationButton.Content = horizontalTree ? "Layout: horizontal" : "Layout: vertical";
         FitClick(this, new RoutedEventArgs());
-        if (!horizontalTree) GraphScroll.ScrollToVerticalOffset(0);
     }
     private void GraphSizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -490,7 +579,7 @@ public partial class MainWindow : Window
         Check(PanTransform.X == 0 && PanTransform.Y == 0, "Readable view must reset free panning.");
         var selection = selected?.Id;
         var collapsed = folded.ToHashSet();
-        OrientationClick(this, new RoutedEventArgs());
+        SetOrientation(!horizontalTree);
         Check(selected?.Id == selection && folded.SetEquals(collapsed), "Changing direction lost selection or folded branches.");
         var switched = cards.Values.ToList();
         for (int i = 0; i < switched.Count; i++)
@@ -499,12 +588,19 @@ public partial class MainWindow : Window
         foreach (var node in snapshot.Nodes.Where(n => cards.ContainsKey(n.Id)))
             foreach (var child in Children(node))
                 Check(horizontalTree ? cards[child.Id].Point.X > cards[node.Id].Point.X + CardWidth : cards[child.Id].Point.Y > cards[node.Id].Point.Y + cards[node.Id].Card.Height, "Changed direction has incorrect parent-child placement.");
-        OrientationClick(this, new RoutedEventArgs());
+        SetOrientation(!horizontalTree);
+    }
+    private void CaptureUi(string filename)
+    {
+        UpdateLayout();
+        var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(this);
+        var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = File.Create(filename); png.Save(stream);
     }
     private async Task RenderPreview()
     {
         await Task.Delay(400);
-        FitClick(this, new RoutedEventArgs()); UpdateLayout();
+        OpenInitialView(); UpdateLayout();
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
         var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(this);
         var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));

@@ -6,21 +6,21 @@ namespace UsbAtlas;
 // hub, or for a group of end devices, as a staircase beside the hub's ports. Routes
 // are planar by construction, so connections never cross each other or pass cards.
 // Layout and routing work in the vertical frame; horizontal trees are transposed.
-internal static class TopologyLayout
+internal static partial class TopologyLayout
 {
-    internal const double CardWidth = 240, CardHeight = 58, Gap = 16, LevelGap = 28;
+    internal const double CardWidth = 260, CardHeight = 58, Gap = 16, LevelGap = 28;
     // Fan geometry: drop below a port, spacing between turning lanes, clearance above the child row.
     internal const double Stub = 12, LaneSpacing = 8, Clearance = 14, StackClearance = 20;
 
     // X/Y place the subtree within its parent's subtree; CardX/CardY place the node's card within its own.
-    internal sealed record Item(UsbNode Node, double X, double Y, double Width, double Height, double CardX, double CardY, List<Item> Children, bool Stacked);
+    internal sealed record Item(UsbNode Node, double X, double Y, double Width, double Height, double CardX, double CardY, List<Item> Children, bool Stacked) { internal List<Item>? SnappedStages { get; init; } internal bool SnappedColumn { get; init; } }
 
     internal static Item Measure(UsbNode node, Func<UsbNode, List<UsbNode>> children, bool horizontal, Func<UsbNode, double> width, Func<UsbNode, double> height,
-        Func<UsbNode, UsbNode, double?> portOffset, IReadOnlySet<string> stacked)
+        Func<UsbNode, UsbNode, double?> portOffset, IReadOnlySet<string> stacked, Func<UsbNode, List<UsbNode>>? groups = null)
     {
         var tree = horizontal
             ? MeasureCore(node, children, height, width, portOffset, new HashSet<string>())
-            : MeasureCore(node, children, width, height, portOffset, stacked);
+            : MeasureCore(node, children, width, height, portOffset, stacked, groups);
         return horizontal ? Transpose(tree) : tree;
     }
 
@@ -35,12 +35,13 @@ internal static class TopologyLayout
         new(item.Node, item.Y, item.X, item.Height, item.Width, item.CardY, item.CardX, item.Children.Select(Transpose).ToList(), item.Stacked);
 
     private static Item MeasureCore(UsbNode node, Func<UsbNode, List<UsbNode>> children, Func<UsbNode, double> cross, Func<UsbNode, double> along,
-        Func<UsbNode, UsbNode, double?> portOffset, IReadOnlySet<string> stacked)
+        Func<UsbNode, UsbNode, double?> portOffset, IReadOnlySet<string> stacked, Func<UsbNode, List<UsbNode>>? groups = null)
     {
+        if (groups?.Invoke(node) is { Count: > 1 } members) return MeasureSnapped(members, children, cross, along, portOffset, stacked, groups);
         double width = cross(node), height = along(node);
         var kids = children(node);
         if (kids.Count == 0) return new(node, 0, 0, width, height, 0, 0, [], false);
-        var items = kids.Select(k => MeasureCore(k, children, cross, along, portOffset, stacked)).ToList();
+        var items = kids.Select(k => MeasureCore(k, children, cross, along, portOffset, stacked, groups)).ToList();
         double Port(int i) => portOffset(node, kids[i]) ?? width * (i + 0.5) / kids.Count;
         if (stacked.Contains(node.Id) && CanStack(node, children, portOffset))
         {
