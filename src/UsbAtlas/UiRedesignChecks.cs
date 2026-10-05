@@ -46,8 +46,14 @@ public partial class MainWindow
             if (editingLabelId != null || selected.UserLabel.Length != 0)
                 throw new Exception("Cancel must discard the draft without changing the device label.");
             ApplyAppearance(oldTheme);
-            selected.PowerWarnings = ["Power at risk", "Over power budget", "Hub adapter not detected"];
-            selected.QuickReconnects = 3; ShowDetails(); UpdateLayout();
+            // Several warnings on the bus-powered travel hub, whose own figures produce them; an unstable
+            // connection adds a third, so the badges must wrap.
+            var travel = snapshot.Nodes.Single(n => n.Id == "demo/root/5");
+            if (!travel.PowerWarnings.Contains("Over power budget") || !travel.PowerWarnings.Contains("Hub adapter not detected"))
+                throw new Exception("The sample travel hub must be over its power budget with its adapter not detected.");
+            travel.QuickReconnects = 3; SelectNode(travel); UpdateLayout();
+            if (Details.Children.OfType<Border>().Any(b => b.Tag is string tag && tag.StartsWith("warning:", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(ExplanationText(tag[8..]), @"\bup to 0 mA")))
+                throw new Exception("A power explanation must not describe a hub that asks for nothing as at risk.");
             var warnings = Details.Children.OfType<WrapPanel>().First();
             double bottom = warnings.Children.OfType<FrameworkElement>().Max(b => b.TranslatePoint(new Point(0, b.ActualHeight), warnings).Y);
             if (bottom > warnings.ActualHeight + 0.5 || warnings.ActualHeight <= 22)

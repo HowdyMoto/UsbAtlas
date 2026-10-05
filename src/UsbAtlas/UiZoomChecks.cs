@@ -70,9 +70,16 @@ public partial class MainWindow
             var held = GraphScroll.TranslatePoint(middle, Graph);
             ZoomAt(GraphScale.ScaleX / 1.2, middle);
             Check(detail == CardDetail.Far && (Graph.TranslatePoint(held, GraphScroll) - middle).Length < 1, "Zooming out at far cards moved the point under the pointer.");
-            // 100% means full cards, from the readout as from 100% view.
+            // The zoom readout is the one 100% control: full cards, laid out for the window.
             ActualSizeClick(this, new RoutedEventArgs());
-            Check(detail == CardDetail.Full && GraphScale.ScaleX == 1, "Resetting to 100% must show full cards.");
+            Check(detail == CardDetail.Full && GraphScale.ScaleX == 1 && readableView, "Resetting to 100% must show full cards laid out for the window.");
+            // Shift+1 fits everything, Shift+2 centers the selection at full size, Shift+0 is the readout; other keys pass through.
+            Check(FramingShortcut(System.Windows.Input.Key.D1) && overviewView && detail == CardDetail.Far, "Shift+1 must fit the whole topology.");
+            SelectNode(snapshot.Nodes.First(n => n.Id == "big/root/4/6"));
+            Check(FramingShortcut(System.Windows.Input.Key.D2) && detail == CardDetail.Full && GraphScale.ScaleX == 1 && cards.ContainsKey("big/root/4/6"), "Shift+2 must center the selection at full size.");
+            var found = new Rect(cards["big/root/4/6"].Point, new Size(cards["big/root/4/6"].Card.Width, cards["big/root/4/6"].Card.Height));
+            Check(new Rect(0, 0, GraphScroll.ViewportWidth, GraphScroll.ViewportHeight).Contains(Graph.TranslatePoint(new Point(found.X + found.Width / 2, found.Y + found.Height / 2), GraphScroll)), "Shift+2 must bring the selection into view.");
+            Check(FramingShortcut(System.Windows.Input.Key.D0) && readableView && !FramingShortcut(System.Windows.Input.Key.A), "Shift+0 must show 100%, and other keys must pass through.");
             // Keyboard navigation from far cards reads the next card at full size.
             OverviewClick(this, new RoutedEventArgs());
             var first = cards["big/root/2/3"].Card; first.Focus();

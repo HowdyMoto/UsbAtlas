@@ -21,16 +21,12 @@ internal static class Theme
         ("Focus", "#7097CF", "#ABC8EF"), ("BorderHover", "#93A5B7", "#7B91AD"),
         ("Subtle", "#FAFBFC", "#242B34"), ("Wire", "#B8C0C5", "#596575"),
         ("WireDot", "#929FA8", "#8B9AAF"), ("Success", "#4E7B65", "#92C5A7"),
-        // Device categories, each an icon/label ink with a card fill and outline in the same hue, spread
-        // across the cool half of the wheel so they never resemble Warning or Error. Inks keep at least
-        // 4.5:1 contrast on their own fill. Hubs, hosts, ports and devices of unknown function are Neutral.
+        // Device categories are icon and label inks spread across the cool half of the wheel, so they never
+        // resemble Warning or Error. Cards are all NeutralFill, so every ink keeps at least 4.5:1 contrast on
+        // it. Hubs, hosts, ports and devices of unknown function are Neutral.
         ("Neutral", "#5F6874", "#A7B0BC"), ("NeutralFill", "#FFFFFF", "#1E232B"), ("NeutralEdge", "#D5D9DC", "#3A4451"),
-        ("Input", "#3F4FB0", "#9FA5F5"), ("InputFill", "#E3E5FB", "#23284D"), ("InputEdge", "#A9B0EE", "#3E4788"),
-        ("Gaming", "#7A3FA8", "#C9A0EE"), ("GamingFill", "#F2E3FB", "#35234A"), ("GamingEdge", "#D3A9EE", "#5E3B85"),
-        ("Audio", "#9E2F80", "#E79AD2"), ("AudioFill", "#FAE2F2", "#46203C"), ("AudioEdge", "#E8A6D4", "#7D386A"),
-        ("Video", "#1D6A91", "#84C3EA"), ("VideoFill", "#D7EDFA", "#15334A"), ("VideoEdge", "#92C6E8", "#255A80"),
-        ("Storage", "#367026", "#9BD088"), ("StorageFill", "#E2F2D5", "#233A1D"), ("StorageEdge", "#A9D58F", "#3C6630"),
-        ("Connectivity", "#177257", "#7DD3AE"), ("ConnectivityFill", "#D3F2E2", "#143A2B"), ("ConnectivityEdge", "#8DD3B3", "#25684B"),
+        ("Input", "#3F4FB0", "#9FA5F5"), ("Gaming", "#7A3FA8", "#C9A0EE"), ("Audio", "#9E2F80", "#E79AD2"),
+        ("Video", "#1D6A91", "#84C3EA"), ("Storage", "#367026", "#9BD088"), ("Connectivity", "#177257", "#7DD3AE"),
         // USB's own socket color code, on the tongue inside each port: black for USB 2, blue for SuperSpeed
         // USB 3, red for 10 Gb/s and faster, gray when unreported. Port numbers sit on it in OnSocket, at
         // least 4.5:1. A tongue never carries a glyph or words, so its red can't be mistaken for an error.
@@ -44,6 +40,8 @@ internal static class Theme
         ("Error", "#B42318", "#FF7A6E"), ("ErrorSurface", "#FDE7E5", "#43201F")
     ];
     public static Brush Brush(string key) => (Brush)Application.Current.FindResource(key);
+    // A palette color in either theme, without applying it.
+    internal static Color Of(string key, bool dark) => Palette.Single(p => p.Key == key) is var (_, light, night) ? (Color)ColorConverter.ConvertFromString(dark ? night : light) : default;
     public static void Initialize(string[] args)
     {
         bool dark = false;

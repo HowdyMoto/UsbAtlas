@@ -34,7 +34,11 @@ public partial class MainWindow
         if (focusedBranch == null) return;
         var node = snapshot.Nodes.FirstOrDefault(n => n.Id == focusedBranch);
         if (node == null) { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; return; }
-        focusedIds = FindPath(node.Id).Concat(node.Walk()).Select(n => n.Id).ToHashSet();
+        // A USB 3 hub's two sides are one hub, so focusing on either side, or on anything behind one, keeps both.
+        var shown = FindPath(node.Id).Concat(node.Walk()).ToList();
+        foreach (var side in shown.Where(n => n.CompanionHubId.Length > 0).ToList())
+            if (snapshot.Nodes.FirstOrDefault(n => n.Id == side.CompanionHubId) is UsbNode other) shown.AddRange(FindPath(other.Id).Concat(other.Walk()));
+        focusedIds = shown.Select(n => n.Id).ToHashSet();
         // Focus is only ever chosen, and it says plainly how much it hides.
         static bool Hardware(UsbNode n) => n.Kind is "Hub" or "Device" or "Unavailable";
         TopologyTitle.Text = $"Showing {snapshot.Nodes.Count(n => Hardware(n) && focusedIds.Contains(n.Id))} of {snapshot.Nodes.Count(Hardware)} hubs and devices";
@@ -83,7 +87,7 @@ public partial class MainWindow
     private void FrameSelectionPath()
     {
         if (selected == null || GraphScroll.ViewportWidth < 1) return;
-        var areas = FindPath(selected.Id).Select(CardNode).DistinctBy(n => n.Id)
+        var areas = FindPath(selected.Id).Select(DrawnAs).DistinctBy(n => n.Id)
             .Select(GraphBounds).OfType<Rect>().ToList();
         if (areas.Count == 0) return;
         var bounds = areas.Aggregate(Rect.Union);
@@ -102,7 +106,7 @@ public partial class MainWindow
     {
         if (GraphHint == null || GraphScroll == null) return;
         bool overflow = Graph.Width * GraphScale.ScaleX > GraphScroll.ViewportWidth + 2 || Graph.Height * GraphScale.ScaleY > GraphScroll.ViewportHeight + 2;
-        GraphHint.Text = focusedBranch != null ? "Other branches & sockets hidden · Wheel to zoom" : overflow ? "More offscreen · Fit all · Wheel to zoom" : "Drag to pan · Wheel to zoom · Tab / arrows to navigate";
-        GraphHint.ToolTip = (focusedBranch != null ? "Focused branch. Other branches and sockets are hidden. Use Show all branches to restore them. " : "") + (overflow ? "More topology extends offscreen. " : "Visible branches fit. ") + "Drag to pan; wheel to zoom; Tab and arrow keys to navigate.";
+        GraphHint.Text = focusedBranch != null ? "Other branches & sockets hidden · Wheel to zoom" : overflow ? "More offscreen · Fit all (Shift+1) · Wheel to zoom" : "Drag to pan · Wheel to zoom · Arrows to navigate · Shift+2 finds the selection";
+        GraphHint.ToolTip = (focusedBranch != null ? "Focused branch. Other branches and sockets are hidden. Use Show all branches to restore them. " : "") + (overflow ? "More topology extends offscreen. " : "Visible branches fit. ") + "Drag to pan; wheel to zoom; Tab and arrow keys to navigate. Shift+0 shows full cards at 100%, Shift+1 fits everything, and Shift+2 centers the selection.";
     }
 }

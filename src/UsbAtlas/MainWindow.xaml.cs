@@ -44,7 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifySemanticZoom(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifySemanticZoom(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -118,6 +118,8 @@ public partial class MainWindow : Window
     }
     private async void WindowKeyDown(object sender, KeyEventArgs e)
     {
+        // Framing shortcuts, as in design tools; typing in the search box or a label editor keeps its characters.
+        if (Keyboard.Modifiers == ModifierKeys.Shift && Keyboard.FocusedElement is not TextBox && FramingShortcut(e.Key)) { e.Handled = true; return; }
         if (e.Key != Key.F5 || Keyboard.Modifiers != ModifierKeys.None) return;
         e.Handled = true;
         if (!e.IsRepeat) await Refresh();
@@ -167,7 +169,7 @@ public partial class MainWindow : Window
         CopyDetailsButton.IsEnabled = selected is not null;
         if (selected is not UsbNode node) { Text("Select a device", 22); Text("Inspect a connection to see its link, power and path through your hardware.", 12, "TextMuted"); return; }
         if (appliedQuery.Length > 0 && !Matches(node, appliedQuery)) Text("Selection is outside the search results.", 11, "TextMuted");
-        if (!cards.ContainsKey(node.Id) && !portSlots.ContainsKey(node.Id)) Text("Selection is hidden by a collapsed branch or filter.", 11, "TextMuted");
+        if (!cards.ContainsKey(DrawnAs(node).Id) && !portSlots.ContainsKey(node.Id)) Text("Selection is hidden by a collapsed branch or filter.", 11, "TextMuted");
         bool host = node.Kind is "Controller" or "Root hub", attached = node.Kind is "Device" or "Hub", hub = node.Kind == "Hub";
         string Reported(string value) => attached ? (value.Length > 0 && value != "Not reported" ? value : "Not reported") : node.Kind == "Unavailable" ? "Unknown" : NotApplicable;
 
@@ -452,11 +454,18 @@ public partial class MainWindow : Window
         value.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(value, 1); row.Children.Add(value);
         Details.Children.Add(row);
     }
-    // 100% always means full cards at actual size, like 100% view, without reflowing.
-    private void ActualSizeClick(object sender, RoutedEventArgs e)
+    // The zoom readout is the one 100% control: full cards at actual size, laid out again for the window.
+    private void ActualSizeClick(object sender, RoutedEventArgs e) { FitClick(this, new RoutedEventArgs()); RevealSelection(); }
+    // Shift+0 shows 100%, Shift+1 fits everything and Shift+2 centers the selection.
+    private bool FramingShortcut(Key key)
     {
-        if (detail == CardDetail.Full) { ZoomAt(1, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2)); return; }
-        ResetPan(); detail = CardDetail.Full; Draw(); SetZoom(1); RevealSelection();
+        switch (key)
+        {
+            case Key.D0 or Key.NumPad0: ActualSizeClick(this, new RoutedEventArgs()); return true;
+            case Key.D1 or Key.NumPad1: OverviewClick(this, new RoutedEventArgs()); return true;
+            case Key.D2 or Key.NumPad2: LocateClick(this, new RoutedEventArgs()); return true;
+            default: return false;
+        }
     }
     private void ThemeClick(object sender, RoutedEventArgs e)
     {
@@ -476,7 +485,7 @@ public partial class MainWindow : Window
         if (selected == null) return;
         // Locating shows the selection at full size, sockets and all.
         if (detail != CardDetail.Full) { detail = CardDetail.Full; Draw(); }
-        var targetId = selected.Kind == "Empty port" ? FindPath(selected.Id).SkipLast(1).Select(CardNode).LastOrDefault()?.Id : selected.Id;
+        var targetId = selected.Kind == "Empty port" ? FindPath(selected.Id).SkipLast(1).Select(DrawnAs).LastOrDefault()?.Id : DrawnAs(selected).Id;
         if (targetId == null || !cards.TryGetValue(targetId, out var item)) return;
         ResetPan();
         SetZoom(1); GraphScroll.UpdateLayout();
@@ -643,7 +652,7 @@ public partial class MainWindow : Window
         {
             Search.Text = target.Name; ApplySearch();
             Check(cards.ContainsKey(target.Id), "Search lost the matching device.");
-            Check(FindPath(target.Id).All(n => cards.ContainsKey(CardNode(n).Id)), "Search lost a matching device's ancestors.");
+            Check(FindPath(target.Id).All(n => cards.ContainsKey(DrawnAs(n).Id)), "Search lost a matching device's ancestors.");
             Search.Text = "__usb_atlas_no_match__"; ApplySearch();
             Check(cards.Count == 0 && EmptyMessage.Visibility == Visibility.Visible, "Empty search state is not visible.");
             Search.Text = ""; ApplySearch();
