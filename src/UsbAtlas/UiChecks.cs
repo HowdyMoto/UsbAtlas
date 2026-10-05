@@ -269,7 +269,7 @@ public partial class MainWindow
             bool stacked = stackedHubs.Contains(node.Id);
             // Staircases read top to bottom; rows read along the cross axis and share one flow position.
             var order = kids.Select(r => stacked ? r.Y : horizontalTree ? r.Y : r.X).ToList();
-            Check(order.Zip(order.Skip(1)).All(p => p.First < p.Second), $"Children of {node.Id} are out of port order.");
+            Check(order.Zip(order.Skip(1)).All(p => p.First < p.Second), $"Children of {node.Id} are out of socket order.");
             if (!stacked) Check(kids.All(r => Near(horizontalTree ? r.X : r.Y, horizontalTree ? kids[0].X : kids[0].Y)), $"Children of {node.Id} wrapped onto another row.");
         }
     }
@@ -289,11 +289,14 @@ public partial class MainWindow
             hub.PortCount = 16;
             // The root mixes end devices with a hub mid-row, so wires fan out in both directions.
             var root = snapshot.Nodes.First(n => n.Kind == "Root hub");
-            var nested = new UsbNode { Id = root.Id + "/7", Kind = "Hub", Name = "Nested hub", Port = 7, PortCount = 3 };
+            var nested = new UsbNode { Id = root.Id + "/10", Kind = "Hub", Name = "Nested hub", Port = 10, PortCount = 3 };
             for (int i = 1; i <= 3; i++) nested.Children.Add(new UsbNode { Id = nested.Id + "/" + i, Kind = "Device", Name = "Nested device " + i, Port = i });
             root.Children.Add(nested);
-            foreach (int port in new[] { 6, 8, 9, 10, 11 }) root.Children.Add(new UsbNode { Id = root.Id + "/" + port, Kind = "Device", Name = "Root device " + port, Port = port });
-            root.PortCount = 11;
+            foreach (int port in new[] { 11, 12, 13, 14 }) root.Children.Add(new UsbNode { Id = root.Id + "/" + port, Kind = "Device", Name = "Root device " + port, Port = port });
+            // Port 14's device is on the USB 3 half of port 9's socket, so it moves ahead of the nested hub.
+            root.Children.Add(new UsbNode { Id = root.Id + "/9", Kind = "Empty port", Name = "Available port 9", Port = 9, CompanionId = root.Id + "/14" });
+            root.Children.First(c => c.Port == 14).CompanionId = root.Id + "/9";
+            root.PortCount = 14;
             // A second controller with a hub chain, so controllers arrange side by side or wrap.
             var chainRoot = new UsbNode { Id = "second/root", Kind = "Root hub", Name = "Root hub", PortCount = 4 };
             var outer = new UsbNode { Id = "second/root/1", Kind = "Hub", Name = "Chain hub", Port = 1, PortCount = 4 };
@@ -305,6 +308,8 @@ public partial class MainWindow
             {
                 horizontalTree = horizontal; layoutWidth = width; Draw(); UpdateLayout();
                 VerifyWireRouting();
+                var rootOrder = Children(root).Select(c => c.Port).ToList();
+                Check(rootOrder.IndexOf(14) == rootOrder.IndexOf(6) + 1 && rootOrder.IndexOf(10) == rootOrder.IndexOf(14) + 1, "A device on a socket's higher-numbered half must sit with its socket.");
                 var hosts = snapshot.Controllers.Select(c => cards[c.Id].Point).ToList();
                 Check(horizontal ? hosts.All(p => Math.Abs(p.X - hosts[0].X) < 0.01) : hosts[1].Y > hosts[0].Y || hosts[1].X > hosts[0].X, "Independent controller branches must advance to the right or onto a lower row without overlapping.");
             }
@@ -596,11 +601,18 @@ public partial class MainWindow
             hub.Name = "Long hub identity with several words and USB generation information";
             hub.NameSource = "USB ID lookup";
             hub.UserLabel = "Dell monitor KVM with a longer personal label";
+            // Port 4 on each sample hub is named as the other's half, as a USB 3 hub's USB 2 and USB 3 hubs name
+            // theirs, so both cards must say they share sockets.
+            var travelPort = snapshot.Nodes.First(n => n.Id == "demo/root/5/4"); var deskPort = snapshot.Nodes.First(n => n.Id == "demo/root/1/4");
+            travelPort.CompanionId = deskPort.Id; deskPort.CompanionId = travelPort.Id;
             selected = hub;
             foreach (bool horizontal in new[] { false, true })
             {
                 horizontalTree = horizontal; FitClick(this, new RoutedEventArgs()); UpdateLayout();
                 VerifyWireRouting();
+                string Shared(string id) => ((Panel)cards[id].Card.Child).Children.OfType<TextBlock>().FirstOrDefault(t => Equals(t.Tag, SharedSocketsTag))?.Text ?? "";
+                Check(Shared("demo/root/5") == "Shares its sockets with H01/01" && Shared("demo/root/1") == "Shares its sockets with H01/05" && Shared("demo") == "", "Cards holding the two halves of the same sockets must name each other.");
+                Check(socketParts.Values.Count(p => p == NodeVisuals.SocketPart.First) == 2, "The sample's paired root ports must each be drawn as one socket.");
                 var items = cards.Values.ToList();
                 for (int i = 0; i < items.Count; i++)
                 {
@@ -615,12 +627,26 @@ public partial class MainWindow
                 Check(portSlots.Count == snapshot.Nodes.Count(n => n.Kind == "Empty port") && cards.Values.All(c => ((UsbNode)c.Card.Tag).Kind != "Empty port"), "Empty ports must render as slots, not full cards.");
                 int logicalPorts = snapshot.Nodes.Where(n => n.Kind is "Hub" or "Root hub" && cards.ContainsKey(CardNode(n).Id)).Sum(n => n.Children.Count);
                 Check(portSlots.Count + connectedPorts.Count == logicalPorts, "Every logical port must be drawn on its hub.");
-                Check(portSlots.Values.All(b => ((UIElement)b.Content).Opacity < 1) && connectedPorts.Values.All(b => ((UIElement)b.Content).Opacity == 1), "Empty ports must look unoccupied.");
+                Check(portSlots.Values.All(b => b.Background == Brush("Surface") || b.Background == Brush("Selection")) && connectedPorts.Values.All(b => b.Background == Brush("Wire") || b.Background == Brush("Accent")), "Empty sockets must be hollow and occupied ones filled.");
                 ShowDetails(); UpdateIssues(); UpdateLayout();
                 VerifyStatusStyling();
                 VerifyRoleFills();
                 foreach (var (id, slot) in portSlots.Concat(connectedPorts))
                 {
+                    // The drawn socket matches its connector and speed: a tongue in the speed's color for
+                    // USB-A and USB-C, a pill only for USB-C, and a plain slot otherwise.
+                    var port = (UsbNode)slot.Tag;
+                    var tongue = slot.Template.FindName("Tongue", slot) as Border;
+                    Check((tongue != null) == NodeVisuals.HasTongue(port) && (tongue == null || tongue.Background == Brush(NodeVisuals.SocketInk(port))), $"Socket {id} must show its speed on a tongue only when it has one.");
+                    var corners = ((Border)slot.Template.FindName("Chrome", slot)).CornerRadius;
+                    Check((Math.Max(Math.Max(corners.TopLeft, corners.TopRight), Math.Max(corners.BottomLeft, corners.BottomRight)) >= slot.Height / 2) == (port.Connector == "USB-C"), $"Socket {id} must be a pill exactly when it is USB-C.");
+                    // A USB 3 socket's halves on one hub touch as one socket: side by side, or stacked when horizontal.
+                    if (SocketPartner(port) is UsbNode partner && socketParts[id] == NodeVisuals.SocketPart.First)
+                    {
+                        var second = portSlots.GetValueOrDefault(partner.Id) ?? connectedPorts[partner.Id];
+                        var gap = new Vector(Canvas.GetLeft(second) - Canvas.GetLeft(slot), Canvas.GetTop(second) - Canvas.GetTop(slot));
+                        Check((gap - (horizontal ? new Vector(0, slot.Height) : new Vector(slot.Width, 0))).Length < 0.01 && socketParts[partner.Id] == NodeVisuals.SocketPart.Second, $"Socket {id} and its other half {partner.Id} must touch as one socket.");
+                    }
                     var edge = horizontal ? new Point(Canvas.GetLeft(slot) + slot.Width, Canvas.GetTop(slot) + slot.Height / 2)
                         : new Point(Canvas.GetLeft(slot) + slot.Width / 2, Canvas.GetTop(slot) + slot.Height);
                     Check((edge - portAnchors[id]).Length < 0.01, "Port graphic must meet its connection anchor.");

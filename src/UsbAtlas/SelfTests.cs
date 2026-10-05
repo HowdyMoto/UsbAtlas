@@ -20,9 +20,14 @@ internal static class SelfTests
         Check(usb2.IsUsb2Companion && usb2.CompanionHubId == usb3.Id && !usb3.IsUsb2Companion, "Companion hubs must pair from the Windows port mapping.");
         usb2.CompanionPortNumber = 9; HubRelationships.Analyze(companionSnapshot);
         Check(!usb2.IsUsb2Companion && usb2.CompanionHubId.Length == 0, "Matching names or VID alone must not pair hubs.");
+        // A built-in hub's two sides, on root ports Windows doesn't pair, name each other through their own ports.
+        var side2 = new UsbNode { Id = "r/2", Kind = "Hub", VendorId = "05E3", LinkMbps = 480, Children = [new UsbNode { Id = "r/2/1", Port = 1, CompanionId = "r/7/1" }] };
+        var side3 = new UsbNode { Id = "r/7", Kind = "Hub", VendorId = "05E3", LinkMbps = 5000, Children = [new UsbNode { Id = "r/7/1", Port = 1, CompanionId = "r/2/1" }] };
+        HubRelationships.Analyze(new Snapshot { Controllers = [new UsbNode { Id = "r", Kind = "Root hub", Children = [side2, side3] }] });
+        Check(side2.CompanionHubId == side3.Id && side2.IsUsb2Companion && side3.CompanionHubId == side2.Id && !side3.IsUsb2Companion, "Hub sides must pair through their own ports' companions.");
         var demo = DemoData.Create();
         Check(demo.IsDemo, "Sample data must be explicitly identified.");
-        Check(demo.Nodes.Count(x => x.Kind == "Device") == 7, "Recursive topology traversal.");
+        Check(demo.Nodes.Count(x => x.Kind == "Device") == 8, "Recursive topology traversal.");
         Check(demo.Nodes.Select(x => x.Id).Distinct().Count() == demo.Nodes.Count(), "Stable unique graph identities.");
         var port = new UsbNode();
         Check(port.PortIsUserConnectable == null && port.PortConnectorIsTypeC == null, "Missing connector query must remain unknown.");
@@ -56,8 +61,40 @@ internal static class SelfTests
         Check(Identified("SanDisk Cruzer Blade", Interface(8, 6, 0x50)).DeviceType == "Flash drive", "Flash drives are recognized by name.");
         Check(Identified("LED flash ring light", Interface(3, 0, 0)).DeviceType == "HID / controls", "Storage names must not reclassify devices without storage.");
         Check(demo.Nodes.First(x => x.Name == "Portable SSD").DeviceType == "External drive", "Demo SSD is an external drive.");
+        SocketTests(demo);
         BudgetTests(demo);
         IdentityTests.Run();
+    }
+
+    private static void SocketTests(Snapshot demo)
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        static (string, string) Socket(UsbNode n) => (n.Connector, n.SocketSpeed);
+        // A USB-C socket on a host: the USB 2 half and the USB 3 half name each other as companions.
+        var usb2 = new UsbNode { Id = "r/1", Kind = "Empty port", Protocols = "USB 1.x / USB 2.0", PortIsUserConnectable = true, PortConnectorIsTypeC = true, CompanionId = "r/2" };
+        var usb3 = new UsbNode { Id = "r/2", Kind = "Empty port", Protocols = "USB 3.x", PortIsUserConnectable = true, PortConnectorIsTypeC = true, CompanionId = "r/1" };
+        var lone = new UsbNode { Id = "r/3", Kind = "Empty port", Protocols = "USB 1.x / USB 2.0", PortIsUserConnectable = true, PortConnectorIsTypeC = false };
+        var builtIn = new UsbNode { Id = "r/4", Kind = "Device", Protocols = "USB 1.x / USB 2.0", PortIsUserConnectable = false, PortConnectorIsTypeC = false };
+        var unread = new UsbNode { Id = "r/5", Kind = "Unavailable" };
+        var root = new UsbNode { Id = "r", Kind = "Root hub", Children = [usb2, usb3, lone, builtIn, unread] };
+        var host = new Snapshot { Controllers = [new UsbNode { Kind = "Controller", Children = [root] }] };
+        DeviceIdentity.ClassifySockets(host);
+        Check(Socket(usb2) == ("USB-C", "≥5 Gb/s") && Socket(usb3) == ("USB-C", "≥5 Gb/s"), "Both halves of a USB 3 socket are drawn as the socket they share.");
+        Check(Socket(lone) == ("USB-A", "USB 2.0"), "A user-accessible USB 2 port without a USB 3 half is a black USB-A socket.");
+        Check(Socket(builtIn) == ("Internal", "USB 2.0") && Socket(unread) == ("Not reported", "Not reported"), "Built-in and unreported ports must not be drawn as sockets.");
+        usb3.Kind = "Device"; usb3.Speed = "SuperSpeedPlus · 10 Gb/s or higher";
+        DeviceIdentity.ClassifySockets(host);
+        Check(usb2.SocketSpeed == "≥10 Gb/s" && usb3.SocketSpeed == "≥10 Gb/s", "A device linked at SuperSpeedPlus proves the whole socket carries 10 Gb/s.");
+        // A plug-in hub's own SuperSpeedPlus support sets its sockets' speed; a host's root ports stay open-ended.
+        var port = new UsbNode { Id = "h/1", Kind = "Empty port", Protocols = "USB 3.x", PortIsUserConnectable = true, PortConnectorIsTypeC = false };
+        DeviceIdentity.ClassifySocket([(port, new UsbNode { Kind = "Hub", SuperSpeedPlusCapable = true })]);
+        Check(Socket(port) == ("USB-A", "≥10 Gb/s"), "A SuperSpeedPlus hub's USB 3 sockets carry 10 Gb/s.");
+        DeviceIdentity.ClassifySocket([(port, new UsbNode { Kind = "Hub", SuperSpeedPlusCapable = false })]);
+        Check(port.SocketSpeed == "5 Gb/s", "A 5 Gb/s hub caps its sockets.");
+        DeviceIdentity.ClassifySocket([(port, new UsbNode { Kind = "Hub" })]);
+        Check(port.SocketSpeed == "≥5 Gb/s", "A hub whose SuperSpeedPlus support is unknown must not be assumed to cap its sockets.");
+        Check(Socket(demo.Nodes.Single(n => n.Id == "demo/root/6")) == ("USB-C", "≥10 Gb/s") && Socket(demo.Nodes.Single(n => n.Id == "demo/root/1/1")) == ("USB-C", "5 Gb/s")
+            && Socket(demo.Nodes.Single(n => n.Id == "demo/root/5/4")) == ("USB-A", "USB 2.0") && Socket(demo.Nodes.Single(n => n.Id == "demo/root/7")) == ("USB-A", "≥5 Gb/s"), "Sample sockets show each connector and speed.");
     }
 
     private static void BudgetTests(Snapshot demo)
