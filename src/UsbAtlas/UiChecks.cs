@@ -21,9 +21,8 @@ public partial class MainWindow
             if (inspectorWasVisible) InspectorClick(this, new RoutedEventArgs());
             var badge = WarningBadge(node, NodeVisuals.Severity.Warning, "Unstable connection");
             badge.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            var explanation = Details.Children.OfType<TextBlock>().Single(t => Equals(t.Tag, "warning:Unstable connection"));
-            var explanationText = new System.Windows.Documents.TextRange(explanation.ContentStart, explanation.ContentEnd).Text;
-            if (selected != node || InspectorPanel.Visibility != Visibility.Visible || !explanationText.Contains("three disconnect") || !explanationText.Contains("12:02:00") || !explanationText.Contains("restarted"))
+            var explanationText = ExplanationText("Unstable connection");
+            if (selected != node || InspectorPanel.Visibility != Visibility.Visible || !explanationText.Contains("3 times this session") || !explanationText.Contains("12:02:00") || !explanationText.Contains("restarted"))
                 throw new Exception("Clicking a warning must reveal its device and explain the trigger, observed reconnects and session lifetime.");
             CaptureUi("warning-preview.png");
         }
@@ -33,6 +32,58 @@ public partial class MainWindow
             selected = oldSelection; ShowDetails();
             if (!inspectorWasVisible && InspectorPanel.Visibility == Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
         }
+    }
+    // The text of an issue's explanation panel in Properties, or "" when it has none.
+    private string ExplanationText(string issue)
+    {
+        static IEnumerable<string> Texts(object? element) => element switch
+        {
+            TextBlock text => [text.Text],
+            Panel panel => panel.Children.Cast<object>().SelectMany(Texts),
+            Decorator decorator => Texts(decorator.Child),
+            _ => []
+        };
+        return string.Join(" ", Details.Children.OfType<FrameworkElement>().Where(e => Equals(e.Tag, "warning:" + issue)).SelectMany(Texts));
+    }
+    // A USB 3 hub in a monitor whose USB 3 side didn't connect: a calm note while it slows nothing, explained
+    // above the rows in plain words with the likely causes for USB-C; a warning once it holds a device back.
+    private void VerifySpeedExplanation()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        var savedSnapshot = snapshot; var savedSelection = selected;
+        try
+        {
+            snapshot = DemoData.Create();
+            var monitor = snapshot.Nodes.First(n => n.Id == "demo/root/5");
+            // Its socket's USB 3 half, port 7, is empty, so detection finds the USB 3 side missing.
+            monitor.SpeedLimited = true; monitor.Connector = "USB-C"; monitor.CompanionId = "demo/root/7";
+            HubRelationships.Analyze(snapshot);
+            Check(monitor.Usb3SideMissing && !monitor.Usb3SideFailed, "A USB 2 hub side whose socket's USB 3 half is empty must be found missing its USB 3 side.");
+            Draw(); SelectNode(monitor); UpdateLayout();
+            Check(Issues(monitor).Contains((NodeVisuals.Severity.Note, "Running at USB 2")), "A hub that slows nothing plugged into it must be a calm note.");
+            Check(VisualDescendants(cards[monitor.Id].Card).OfType<Border>().Any(b => b.Background == Brush("NoteSurface")), "The note must use the calm badge on the card.");
+            var text = ExplanationText("Running at USB 2");
+            Check(text.Contains("connected at USB 2 (480 Mb/s)") && text.Contains("Does it affect you?") && text.Contains("Not right now") && text.Contains("USB-C Prioritization") && text.Contains("charging cables"),
+                "The explanation must say what is happening, that nothing is affected, and the likely USB-C causes.");
+            var panel = Details.Children.OfType<FrameworkElement>().First(e => Equals(e.Tag, "warning:Running at USB 2"));
+            var firstRow = Details.Children.OfType<FrameworkElement>().First(e => Equals(e.Tag, "field"));
+            Check(Details.Children.IndexOf(panel) < Details.Children.IndexOf(firstRow), "The explanation must come before the data rows.");
+            var drive = monitor.Children[0]; drive.SpeedLimited = true;
+            Draw(); SelectNode(drive); UpdateLayout();
+            Check(Issues(monitor).Contains((NodeVisuals.Severity.Warning, "Running at USB 2")), "A hub that holds a faster device back must warn.");
+            text = ExplanationText("Running at USB 2");
+            Check(text.Contains("Yes: its transfers are limited to USB 2 speed") && text.Contains("The hub it's plugged into runs at USB 2") && text.Contains("Fix that hub's USB 3 connection"),
+                "A held-back device must point to the hub that slows it.");
+            CaptureUi("speed-explanation-preview.png");
+            // With only notes, the issues button and status bar count them calmly, apart from issues.
+            var calmHub = new UsbNode { Id = "calm/root/1", Kind = "Hub", Name = "Monitor hub", Port = 1, LinkMbps = 480, UsbVersion = "USB 2.10", SpeedLimited = true, Usb3SideMissing = true, Connector = "USB-C",
+                Children = [new UsbNode { Id = "calm/root/1/1", Kind = "Device", Name = "Keyboard", DeviceType = "Keyboard", Port = 1, LinkMbps = 12 }] };
+            snapshot = new Snapshot { Controllers = [new UsbNode { Id = "calm", Kind = "Controller", Name = "Host", Children = [new UsbNode { Id = "calm/root", Kind = "Root hub", PortCount = 1, Children = [calmHub] }] }] };
+            Draw(); UpdateIssues();
+            Check(((DockPanel)IssuesButton.Content).Children.OfType<TextBlock>().Single().Text == "1 note" && StatusText.Text.Contains("No issues detected · 1 note"),
+                "With only notes, the issues button and status bar must count them as notes.");
+        }
+        finally { snapshot = savedSnapshot; selected = savedSelection; Draw(); ShowDetails(); UpdateIssues(); }
     }
     private void VerifySearchInput()
     {
@@ -358,9 +409,9 @@ public partial class MainWindow
         static bool IsGlyph(DependencyObject d) => d is FrameworkElement { Tag: NodeVisuals.StatusGlyphTag };
         var status = new[] { Brush("Warning"), Brush("Error") };
         var roots = cards.Values.Select(c => (DependencyObject)c.Card).Append(Details).Append(DeviceTree).Append(IssuesButton);
-        foreach (var text in roots.SelectMany(VisualDescendants).OfType<TextBlock>().Where(t => status.Contains(t.Foreground)))
+        foreach (var text in roots.SelectMany(VisualDescendants).OfType<TextBlock>().Where(t => status.Append(Brush("Note")).Contains(t.Foreground)))
             Check(text.FontWeight == FontWeights.SemiBold && text.Parent is Panel row && row.Children.Cast<DependencyObject>().Any(IsGlyph),
-                $"\"{text.Text}\" uses a warning or error color without the status glyph and weight.");
+                $"\"{text.Text}\" uses a note, warning or error color without the status glyph and weight.");
         foreach (var (id, item) in cards)
         {
             var node = (UsbNode)item.Card.Tag;
@@ -408,7 +459,7 @@ public partial class MainWindow
             List<string> Beside(string id, NodeVisuals.Metric metric) => VisualDescendants(cards[id].Card).OfType<WrapPanel>()
                 .Where(w => w.Children.OfType<TextBlock>().Any(t => Glyphs(t).Contains(metric)))
                 .SelectMany(w => VisualDescendants(w).OfType<TextBlock>().Where(t => t.FontWeight == FontWeights.SemiBold).Select(t => t.Text)).ToList();
-            Check(Beside("demo/root/1/2", NodeVisuals.Metric.Link).SequenceEqual(["Reduced speed"]), "Reduced speed must sit beside the link rate.");
+            Check(Beside("demo/root/1/2", NodeVisuals.Metric.Link).SequenceEqual(["Running at 5 Gb/s"]), "A slower link than the device supports must sit beside the link rate.");
             // Hubs and streaming devices with a known link and reservation get one meter, directly under
             // their figures: solid to what is reserved now, lighter out to the peak, labeled on both.
             int peaked = 0;
@@ -451,7 +502,7 @@ public partial class MainWindow
             var wheel = snapshot.Nodes.First(n => n.Id == "demo/root/9");
             Check(Issue(wheel) == PowerSaving.Warning && !Beside(wheel.Id, NodeVisuals.Metric.Link).Contains(PowerSaving.Warning) && OtherIssues(wheel).Any(i => i.Text == PowerSaving.Warning), "Selective suspend on a game controller must be listed below its figures.");
             Check(cards[wheel.Id].Card.Background == Brush("GamingFill") && VisualDescendants(cards[wheel.Id].Card).OfType<TextBlock>().Any(t => new System.Windows.Documents.TextRange(t.ContentStart, t.ContentEnd).Text.Contains("1000 Hz")), "The wheel base card must use the game controller hue and show its 1000 Hz polling.");
-            foreach (var (query, expected) in new[] { ("1000 Hz", new[] { "demo/root/4", "demo/root/9" }), ("Joystick", ["demo/root/9"]), (PowerSaving.Warning, ["demo/root/9"]) })
+            foreach (var (query, expected) in new[] { ("1000 Hz", new[] { "demo/root/4", "demo/root/9" }), ("Joystick", ["demo/root/9"]), (PowerSaving.Warning, ["demo/root/9"]), ("Single TT", ["demo/root/5"]) })
             {
                 Search.Text = query; ApplySearch();
                 Check(matches.Select(n => n.Id).SequenceEqual(expected), $"Searching \"{query}\" must find {string.Join(", ", expected)}.");
@@ -461,6 +512,10 @@ public partial class MainWindow
             CaptureUi("sim-hardware-preview.png");
             string Row(string label) => Details.Children.OfType<Grid>().Where(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == label).Select(g => g.Children[1]).OfType<TextBlock>().Single().Text;
             Check(Row("Polling rate") == "1000 Hz · every 1 ms" && Row("Power saving") == "On", "Properties must show the wheel base's polling rate and power-saving setting.");
+            Check(Row("Slower devices") == NotApplicable && Row("Shared link") == NotApplicable, "A device has no transaction translator.");
+            SelectNode(snapshot.Nodes.First(n => n.Id == "demo/root/5")); UpdateLayout();
+            Check(Row("Slower devices") == "Share one link · single TT", "Properties must show a hub's single transaction translator.");
+            SelectNode(wheel); UpdateLayout();
             SelectNode(snapshot.Controllers[0]); UpdateLayout();
             Check(Row("Power saving") == "On" && Row("Power plan") == "Selective suspend on", "Host properties must show the root hub's power-saving setting and the power plan.");
             snapshot.UsbSuspendPluggedIn = false; SelectNode(wheel); UpdateLayout();
@@ -503,6 +558,15 @@ public partial class MainWindow
             Draw(); UpdateLayout();
             Check(Beside("demo/root/1", NodeVisuals.Metric.Link).SequenceEqual(["Could exceed when streaming"]), "Peaks that overflow a hub's link must warn beside its link rate while the devices are idle.");
             Check(cards["demo/root/1"].Card.Child.DesiredSize.Height <= cards["demo/root/1"].Card.Height - cards["demo/root/1"].Card.Padding.Top - cards["demo/root/1"].Card.Padding.Bottom - 1, "The streaming warning must fit on the hub card.");
+            // Full-speed devices on two ports of a single-TT hub share one 12 Mb/s bus; the hub warns when they fill it.
+            var travel = snapshot.Nodes.First(n => n.Id == "demo/root/5");
+            travel.Children[0].LinkMbps = 12; travel.Children[0].ReservedMbps = 5; travel.Children[1].ReservedMbps = 5;
+            Draw(); UpdateLayout();
+            Check(Beside("demo/root/5", NodeVisuals.Metric.Link).SequenceEqual(["Shared TT nearly full", "Hub adapter not detected", "Over power budget"]), "A nearly full single TT must warn beside the hub's link rate, before its power warnings.");
+            Check(cards["demo/root/5"].Card.Child.DesiredSize.Height <= cards["demo/root/5"].Card.Height - cards["demo/root/5"].Card.Padding.Top - cards["demo/root/5"].Card.Padding.Bottom - 1, "The shared TT warning must fit on the hub card.");
+            travel.Children[0].ReservedMbps = 0; travel.Children[0].PeakReservedMbps = 6; travel.Children[1].PeakReservedMbps = 6;
+            Draw(); UpdateLayout();
+            Check(Beside("demo/root/5", NodeVisuals.Metric.Link).First() == "Shared TT could exceed", "Idle full-speed peaks that overflow a single TT must warn beside the hub's link rate.");
         }
         finally
         {
@@ -522,18 +586,23 @@ public partial class MainWindow
             snapshot = DemoData.Create();
             snapshot.Nodes.First(n => n.Id == "demo/root/4").Kind = "Unavailable";
             Draw();
+            // Explanations lead Properties and push the rows down by exactly their own height; nothing else may.
+            double rowsStart = 0;
             List<string> Layout(string id)
             {
                 SelectNode(snapshot.Nodes.First(n => n.Id == id)); UpdateLayout();
                 var rows = Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is "field" or "section").ToList();
                 double origin = rows[0].TranslatePoint(new Point(), Details).Y;
+                rowsStart = origin - Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is string tag && tag.StartsWith("warning:", StringComparison.Ordinal)).Sum(e => e.ActualHeight + e.Margin.Top + e.Margin.Bottom);
                 return rows.Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)e).Text)}@{e.TranslatePoint(new Point(), Details).Y - origin:0}").ToList();
             }
             var expected = Layout("demo/root/1");
+            double expectedStart = rowsStart;
             foreach (var id in new[] { "demo/root/1/1", "demo/root/1/3", "demo/root/4" })
             {
                 var actual = Layout(id);
                 Check(actual.SequenceEqual(expected), $"Inspector rows for {id} differ from a hub's: {string.Join(", ", actual.Except(expected).Concat(expected.Except(actual)).Take(4))}.");
+                Check(Math.Abs(rowsStart - expectedStart) < 1, $"Inspector rows for {id} start {rowsStart - expectedStart:0.#} px away from a hub's, beyond what its explanations take.");
             }
             Check(Layout("demo").SequenceEqual(Layout("demo/root")), "Controller and root hub inspector rows differ.");
         }
@@ -558,7 +627,7 @@ public partial class MainWindow
             selected = snapshot.Controllers[0]; Draw(); ShowDetails(); UpdateLayout();
             var text = Descendants(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
             Check(text.Contains("Port support") && text.Any(t => t.Contains("USB 3.x")), "Host inspector lost reported port protocols.");
-            Check(text.Contains("Supply capacity") && text.Contains("Unknown · not measured") && !text.Contains("Negotiated link"), "Host inspector must distinguish unknown supply from peripheral metrics.");
+            Check(text.Contains("Power available") && text.Contains("Unknown · not measured") && !text.Contains("Link speed"), "Host inspector must distinguish unknown supply from peripheral metrics.");
             var hub = snapshot.Nodes.First(n => n.Kind == "Hub"); SelectNode(hub); UpdateLayout();
             Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, "edit-device-name")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var editor = inlineLabelHost!; UpdateLayout();
@@ -690,7 +759,7 @@ public partial class MainWindow
             Check(matches.Count == snapshot.Nodes.Count(n => n.Kind == "Empty port") && portSlots.Count == matches.Count, "Searching hidden empty ports must reveal all matching slots.");
             Check(PanTransform.X == 0 && PanTransform.Y == 0 && selected?.Kind == "Empty port", "Search must reset panning and select a match.");
             var first = selected!.Id; NextMatch(1); Check(selected!.Id != first, "Next result failed."); NextMatch(-1); Check(selected!.Id == first, "Previous result failed.");
-            Search.Text = "Reduced speed"; ApplySearch();
+            Search.Text = "Running at 5 Gb/s"; ApplySearch();
             Check(matches.Count == 1 && selected?.Id == hub.Id, "Issue search did not select affected hardware.");
             UpdateIssues(); Check(IssuesButton.IsEnabled && Issue(hub).Contains("Scan incomplete"), "Incomplete scans must be visible as issues.");
             InspectorClick(this, new RoutedEventArgs()); UpdateLayout();

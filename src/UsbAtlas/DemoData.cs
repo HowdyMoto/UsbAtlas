@@ -16,7 +16,8 @@ internal static class DemoData
         root.Children.Add(Device("demo/root/3", "Mechanical keyboard", 3, 12, 100, "Human interface (HID)"));
         root.Children.Add(Device("demo/root/4", "Wireless mouse receiver", 4, 12, 100, "Human interface (HID)"));
         // A bus-powered travel hub with its adapter unplugged and too much plugged in shows the power checks.
-        var travel = new UsbNode { Id = "demo/root/5", Name = "Travel hub", Kind = "Hub", Port = 5, PortCount = 4, UsbVersion = "USB 2.00", Speed = "High speed · 480 Mb/s", LinkMbps = 480, Protocols = "USB 2.0", PowerSource = "Bus powered", SelfPowerCapable = true, MaxPowerMa = 100, VendorId = "05E3", ProductId = "0610" };
+        // Like most inexpensive USB 2 hubs, it has one transaction translator for all its ports.
+        var travel = new UsbNode { Id = "demo/root/5", Name = "Travel hub", Kind = "Hub", Port = 5, PortCount = 4, UsbVersion = "USB 2.00", Speed = "High speed · 480 Mb/s", LinkMbps = 480, Protocols = "USB 2.0", PowerSource = "Bus powered", SelfPowerCapable = true, MaxPowerMa = 100, VendorId = "05E3", ProductId = "0610", TransactionTranslators = "Single" };
         travel.Children.Add(Device("demo/root/5/1", "USB flash drive", 1, 480, 200, "Mass storage"));
         travel.Children.Add(Device("demo/root/5/2", "LED ring light", 2, 12, 500, "Human interface (HID)"));
         travel.Children.Add(new UsbNode { Id = "demo/root/5/3", Name = "Portable hard drive · Insufficient power", Kind = "Unavailable", Port = 3, Status = "Insufficient power", UsbVersion = "USB 3.00", MaxPowerMa = 896, Protocols = "USB 2.0", Notes = [UsbBudgets.FaultNote("Insufficient power"), "Illustrative demo device. This is not connected hardware."] });

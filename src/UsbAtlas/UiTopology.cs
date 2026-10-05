@@ -33,18 +33,22 @@ public partial class MainWindow
         // A port refused for power or bandwidth names the fault; anything else unavailable is a generic port error.
         if (n.Kind == "Unavailable") issues.Add((NodeVisuals.Severity.Error, UsbBudgets.IsPowerFault(n) || n.Status == "Insufficient bandwidth" ? n.Status : "Port error"));
         if (n.ScanIncomplete) issues.Add((NodeVisuals.Severity.Warning, "Scan incomplete"));
-        if (n.SpeedLimited && !n.IsUsb2Companion && !HubRelationships.Usb2HubAtNativeSpeed(n)) issues.Add((NodeVisuals.Severity.Warning, "Reduced speed"));
-        foreach (var warning in n.PowerWarnings) issues.Add((NodeVisuals.Severity.Warning, warning));
+        if (HubRelationships.ReducedSpeed(n)) issues.Add((Explanations.SpeedSeverity(n), Explanations.SpeedLabel(n)));
+        foreach (var warning in n.PowerWarnings) issues.Add((Explanations.PowerSeverity(n, warning), warning));
         if (n.QuickReconnects > 0) issues.Add((NodeVisuals.Severity.Warning, "Unstable connection"));
-        if (UsbBudgets.LinkNearlyFull(n)) issues.Add((NodeVisuals.Severity.Warning, "Link nearly full"));
+        // A nearly full link still fits everything on it, so it's a note; peaks that can't all fit are a warning.
+        if (UsbBudgets.LinkNearlyFull(n)) issues.Add((NodeVisuals.Severity.Note, "Link nearly full"));
         if (UsbBudgets.CouldExceedWhenStreaming(n)) issues.Add((NodeVisuals.Severity.Warning, "Could exceed when streaming"));
+        if (UsbBudgets.SharedTtNearlyFull(n)) issues.Add((NodeVisuals.Severity.Note, "Shared TT nearly full"));
+        if (UsbBudgets.SharedTtCouldExceed(n)) issues.Add((NodeVisuals.Severity.Warning, "Shared TT could exceed"));
         return issues;
     }
     private enum IssueRow { Other, Link, Power }
     // Speed and power problems sit beside the number they qualify; the rest gather below the metrics.
     private static IssueRow RowOf(string issue) => issue switch
     {
-        "Reduced speed" or "Insufficient bandwidth" or "Link nearly full" or "Could exceed when streaming" => IssueRow.Link,
+        string speed when speed.StartsWith("Running at", StringComparison.Ordinal) => IssueRow.Link,
+        "Insufficient bandwidth" or "Link nearly full" or "Could exceed when streaming" or "Shared TT nearly full" or "Shared TT could exceed" => IssueRow.Link,
         "Insufficient power" or "Overcurrent" or "Power at risk" or "Over power budget" or "Hub adapter not detected" => IssueRow.Power,
         _ => IssueRow.Other
     };
@@ -114,13 +118,16 @@ public partial class MainWindow
             lines.Add($"Reserved: {UsbBudgets.Rate(reserved)} of bus time held by open interrupt and isochronous pipes" + (n.PeakReservedMbps > reserved ? $", up to {UsbBudgets.Rate(n.PeakReservedMbps.Value)} when fully active" : "") + ". Bulk transfers, such as storage, reserve nothing and share what is left.");
         if (UsbBudgets.LinkUse(n) is (var used, var capacity, _))
             lines.Add($"Meter: reservations fill {UsbBudgets.Share(used, capacity)}, the most this link reserves for timed transfers; the lighter part runs to {UsbBudgets.Rate(Math.Max(used, UsbBudgets.PeakThroughLink(n).Mbps))} if everything on it streams at once. It shows bus time set aside, not traffic measured.");
+        if (UsbBudgets.SharedTtUse(n) is (var ttNow, var ttPeak, _, > 0 and var ports))
+            lines.Add($"Shared TT: full- and low-speed devices on {ports} port(s) share one 12 Mb/s bus behind this hub and hold {UsbBudgets.Share(ttNow, UsbBudgets.FullSpeedReservableMbps)} of what it can reserve" + (ttPeak > ttNow + 0.01 ? $", up to {UsbBudgets.Rate(ttPeak)} at peak." : "."));
         if (UsesExternalPower(n))
             lines.Add(n.MaxPowerMa is > 0 ? $"Power: has its own supply and also requests up to {n.MaxPowerMa} mA from the bus. A declared maximum, not a measurement." : "Power: runs on its own supply and requests no current from the bus, so there is no bus draw to show.");
         else if (n.MaxPowerMa is int ma) lines.Add($"Power: requests up to {ma} mA ({ma * 0.005:0.##} W at 5 V) in its descriptor. A declared maximum, not a measurement.");
         return string.Join("\n", lines);
     }
     private static string Issue(UsbNode n) => string.Join(" · ", Issues(n).Select(i => i.Text));
-    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {n.Connector} {n.SocketSpeed} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)} {string.Join(" ", n.HidUsages)} {(n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : "")}".Contains(q, StringComparison.OrdinalIgnoreCase);
+    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {n.Connector} {n.SocketSpeed} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)} {string.Join(" ", n.HidUsages)} {(n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : "")} {(n.Kind == "Hub" ? TtType(n) : "")}".Contains(q, StringComparison.OrdinalIgnoreCase);
+    private static string TtType(UsbNode n) => n.TransactionTranslators switch { "Single" => "Share one link · single TT", "Per port" => "Link per port · multi-TT", "Not reported" => "Not reported", _ => "None" };
     private bool Visible(UsbNode n) => visibleIds.Contains(n.Id);
     // On Windows each xHCI controller has one root hub, and to the user they are one thing: a host whose
     // sockets are the root ports. They share one card; a controller with several root hubs, or none
@@ -584,12 +591,17 @@ public partial class MainWindow
     }
     private void UpdateIssues()
     {
-        int count = snapshot.Nodes.Count(n => Issue(n).Length > 0) + snapshot.Diagnostics.Count;
-        var worst = snapshot.Nodes.SelectMany(Issues).Select(i => i.Severity).DefaultIfEmpty(NodeVisuals.Severity.Warning).Max();
-        if (count == 0) { IssuesButton.Content = new TextBlock { Text = "No issues", Foreground = Brush("TextMuted") }; IssuesButton.ClearValue(BackgroundProperty); }
-        else { IssuesButton.Content = NodeVisuals.StatusContent(worst, count == 1 ? "1 issue" : $"{count} issues"); IssuesButton.Background = Brush(worst == NodeVisuals.Severity.Error ? "ErrorSurface" : "WarningSurface"); }
-        IssuesButton.IsEnabled = count > 0;
-        StatusText.Text = (snapshot.IsDemo ? "Demo hardware" : "Local scan") + $" · Updated {snapshot.CapturedAt:T}" + (count > 0 ? $" · {count} items need attention" : " · No issues detected");
+        // Notes are worth knowing but affect nothing now, so they are counted apart from what needs attention.
+        var worstOf = snapshot.Nodes.Select(n => Issues(n).Select(i => i.Severity).DefaultIfEmpty((NodeVisuals.Severity)(-1)).Max()).ToList();
+        int notes = worstOf.Count(s => s == NodeVisuals.Severity.Note), attention = worstOf.Count(s => s > NodeVisuals.Severity.Note) + snapshot.Diagnostics.Count;
+        var worst = attention > 0 ? worstOf.Append(NodeVisuals.Severity.Warning).Max() : NodeVisuals.Severity.Note;
+        static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n} {noun}s";
+        string summary = string.Join(" · ", new[] { attention > 0 ? Count(attention, "issue") : "", notes > 0 ? Count(notes, "note") : "" }.Where(s => s.Length > 0));
+        if (summary.Length == 0) { IssuesButton.Content = new TextBlock { Text = "No issues", Foreground = Brush("TextMuted") }; IssuesButton.ClearValue(BackgroundProperty); }
+        else { IssuesButton.Content = NodeVisuals.StatusContent(worst, summary); IssuesButton.Background = Brush(NodeVisuals.StatusColor(worst) + "Surface"); }
+        IssuesButton.IsEnabled = summary.Length > 0;
+        StatusText.Text = (snapshot.IsDemo ? "Demo hardware" : "Local scan") + $" · Updated {snapshot.CapturedAt:T}"
+            + (attention > 0 ? $" · {Count(attention, "item")} {(attention == 1 ? "needs" : "need")} attention" : " · No issues detected") + (notes > 0 ? $" · {Count(notes, "note")}" : "");
         if (snapshot.Diagnostics.Count > 0) StatusText.Text += " · " + string.Join(" · ", snapshot.Diagnostics);
         StatusText.ToolTip = StatusText.Text;
     }

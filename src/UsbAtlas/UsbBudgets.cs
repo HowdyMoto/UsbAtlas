@@ -51,9 +51,10 @@ internal static class UsbBudgets
     // The most payload the host will reserve for periodic transfers on a link: 90% of a low- or
     // full-speed frame, 80% of a high-speed microframe, and 90% of SuperSpeed bus time after line
     // encoding (8b/10b at 5 Gb/s, 128b/132b beyond). SuperSpeedPlus lane rates aren't resolved, so 10 Gb/s is assumed.
+    internal const double FullSpeedReservableMbps = 10.8;
     internal static double? ReservableMbps(UsbNode n) => n.LinkMbps switch
     {
-        1.5 => 1.35, 12 => 10.8, 480 => 384, 5000 => 3600,
+        1.5 => 1.35, 12 => FullSpeedReservableMbps, 480 => 384, 5000 => 3600,
         _ => n.Speed.StartsWith("SuperSpeedPlus", StringComparison.Ordinal) ? 10000 * 128.0 / 132 * 0.9 : null
     };
 
@@ -98,6 +99,40 @@ internal static class UsbBudgets
     // flags a link whose known peaks would not fit at once; a link already nearly full warns as that instead.
     internal static bool CouldExceedWhenStreaming(UsbNode n) =>
         !LinkNearlyFull(n) && LinkUse(n) is (_, var capacity, _) && PeakThroughLink(n).Mbps > capacity;
+
+    // Full- and low-speed devices behind a high-speed hub don't use its 480 Mb/s directly: a transaction
+    // translator (TT) runs their periodic transfers on a 12 Mb/s bus, which reserves at most 90% of each
+    // frame, as a full-speed link does. A single-TT hub shares that one bus among all its ports, so devices
+    // that each fit their own link can overflow it together. A low-speed byte takes eight full-speed byte
+    // times. Ports counts the ports whose devices use the TT.
+    internal static (double Now, double Peak, int Unknown, int Ports)? SharedTtUse(UsbNode hub)
+    {
+        if (hub.Kind != "Hub" || hub.TransactionTranslators != "Single") return null;
+        double now = 0, peak = 0; int unknown = 0, ports = 0;
+        foreach (var user in hub.Children.Where(c => c.Kind is "Device" or "Hub" && c.LinkMbps is 1.5 or 12))
+        {
+            var t = FullSpeedBusTime(user); now += t.Now; peak += t.Peak; unknown += t.Unknown; ports++;
+        }
+        return (now, Math.Max(now, peak), unknown, ports);
+    }
+    private static (double Now, double Peak, int Unknown) FullSpeedBusTime(UsbNode n)
+    {
+        double scale = n.LinkMbps == 1.5 ? 8 : 1;
+        double now = (n.ReservedMbps ?? 0) * scale, peak = Math.Max(n.PeakReservedMbps ?? 0, n.ReservedMbps ?? 0) * scale;
+        int unknown = n.ReservedMbps == null ? 1 : 0;
+        if (n.Kind == "Hub")
+            foreach (var child in n.Children.Where(c => c.Kind is "Device" or "Hub"))
+            {
+                var t = FullSpeedBusTime(child); now += t.Now; peak += t.Peak; unknown += t.Unknown;
+            }
+        return (now, peak, unknown);
+    }
+    // Devices on one port already warn against their own 12 Mb/s link; the shared TT adds a warning only
+    // when devices on two or more ports share it.
+    internal static bool SharedTtNearlyFull(UsbNode hub) =>
+        SharedTtUse(hub) is (var now, _, _, >= 2) && now / FullSpeedReservableMbps >= NearlyFullShare;
+    internal static bool SharedTtCouldExceed(UsbNode hub) =>
+        !SharedTtNearlyFull(hub) && SharedTtUse(hub) is (_, var peak, _, >= 2) && peak > FullSpeedReservableMbps;
 
     internal static string Share(double reserved, double capacity)
     {

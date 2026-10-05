@@ -36,6 +36,8 @@ internal static class Theme
         // least 4.5:1. A tongue never carries a glyph or words, so its red can't be mistaken for an error.
         ("SocketUsb2", "#202428", "#0C0E11"), ("SocketSuperSpeed", "#1A5FC7", "#2D6FD6"),
         ("SocketSuperSpeedPlus", "#C8283A", "#D23A4B"), ("SocketUnknown", "#6A737D", "#5D6773"), ("OnSocket", "#FFFFFF", "#FFFFFF"),
+        // A note is worth knowing but affects nothing now: calm gray, always with the info glyph.
+        ("Note", "#596673", "#BAC3CE"), ("NoteSurface", "#ECEFF2", "#29313B"),
         // Reserved for warnings and errors, always with a status glyph; no role color comes near them.
         ("Warning", "#9A5B00", "#F5B544"), ("WarningSurface", "#FDF0D5", "#3B2D12"),
         ("Error", "#B42318", "#FF7A6E"), ("ErrorSurface", "#FDE7E5", "#43201F")

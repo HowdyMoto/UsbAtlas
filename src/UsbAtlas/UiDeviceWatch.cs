@@ -11,25 +11,28 @@ namespace UsbAtlas;
 public partial class MainWindow
 {
     private const int WmDeviceChange = 0x0219, DbtDevNodesChanged = 0x0007, DbtDeviceArrival = 0x8000, DbtDeviceRemoveComplete = 0x8004, DbtDevTypDeviceInterface = 5;
-    private static readonly Guid UsbDeviceInterface = new("A5DCBF10-6530-11D2-901F-00C04FB951ED");
+    // Hubs register the USB hub interface class, not the USB device one, so a hub's drop, such as a KVM
+    // switch taking a monitor's hub away, is only seen by registering for both.
+    private static readonly Guid[] UsbInterfaces = [new("A5DCBF10-6530-11D2-901F-00C04FB951ED"), new("F18A0E88-C30C-11D0-8815-00A0C906BED8")];
     private readonly DispatcherTimer deviceSettle = new() { Interval = TimeSpan.FromMilliseconds(600) };
     private bool rescanQueued;
     private readonly ReconnectTracker reconnects = new();
-    private IntPtr deviceNotification;
+    private readonly List<IntPtr> deviceNotifications = [];
 
     private void WatchDevices()
     {
         deviceSettle.Tick += async (_, _) => { deviceSettle.Stop(); await RescanAfterDeviceChange(); };
         var source = PresentationSource.FromVisual(this) as HwndSource;
         source?.AddHook(DeviceChangeHook);
-        // Registering for USB device interfaces adds arrival and removal messages that name the device,
-        // so a quick drop and return is counted even when it settles into a single rescan.
+        // Registering for USB device and hub interfaces adds arrival and removal messages that name the
+        // device, so a quick drop and return is counted even when it settles into a single rescan.
         if (source != null)
-        {
-            var filter = new DevBroadcastInterface { Size = Marshal.SizeOf<DevBroadcastInterface>(), DeviceType = DbtDevTypDeviceInterface, ClassGuid = UsbDeviceInterface };
-            deviceNotification = RegisterDeviceNotification(source.Handle, ref filter, 0);
-        }
-        Closed += (_, _) => { deviceSettle.Stop(); if (deviceNotification != IntPtr.Zero) UnregisterDeviceNotification(deviceNotification); };
+            foreach (var guid in UsbInterfaces)
+            {
+                var filter = new DevBroadcastInterface { Size = Marshal.SizeOf<DevBroadcastInterface>(), DeviceType = DbtDevTypDeviceInterface, ClassGuid = guid };
+                if (RegisterDeviceNotification(source.Handle, ref filter, 0) is var handle && handle != IntPtr.Zero) deviceNotifications.Add(handle);
+            }
+        Closed += (_, _) => { deviceSettle.Stop(); foreach (var handle in deviceNotifications) UnregisterDeviceNotification(handle); };
     }
 
     // DBT_DEVNODES_CHANGED is broadcast to every top-level window without registration.
@@ -83,7 +86,6 @@ internal sealed class ReconnectTracker
     internal const int Threshold = 3;
     private readonly Dictionary<string, DateTime> removed = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<DateTime>> returns = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> unstable = new(StringComparer.OrdinalIgnoreCase);
 
     internal void Removed(string id, DateTime at) => removed[id] = at;
     internal void Arrived(string id, DateTime at)
@@ -91,24 +93,33 @@ internal sealed class ReconnectTracker
         if (!removed.Remove(id, out var gone) || at - gone > QuickReturn) return;
         if (!returns.TryGetValue(id, out var times)) returns[id] = times = [];
         times.Add(at);
-        // Once a burst crosses the threshold the device stays flagged for the session, so earlier drops still show.
-        if (times.Count(t => at - t <= Window) >= Threshold) unstable.Add(id);
     }
-    internal bool IsUnstable(string id) => unstable.Contains(id);
 
+    // A hub that drops takes everything behind it along, as switching a KVM, changing monitor inputs or
+    // undocking does, so only the hub is flagged. A device behind it is flagged for its own drops: returns
+    // that don't come within seconds of one of an upstream hub's. Once a burst crosses the threshold the
+    // device stays flagged for the session, so earlier drops still show.
+    internal static readonly TimeSpan SameDrop = TimeSpan.FromSeconds(15);
     internal void Apply(Snapshot snapshot)
     {
         if (snapshot.IsDemo) return;
-        foreach (var node in snapshot.Nodes.Where(n => n.InstanceId.Length > 0 && unstable.Contains(n.InstanceId)))
+        foreach (var controller in snapshot.Controllers) Mark(controller, []);
+        void Mark(UsbNode node, List<DateTime> upstream)
         {
-            var times = returns[node.InstanceId];
-            node.QuickReconnects = times.Count;
-            node.QuickReconnectTimes = [.. times];
-            node.Notes.Add($"Dropped and came back within seconds {times.Count} times this session, most recently at {times[^1]:T}. Repeated quick reconnects usually mean the device is short of power, or a cable or connector is faulty.");
+            var own = node.InstanceId.Length > 0 ? returns.GetValueOrDefault(node.InstanceId) ?? [] : [];
+            var times = own.Where(t => !upstream.Any(u => (t - u).Duration() <= SameDrop)).ToList();
+            if (times.Any(t => times.Count(u => u <= t && t - u <= Window) >= Threshold))
+            {
+                node.QuickReconnects = times.Count;
+                node.QuickReconnectTimes = times;
+                node.Notes.Add($"Reconnect evidence: dropped and came back within seconds {times.Count} times this session, most recently at {times[^1]:T}" + (node.Kind == "Hub" ? ", taking everything behind it along." : "."));
+            }
+            foreach (var child in node.Children) Mark(child, [.. upstream, .. own]);
         }
     }
 
-    // A path like \\?\USB#VID_046D&PID_C52B#5&2a8c&0&3#{a5dcbf10-…} names the instance USB\VID_046D&PID_C52B\5&2a8c&0&3.
+    // A path like \\?\USB#VID_046D&PID_C52B#5&2a8c&0&3#{a5dcbf10-…}, or a hub's ending #{f18a0e88-…}, names the
+    // instance USB\VID_046D&PID_C52B\5&2a8c&0&3.
     internal static string? InstanceIdFromPath(string path)
     {
         if (path.StartsWith(@"\\?\", StringComparison.Ordinal) || path.StartsWith(@"\\.\", StringComparison.Ordinal)) path = path[4..];
