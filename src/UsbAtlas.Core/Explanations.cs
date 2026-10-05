@@ -38,10 +38,11 @@ internal static class Explanations
                     "Query failed" => new("USB Atlas couldn't read this port.", "Probably not: a device here may still be connected and working; this scan just can't see it.", "", ["Refresh (F5) to try again."]),
                     "Hub nested too deeply" => new("This device is behind too many hubs in a row for USB to reach it.", "Yes: Windows can't use it.",
                         "USB allows at most five hubs between a device and the computer, and monitors, docks and keyboards often have hubs inside.", ["Plug it, or the hub it's on, closer to the computer."]),
-                    "Enumerating" or "Resetting" => new("Windows was still setting up this port when USB Atlas looked.", "Probably not: this usually finishes within seconds.", "",
-                        ["Refresh (F5) in a moment. If it stays this way, unplug the device and plug it back in."]),
                     _ => new($"Windows reports this port as “{n.Status}”.", "Probably: Windows may not be able to use what's plugged in here.", "", ["Unplug the device and plug it back in.", "Try another port and cable."])
                 };
+            case "Still connecting":
+                return new("Something is plugged in here, and Windows was still setting it up when USB Atlas looked.", "Probably not: this usually finishes within seconds.", "",
+                    ["Refresh (F5) in a moment. If it stays this way, unplug it and plug it back in."]);
             case "Insufficient bandwidth":
                 return new("Windows couldn't start this device: the connection it shares can't set aside enough time for it.", "Yes: it won't work until there's room.",
                     "Cameras, microphones, audio interfaces and controllers each reserve time on the connection they share, and this one is full.",

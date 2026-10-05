@@ -12,7 +12,9 @@ internal static class IssueRules
     {
         var issues = new List<(Severity, string)>();
         // A port refused for power or bandwidth names the fault; anything else unavailable is a generic port error.
-        if (n.Kind == "Unavailable") issues.Add((Severity.Error, UsbBudgets.IsPowerFault(n) || n.Status == "Insufficient bandwidth" ? n.Status : "Port error"));
+        // A port Windows is still setting up usually finishes within seconds, so it's a note.
+        if (n.Kind == "Unavailable" && n.Status is "Enumerating" or "Resetting") issues.Add((Severity.Note, "Still connecting"));
+        else if (n.Kind == "Unavailable") issues.Add((Severity.Error, UsbBudgets.IsPowerFault(n) || n.Status == "Insufficient bandwidth" ? n.Status : "Port error"));
         if (n.ScanIncomplete) issues.Add((Severity.Warning, "Scan incomplete"));
         if (Explanations.DriverProblemSeverity(n) is Severity problem) issues.Add((problem, Explanations.DriverProblem));
         if (HubRelationships.ReducedSpeed(n)) issues.Add((Explanations.SpeedSeverity(n), Explanations.SpeedLabel(n)));

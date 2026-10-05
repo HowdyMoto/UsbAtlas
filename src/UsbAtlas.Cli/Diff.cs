@@ -26,7 +26,14 @@ internal static class Diff
         ("label", (n, _) => n.UserLabel), ("reconnects", (n, _) => n.QuickReconnects > 0 ? n.QuickReconnects.ToString() : ""),
     ];
 
-    internal static JsonObject Compare(Session before, Session after)
+    // An issue is known by what it's on and what it says.
+    private static string IssueNode(UsbNode n, Session s) => n.Kind is "Device" or "Hub" or "Unavailable" ? Identity(n, s.Snapshot) : "@" + n.Id;
+    internal static Dictionary<string, Severity> IssueKeys(Session s) =>
+        s.Listed.SelectMany(n => Reports.IssuesOf(s, n).Select(i => (Key: IssueNode(n, s) + "|" + i.Text, i.Severity))).GroupBy(i => i.Key).ToDictionary(g => g.Key, g => g.First().Severity);
+
+    // reported, when given, holds the issues already announced, as a watch keeps them: one isn't new again when
+    // its device leaves and comes back with it, and is resolved once its device is back without it.
+    internal static JsonObject Compare(Session before, Session after, Dictionary<string, Severity>? reported = null)
     {
         var was = Occupants(before); var now = Occupants(after);
         var gone = was.Where(p => !now.ContainsKey(p.Key)).Select(p => p.Value).ToList();
@@ -51,8 +58,8 @@ internal static class Diff
 
         // Issues are matched by what they're on, so one that follows a moved device isn't counted twice.
         var movedFrom = moved.ToDictionary(p => p.To, p => p.From);
-        string KeyBefore(UsbNode n) => n.Kind is "Device" or "Hub" or "Unavailable" ? Identity(n, before.Snapshot) : "@" + n.Id;
-        string KeyAfter(UsbNode n) => movedFrom.TryGetValue(n, out var from) ? KeyBefore(from) : n.Kind is "Device" or "Hub" or "Unavailable" ? Identity(n, after.Snapshot) : "@" + n.Id;
+        string KeyBefore(UsbNode n) => IssueNode(n, before);
+        string KeyAfter(UsbNode n) => movedFrom.TryGetValue(n, out var from) ? KeyBefore(from) : IssueNode(n, after);
         var issuesBefore = before.Listed.SelectMany(n => Reports.IssuesOf(before, n).Select(i => (Key: KeyBefore(n) + "|" + i.Text, i.Severity, i.Text, Node: n))).ToList();
         var issuesAfter = after.Listed.SelectMany(n => Reports.IssuesOf(after, n).Select(i => (Key: KeyAfter(n) + "|" + i.Text, i.Severity, i.Text, Node: n))).ToList();
         var beforeKeys = issuesBefore.Select(i => i.Key).ToHashSet(); var afterKeys = issuesAfter.Select(i => i.Key).ToHashSet();
@@ -67,8 +74,26 @@ internal static class Diff
         report["disconnected"] = J.Arr(gone.Select(n => (JsonNode)Placed(before, n)));
         report["moved"] = J.Arr(moved.Select(p => (JsonNode)J.Obj(("name", Topology.ShortName(p.To)), ("vidPid", J.S(Reports.VidPid(p.To))), ("from", before.PathOf(p.From)), ("to", after.PathOf(p.To)))));
         report["changed"] = changed;
-        report["newIssues"] = J.Arr(issuesAfter.Where(i => !beforeKeys.Contains(i.Key)).Select(i => Issue(after, i)));
-        report["resolvedIssues"] = J.Arr(issuesBefore.Where(i => !afterKeys.Contains(i.Key)).Select(i => Issue(before, i)));
+        // A device that leaves takes its issues with it: that's a disconnect, not a fix.
+        var afterIds = after.Snapshot.Nodes.Select(m => m.Id).ToHashSet();
+        bool Left(UsbNode n) => gone.Contains(n) || n.Kind is not ("Device" or "Hub" or "Unavailable") && !afterIds.Contains(n.Id);
+        var appeared = issuesAfter.Where(i => !beforeKeys.Contains(i.Key) && reported?.ContainsKey(i.Key) != true).ToList();
+        var resolved = issuesBefore.Where(i => !afterKeys.Contains(i.Key) && !Left(i.Node)).Select(i => Issue(before, i)).ToList();
+        if (reported != null)
+        {
+            // An announced issue whose device came back without it is resolved, though the scan before didn't list it.
+            var afterNodes = after.Listed.GroupBy(KeyAfter).ToDictionary(g => g.Key, g => g.First());
+            foreach (var (key, severity) in reported.Where(r => !afterKeys.Contains(r.Key) && !beforeKeys.Contains(r.Key)).ToList())
+            {
+                int at = key.LastIndexOf('|');
+                if (afterNodes.TryGetValue(key[..at], out var node)) resolved.Add(Issue(after, (key, severity, key[(at + 1)..], node)));
+            }
+            foreach (var i in appeared) reported[i.Key] = i.Severity;
+            foreach (var i in issuesBefore.Where(i => !afterKeys.Contains(i.Key) && !Left(i.Node))) reported.Remove(i.Key);
+            foreach (var key in reported.Keys.Where(k => !afterKeys.Contains(k) && afterNodes.ContainsKey(k[..k.LastIndexOf('|')])).ToList()) reported.Remove(key);
+        }
+        report["newIssues"] = J.Arr(appeared.Select(i => Issue(after, i)));
+        report["resolvedIssues"] = J.Arr(resolved);
         var planBefore = Reports.PowerPlan(before.Snapshot); var planAfter = Reports.PowerPlan(after.Snapshot);
         if (Json.Write(planBefore) != Json.Write(planAfter)) report["powerPlan"] = J.Obj(("before", planBefore), ("after", planAfter));
         return report;

@@ -15,6 +15,10 @@ internal static class Watch
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(600);
     // Devices that lost power while asleep take a few seconds to be set up again.
     private static readonly TimeSpan WakeSettle = TimeSpan.FromSeconds(8);
+    // A device Windows is still setting up changes from scan to scan: its descriptor and driver arrive, its power
+    // and pipes appear, a passing problem code clears. Rescanning until two scans agree reports where it settles.
+    private static readonly TimeSpan Steady = TimeSpan.FromMilliseconds(1500);
+    internal const int SteadyTries = 4;
 
     internal static JsonObject Run(Options o, TimeSpan duration, bool verbose, bool redact, Action<JsonObject> emit, CancellationToken cancel)
     {
@@ -66,6 +70,8 @@ internal static class Watch
             }
 
             var current = Scan(tracker, redact);
+            // Issues already announced, so a device that leaves and returns with one doesn't announce it again.
+            var reported = Diff.IssueKeys(current);
             var start = DateTime.Now;
             emit(J.Obj(("time", Time(start)), ("event", "watching"), ("for", duration == TimeSpan.Zero ? "until stopped" : $"{duration.TotalSeconds:0} s"),
                 ("devices", current.Snapshot.Nodes.Count(n => n.Kind == "Device")), ("hubs", current.Snapshot.Nodes.Count(n => n.Kind == "Hub")),
@@ -74,6 +80,7 @@ internal static class Watch
             DateTime? settleAt = null, wakeCheckAt = null, lastWake = null;
             Session? beforeSleep = null;
             int rescans = 0, changes = 0, sleeps = 0, notBack = 0, slower = 0;
+            Session Settled() => ScanUntilSteady(current, () => { rescans++; return Scan(tracker, redact); }, () => !cancel.WaitHandle.WaitOne(Steady));
             // A change still settling at the deadline gets its rescan, and a wake its check, so the summary is current.
             while (!cancel.IsCancellationRequested && (DateTime.Now < deadline || settleAt != null || wakeCheckAt != null))
             {
@@ -99,9 +106,9 @@ internal static class Watch
                 }
                 if (wakeCheckAt is DateTime check && DateTime.Now >= check)
                 {
-                    wakeCheckAt = null; settleAt = null; rescans++;
-                    var next = Scan(tracker, redact);
-                    var diff = Diff.Compare(current, next);
+                    wakeCheckAt = null; settleAt = null;
+                    var next = Settled();
+                    var diff = Diff.Compare(current, next, reported);
                     if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; emit(diff); }
                     var after = AfterWaking(beforeSleep ?? current, next, DateTime.Now);
                     notBack += after["notBack"]!.AsArray().Count; slower += after["slower"]!.AsArray().Count;
@@ -110,9 +117,9 @@ internal static class Watch
                 }
                 if (settleAt is DateTime due && (DateTime.Now >= due || DateTime.Now >= deadline))
                 {
-                    settleAt = null; rescans++;
-                    var next = Scan(tracker, redact);
-                    var diff = Diff.Compare(current, next);
+                    settleAt = null;
+                    var next = Settled();
+                    var diff = Diff.Compare(current, next, reported);
                     if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; emit(diff); }
                     current = next;
                 }
@@ -143,6 +150,22 @@ internal static class Watch
     }
     private static string Time(DateTime t) => t.ToString("HH:mm:ss.fff");
 
+    // Scans until two scans in a row agree, pausing between them, up to SteadyTries more scans.
+    internal static Session ScanUntilSteady(Session current, Func<Session> scan, Func<bool> pause)
+    {
+        var next = scan();
+        for (int i = 0; i < SteadyTries && !Diff.Empty(Diff.Compare(current, next)); i++)
+        {
+            if (!pause()) break;
+            var again = scan();
+            bool steady = Diff.Empty(Diff.Compare(next, again));
+            next = again;
+            if (steady) break;
+        }
+        return next;
+    }
+    private static string Count(JsonNode? n, string noun) => n?.GetValue<int>() == 1 ? $"1 {noun}" : $"{n} {noun}s";
+
     // What a sleep cost: anything connected before it that isn't back, or is back on a slower link.
     internal static JsonObject AfterWaking(Session before, Session after, DateTime at)
     {
@@ -163,7 +186,8 @@ internal static class Watch
         {
             case "watching":
                 var issues = e["issues"]!;
-                return $"{time} watching for {e["for"]} · {e["devices"]} devices, {e["hubs"]} hubs · {issues["errors"]} errors, {issues["warnings"]} warnings, {issues["notes"]} notes{(e["tracksSleep"]?.GetValue<bool>() == false ? " · Windows refused sleep notifications, so sleep isn't tracked" : "")}. Plug, unplug or wiggle now.\n";
+                string span = e["for"]?.ToString() == "until stopped" ? "until stopped" : $"for {e["for"]}";
+                return $"{time} watching {span} · {Count(e["devices"], "device")}, {Count(e["hubs"], "hub")} · {Count(issues["errors"], "error")}, {Count(issues["warnings"], "warning")}, {Count(issues["notes"], "note")}{(e["tracksSleep"]?.GetValue<bool>() == false ? " · Windows refused sleep notifications, so sleep isn't tracked" : "")}. Plug, unplug or wiggle now.\n";
             case "arrival" or "removal":
                 return $"{time} {e["event"],-8} {e["instanceId"]}\n";
             case "change":
@@ -179,12 +203,12 @@ internal static class Watch
                 if (lines.Length == 0) lines.AppendLine($"{time} ✓ after waking, all {e["back"]} devices and hubs are back at the link rates they had");
                 return lines.ToString();
             case "summary":
-                var sb = new System.Text.StringBuilder($"{time} done after {e["watchedSeconds"]} s · {e["rescans"]} rescans, {e["changes"]} with changes\n");
+                var sb = new System.Text.StringBuilder($"{time} done after {e["watchedSeconds"]} s · {Count(e["rescans"], "rescan")}, {e["changes"]} with changes\n");
                 if (e["sleeps"] != null) sb.AppendLine($"  slept {(e["sleeps"]!.GetValue<int>() == 1 ? "once" : e["sleeps"] + " times")}: {e["notBackAfterWaking"]} not back after waking, {e["slowerAfterWaking"]} back slower");
                 foreach (var u in e["unstable"]!.AsArray())
                     sb.AppendLine($"  unstable: {u!["path"]} {u["name"]} dropped and came back {u["quickReconnects"]} times ({string.Join(", ", u["times"]!.AsArray().Select(t => t!.ToString()))})");
                 var final = e["issues"]!;
-                sb.AppendLine($"  now: {final["errors"]} errors, {final["warnings"]} warnings, {final["notes"]} notes. usbatlas-cli issues explains them.");
+                sb.AppendLine($"  now: {Count(final["errors"], "error")}, {Count(final["warnings"], "warning")}, {Count(final["notes"], "note")}. usbatlas-cli issues explains them.");
                 return sb.ToString();
             default:
                 return Json.Write(e, false) + "\n";
