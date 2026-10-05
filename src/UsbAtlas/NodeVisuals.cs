@@ -27,9 +27,10 @@ internal static class NodeVisuals
     internal static string Label(UsbNode n) => n.Kind switch
     {
         "Controller" => "Host controller", "Root hub" => "Root ports",
-        "Hub" when n.Location == "Internal" => "Internal hub · inferred",
-        "Hub" when n.Location == "External" => "External hub · inferred",
-        "Hub" => "Hub · location unknown", "Empty port" => "Empty port", "Unavailable" => "USB port",
+        // Where a hub sits is worked out, not reported; the Location row's tooltip says how.
+        "Hub" when n.Location == "Internal" => "Built-in hub",
+        "Hub" when n.Location == "External" => "Plug-in hub",
+        "Hub" => "Hub", "Empty port" => "Empty port", "Unavailable" => "USB port",
         _ => n.DeviceType
     };
     internal static Brush Ink(string hex) => Theme.Brush(hex);
@@ -42,14 +43,16 @@ internal static class NodeVisuals
         return new Viewbox { Width = size, Height = size, Child = canvas };
     }
 
-    // Warnings and errors share one look everywhere: a shape-coded glyph (filled triangle for a warning,
-    // filled circle for an error) beside semibold text in a color nothing else uses, usually on a tinted pill.
-    internal enum Severity { Warning, Error }
+    // Notes, warnings and errors share one look everywhere: a shape-coded glyph (outlined ring for a note,
+    // filled triangle for a warning, filled circle for an error) beside semibold text, usually on a tinted
+    // pill. A note is calm gray: worth knowing, but nothing is affected now. Amber and red are reserved for
+    // warnings and errors, which nothing else uses.
+    internal enum Severity { Note, Warning, Error }
     internal const string StatusGlyphTag = "status-glyph";
-    internal static string StatusColor(Severity s) => s == Severity.Error ? "Error" : "Warning";
+    internal static string StatusColor(Severity s) => s switch { Severity.Error => "Error", Severity.Warning => "Warning", _ => "Note" };
     internal static FrameworkElement StatusGlyph(Severity s, double size = 13)
     {
-        var glyph = Symbol(s == Severity.Error ? "error" : "warning", Ink(StatusColor(s)), size);
+        var glyph = Symbol(s switch { Severity.Error => "error", Severity.Warning => "warning", _ => "info" }, Ink(StatusColor(s)), size);
         glyph.Tag = StatusGlyphTag; glyph.VerticalAlignment = VerticalAlignment.Center;
         return glyph;
     }
@@ -64,7 +67,7 @@ internal static class NodeVisuals
     }
     internal static Border StatusBadge(Severity s, string text) => new()
     {
-        Background = Ink(s == Severity.Error ? "ErrorSurface" : "WarningSurface"), CornerRadius = new CornerRadius(4),
+        Background = Ink(StatusColor(s) + "Surface"), CornerRadius = new CornerRadius(4),
         Padding = new Thickness(5, 2, 7, 2), HorizontalAlignment = HorizontalAlignment.Left, Child = StatusContent(s, text)
     };
     // Metric glyphs mark what a number measures: swap_vert for the negotiated link, schedule for bus

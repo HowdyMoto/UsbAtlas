@@ -12,6 +12,11 @@ internal static class SelfTests
         Check(UsbScanner.DecodeSpeed(0, 0).Item2 == 1.5, "Low-speed decoding.");
         Check(UsbScanner.DecodeSpeed(1, 0).Item2 == 12, "Full-speed decoding.");
         Check(UsbScanner.DecodeSpeed(2, 0).Item2 == 480, "High-speed decoding.");
+        // A hub's connection information: the port index, then its device descriptor, whose bDeviceProtocol names its TTs.
+        var hubInfo = new byte[35]; new byte[] { 18, 1, 0x00, 0x02, 9, 0, 2, 64 }.CopyTo(hubInfo, 4);
+        Check(UsbScanner.TransactionTranslators(hubInfo) == "Per port", "bDeviceProtocol 2 is one TT per port.");
+        hubInfo[10] = 1; Check(UsbScanner.TransactionTranslators(hubInfo) == "Single", "bDeviceProtocol 1 is one TT for all ports.");
+        hubInfo[10] = 0; Check(UsbScanner.TransactionTranslators(hubInfo) == "Not reported", "A high-speed hub without a TT protocol stays unknown.");
         var usb2 = new UsbNode { Id = "two", Kind = "Hub", Port = 1, VendorId = "0BDA", LinkMbps = 480, SpeedLimited = true, CompanionPortNumber = 2, CompanionHubSymbolicLink = "root" };
         var usb3 = new UsbNode { Id = "three", Kind = "Hub", Port = 2, VendorId = "0BDA", LinkMbps = 5000 };
         var root = new UsbNode { Id = "root", Kind = "Root hub", HubSymbolicLink = @"\\?\root", Children = [usb2, usb3] };
@@ -25,6 +30,77 @@ internal static class SelfTests
         var side3 = new UsbNode { Id = "r/7", Kind = "Hub", VendorId = "05E3", LinkMbps = 5000, Children = [new UsbNode { Id = "r/7/1", Port = 1, CompanionId = "r/2/1" }] };
         HubRelationships.Analyze(new Snapshot { Controllers = [new UsbNode { Id = "r", Kind = "Root hub", Children = [side2, side3] }] });
         Check(side2.CompanionHubId == side3.Id && side2.IsUsb2Companion && side3.CompanionHubId == side2.Id && !side3.IsUsb2Companion, "Hub sides must pair through their own ports' companions.");
+        // The USB 2 side reports its USB 3 side's SuperSpeed capability; only a device below its own speed gets the note.
+        side2.SpeedLimited = true;
+        var slow = new UsbNode { Id = "r/3", Kind = "Device", LinkMbps = 480, SpeedLimited = true };
+        var slowSnapshot = new Snapshot { Controllers = [new UsbNode { Id = "r", Kind = "Root hub", Children = [side2, side3, slow] }] };
+        HubRelationships.Analyze(slowSnapshot); HubRelationships.NoteReducedSpeed(slowSnapshot); HubRelationships.NoteReducedSpeed(slowSnapshot);
+        Check(!side2.Notes.Contains(HubRelationships.ReducedSpeedNote) && slow.Notes.Count(n => n == HubRelationships.ReducedSpeedNote) == 1, "A paired hub's USB 2 side must not be told to check its cable; a slower device is told once.");
+        // A USB 3 hub's USB 2 side alone, with the USB 3 half of its socket empty, runs everything behind it at USB 2.
+        var lone = new UsbNode { Id = "x/1", Kind = "Hub", Port = 1, VendorId = "0451", LinkMbps = 480, UsbVersion = "USB 2.10", SpeedLimited = true, CompanionId = "x/2" };
+        var loneRoot = new UsbNode { Id = "x", Kind = "Root hub", Children = [lone, new UsbNode { Id = "x/2", Kind = "Empty port", Port = 2 }] };
+        var loneSnapshot = new Snapshot { Controllers = [new UsbNode { Id = "c", Kind = "Controller", Children = [loneRoot] }] };
+        HubRelationships.Analyze(loneSnapshot); HubRelationships.NoteReducedSpeed(loneSnapshot);
+        Check(lone.Usb3SideMissing && HubRelationships.ReducedSpeed(lone) && lone.Notes.SequenceEqual([HubRelationships.Usb3SideMissingNote]), "A USB 3 hub whose USB 3 side didn't connect runs at reduced speed.");
+        lone.CompanionId = "";
+        HubRelationships.Analyze(loneSnapshot);
+        Check(!lone.Usb3SideMissing && !HubRelationships.ReducedSpeed(lone), "Without the socket's USB 3 half, a USB 2 hub side stays silent.");
+        lone.CompanionId = "x/2";
+        var tunneled = new UsbNode { Id = "t/1", Kind = "Hub", VendorId = "0451", LinkMbps = 5000, Speed = "SuperSpeed · 5 Gb/s" };
+        loneSnapshot.Controllers.Add(new UsbNode { Id = "t", Kind = "Controller", Children = [new UsbNode { Id = "t/root", Kind = "Root hub", Children = [tunneled] }] });
+        HubRelationships.Analyze(loneSnapshot);
+        Check(!lone.Usb3SideMissing && !HubRelationships.ReducedSpeed(lone), "An unpaired USB 3 hub from the same vendor elsewhere, as behind a USB4 dock, may be the missing side.");
+        // One on the same controller can't be: it would occupy the socket's USB 3 half.
+        loneSnapshot.Controllers.RemoveAt(1);
+        var sibling = new UsbNode { Id = "x/3", Kind = "Hub", Port = 3, VendorId = "0451", LinkMbps = 5000, Speed = "SuperSpeed · 5 Gb/s" };
+        loneRoot.Children.Add(sibling); HubRelationships.Analyze(loneSnapshot);
+        Check(lone.Usb3SideMissing, "A same-vendor USB 3 hub on the same controller doesn't silence a missing USB 3 side.");
+        loneRoot.Children.Remove(sibling);
+        // A USB 3 half that shows an error means the USB 3 side tried to connect and failed.
+        loneRoot.Children[1].Kind = "Unavailable"; HubRelationships.Analyze(loneSnapshot);
+        Check(lone.Usb3SideMissing && lone.Usb3SideFailed && Explanations.Speed(lone, [loneRoot, lone]).Cause.Contains("tried to connect and failed"), "A failed USB 3 half is a failed USB 3 side, with cable advice.");
+        // An occupied USB 3 half may hold the hub's USB 3 side under another ID, so it stays silent.
+        loneRoot.Children[1].Kind = "Device"; HubRelationships.Analyze(loneSnapshot);
+        Check(!lone.Usb3SideMissing, "An occupied USB 3 half isn't a missing USB 3 side.");
+        loneRoot.Children[1].Kind = "Empty port";
+        // A built-in hub has no cable or plug to change.
+        lone.Connector = "Internal"; HubRelationships.Analyze(loneSnapshot);
+        Check(lone.Usb3SideMissing && Explanations.SpeedSeverity(lone) == NodeVisuals.Severity.Note && Explanations.Speed(lone, [loneRoot, lone]).Steps!.Count == 0, "A built-in hub gets no cable advice.");
+        lone.Connector = "Not reported";
+        // Speed explained in plain words: what is happening, whether it affects anything, and the likely cause first.
+        UsbNode Usb2Device(string name) => new() { Kind = "Device", Name = name, DeviceType = name, LinkMbps = 12 };
+        var monitorHub = new UsbNode { Id = "m", Kind = "Hub", Name = "Monitor hub", LinkMbps = 480, UsbVersion = "USB 2.10", SpeedLimited = true, Usb3SideMissing = true, Connector = "USB-C", Children = [Usb2Device("Keyboard"), Usb2Device("Mouse")] };
+        var monitorPath = new List<UsbNode> { new() { Kind = "Controller" }, new() { Kind = "Root hub" }, monitorHub };
+        var hubSpeed = Explanations.Speed(monitorHub, monitorPath);
+        Check(Explanations.SpeedLabel(monitorHub) == "Running at USB 2" && Explanations.SpeedSeverity(monitorHub) == NodeVisuals.Severity.Note
+            && hubSpeed.What == "This hub is connected at USB 2 (480 Mb/s), though it supports USB 3 (5 Gb/s)."
+            && hubSpeed.Affects.StartsWith("Not right now: your keyboard and mouse are USB 2 devices, so they lose nothing.") && hubSpeed.Cause == "Its USB-C connection isn't carrying USB 3."
+            && hubSpeed.Steps![0].Contains("USB-C Prioritization") && hubSpeed.Steps[1].Contains("charging cables"), "A monitor hub that slows nothing is a note naming the USB-C causes, display lanes first.");
+        monitorHub.Connector = "USB-A";
+        Check(Explanations.Speed(monitorHub, monitorPath).Cause.Contains("didn't come up"), "Over USB-A, the cable or plug is the cause.");
+        var ssd = new UsbNode { Id = "m/3", Kind = "Device", Name = "Portable SSD", LinkMbps = 480, SpeedLimited = true, SocketSpeed = "≥5 Gb/s" };
+        monitorHub.Children.Add(ssd);
+        var ssdSpeed = Explanations.Speed(ssd, [.. monitorPath, ssd]);
+        Check(Explanations.SpeedSeverity(monitorHub) == NodeVisuals.Severity.Warning && Explanations.Speed(monitorHub, monitorPath).Affects.StartsWith("Yes: Portable SSD supports a faster link")
+            && ssdSpeed.Cause == "The hub it's plugged into runs at USB 2." && ssdSpeed.Steps![0].StartsWith("Fix that hub's USB 3 connection") && ssdSpeed.Steps[1].StartsWith("Or plug"),
+            "A hub that holds a faster device back warns, and the device points to it.");
+        var pairedStage = new UsbNode { Id = "m/9", Kind = "Hub", LinkMbps = 480, IsUsb2Companion = true };
+        Check(Explanations.Speed(ssd, [.. monitorPath, pairedStage, ssd]).Cause == "It's connected through Monitor hub, which runs at USB 2.", "A slower hub further up is named.");
+        var direct = new List<UsbNode> { new() { Kind = "Root hub" }, ssd };
+        ssd.SocketSpeed = "USB 2.0";
+        Check(Explanations.Speed(ssd, direct).Cause == "This port supports only USB 2.", "A USB 2 port is the cause when nothing upstream is slower.");
+        ssd.SocketSpeed = "≥5 Gb/s";
+        Check(Explanations.Speed(ssd, direct).Cause.Contains("cable or the plug"), "On a USB 3 port, the cable or plug is the cause.");
+        var pairedSide = new UsbNode { Kind = "Hub", LinkMbps = 480, IsUsb2Companion = true };
+        Check(Explanations.Speed(ssd, [new() { Kind = "Root hub" }, pairedSide, ssd]).Cause.Contains("cable or the plug"), "A paired hub's USB 2 side isn't what slows a device; it could have used the USB 3 side.");
+        var fast = new UsbNode { Kind = "Device", LinkMbps = 5000, SpeedLimited = true, SuperSpeedPlusCapable = true, SocketSpeed = "5 Gb/s" };
+        Check(Explanations.SpeedLabel(fast) == "Running at 5 Gb/s" && Explanations.Speed(fast, [fast]).What.EndsWith("though it supports 10 Gb/s or faster.") && Explanations.Speed(fast, [fast]).Cause == "This port supports up to 5 Gb/s.", "A 10 Gb/s device on a 5 Gb/s port runs at 5 Gb/s.");
+        var builtIn = new UsbNode { Kind = "Device", LinkMbps = 480, SpeedLimited = true, Connector = "Internal" };
+        Check(Explanations.SpeedSeverity(builtIn) == NodeVisuals.Severity.Note && Explanations.Speed(builtIn, [builtIn]).Cause.Contains("nothing to change") && Explanations.Speed(builtIn, [builtIn]).Steps!.Count == 0, "A built-in connection can't be changed, so it is a note.");
+        Check(Explanations.Kinds([Usb2Device("Keyboard"), Usb2Device("Mouse"), Usb2Device("Mouse"), Usb2Device("HID / controls")]) == "your keyboard, 2 mice and 1 other device"
+            && Explanations.Kinds([Usb2Device("Mouse"), new() { Kind = "Device", Name = "Wheel", UserLabel = "Sim wheel" }]) == "your mouse and Sim wheel"
+            && Explanations.Kinds([Usb2Device("HID / controls"), Usb2Device("HID / controls")]) == "its 2 devices" && Explanations.Kinds([ssd]) == "Portable SSD", "Devices are described by what they are.");
+        Check(Explanations.Names([Usb2Device("A"), Usb2Device("B"), Usb2Device("C"), Usb2Device("D")]) == "A, B and 2 more devices" && Explanations.Names([Usb2Device("A"), Usb2Device("B"), Usb2Device("C")]) == "A, B and C", "Device lists read naturally.");
         var demo = DemoData.Create();
         Check(demo.IsDemo, "Sample data must be explicitly identified.");
         Check(demo.Nodes.Count(x => x.Kind == "Device") == 9, "Recursive topology traversal.");
@@ -214,6 +290,21 @@ internal static class SelfTests
         Check(!UsbBudgets.CouldExceedWhenStreaming(new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [Kiyo()] }), "One webcam's peak fits a USB 2 hub.");
         Check(!UsbBudgets.CouldExceedWhenStreaming(crowded) && !UsbBudgets.CouldExceedWhenStreaming(cameras.Children[0]), "A link already nearly full warns only as nearly full; a device that fits its own link is fine.");
         Check(!UsbBudgets.CouldExceedWhenStreaming(new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [new UsbNode { Kind = "Device" }, Kiyo()] }), "Devices without reservation data add nothing to the peak.");
+        // Full- and low-speed devices behind a single-TT hub share one 12 Mb/s bus, whatever the hub's own link.
+        UsbNode FullSpeed(double now, double peak) => new() { Kind = "Device", LinkMbps = 12, ReservedMbps = now, PeakReservedMbps = peak };
+        UsbNode SingleTt(params UsbNode[] children) => new() { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, TransactionTranslators = "Single", Children = [.. children] };
+        var interfaces = SingleTt(FullSpeed(6, 6), FullSpeed(6, 6));
+        Check(UsbBudgets.SharedTtNearlyFull(interfaces) && !UsbBudgets.LinkNearlyFull(interfaces) && !UsbBudgets.LinkNearlyFull(interfaces.Children[0]), "Two full-speed audio interfaces that each fit their own link fill a single TT together.");
+        interfaces.TransactionTranslators = "Per port";
+        Check(UsbBudgets.SharedTtUse(interfaces) == null && !UsbBudgets.SharedTtNearlyFull(interfaces), "A hub with one TT per port gives each port its own bus.");
+        var idleInterfaces = SingleTt(FullSpeed(0, 6), FullSpeed(0.5, 6));
+        Check(UsbBudgets.SharedTtCouldExceed(idleInterfaces) && !UsbBudgets.SharedTtNearlyFull(idleInterfaces), "Idle full-speed peaks that overflow a single TT warn before they stream.");
+        Check(!UsbBudgets.SharedTtCouldExceed(SingleTt(FullSpeed(0, 6), new UsbNode { Kind = "Device", LinkMbps = 480, ReservedMbps = 0, PeakReservedMbps = 200 })), "High-speed devices don't use the TT.");
+        var behindOnePort = SingleTt(new UsbNode { Kind = "Hub", LinkMbps = 12, ReservedMbps = 0.0001, Children = [FullSpeed(6, 6), FullSpeed(6, 6)] });
+        Check(UsbBudgets.SharedTtUse(behindOnePort) is (var onePort, _, 0, 1) && Near(onePort, 12.0001) && !UsbBudgets.SharedTtNearlyFull(behindOnePort) && UsbBudgets.LinkNearlyFull(behindOnePort.Children[0]), "Devices behind one port warn against that port's own link, not again as a shared TT.");
+        Check(UsbBudgets.SharedTtUse(SingleTt(new UsbNode { Kind = "Device", LinkMbps = 1.5, ReservedMbps = 0.064 }, new UsbNode { Kind = "Device", LinkMbps = 12 })) is (var lowSpeed, _, 1, 2) && Near(lowSpeed, 0.512), "Low-speed bytes take eight full-speed byte times; unreported devices count as unknown.");
+        var demoTravel = demo.Nodes.Single(n => n.Id == "demo/root/5");
+        Check(UsbBudgets.SharedTtUse(demoTravel) is (_, _, 0, 1) && !UsbBudgets.SharedTtNearlyFull(demoTravel) && !UsbBudgets.SharedTtCouldExceed(demoTravel), "The travel hub's one full-speed device uses its single TT without a warning.");
         Check(UsbBudgets.Share(98.3, 384) == "26% of 384 Mb/s" && UsbBudgets.Share(0.0064, 10.8) == "<1% of 10.8 Mb/s" && UsbBudgets.Share(0, 384) == "0% of 384 Mb/s", "Share formatting.");
         var travel = demo.Nodes.Single(n => n.Id == "demo/root/5");
         Check(travel.PowerWarnings.SequenceEqual(["Hub adapter not detected", "Over power budget"]), "A self-power-capable hub on bus power, over its upstream budget, must say so.");
@@ -235,17 +326,39 @@ internal static class SelfTests
         Check(ReconnectTracker.InstanceIdFromPath(@"\\?\USB#VID_046D&PID_C52B#5&2a8c&0&3#{a5dcbf10-6530-11d2-901f-00c04fb951ed}") == @"USB\VID_046D&PID_C52B\5&2a8c&0&3", "Device interface paths name their instance.");
         Check(ReconnectTracker.InstanceIdFromPath(@"\\?\HID#broken") == null, "Unrecognized paths are ignored.");
         var tracker = new ReconnectTracker(); var t0 = new DateTime(2026, 1, 1, 12, 0, 0);
+        static int Flagged(ReconnectTracker t, string instance) { var n = new UsbNode { Kind = "Device", InstanceId = instance }; t.Apply(new Snapshot { Controllers = [n] }); return n.QuickReconnects; }
         const string id = @"USB\VID_1234&PID_5678\SERIAL";
         for (int i = 0; i < 2; i++) { tracker.Removed(id, t0.AddSeconds(i * 20)); tracker.Arrived(id, t0.AddSeconds(i * 20 + 2)); }
         tracker.Removed(id, t0.AddSeconds(50)); tracker.Arrived(id, t0.AddSeconds(120));
-        Check(!tracker.IsUnstable(id), "A slow return is a deliberate replug, not a drop.");
+        Check(Flagged(tracker, id) == 0, "A slow return is a deliberate replug, not a drop.");
         tracker.Removed(id, t0.AddSeconds(130)); tracker.Arrived(id, t0.AddSeconds(133));
-        Check(tracker.IsUnstable(id), "Three quick returns within five minutes mark an unstable connection.");
+        Check(Flagged(tracker, id) == 3, "Three quick returns within five minutes mark an unstable connection.");
         var flaky = new UsbNode { Kind = "Device", InstanceId = id.ToLowerInvariant() };
         tracker.Apply(new Snapshot { Controllers = [flaky] });
         Check(flaky.QuickReconnects == 3, "Instance IDs match regardless of case.");
         var sample = new UsbNode { Kind = "Device", InstanceId = id };
         tracker.Apply(new Snapshot { IsDemo = true, Controllers = [sample] });
         Check(sample.QuickReconnects == 0, "Hardware reconnects must not leak into sample data.");
+        // Switching a KVM drops the monitor's hub and everything behind it together: only the hub is flagged.
+        var kvm = new ReconnectTracker();
+        const string hubId = @"USB\VID_0451&PID_8442\HUB", keyboardId = @"USB\VID_320F&PID_5044\KEYBOARD";
+        for (int i = 0; i < 3; i++)
+        {
+            kvm.Removed(hubId, t0.AddSeconds(i * 40)); kvm.Removed(keyboardId, t0.AddSeconds(i * 40));
+            kvm.Arrived(hubId, t0.AddSeconds(i * 40 + 2)); kvm.Arrived(keyboardId, t0.AddSeconds(i * 40 + 4));
+        }
+        var kvmKeyboard = new UsbNode { Kind = "Device", InstanceId = keyboardId };
+        var monitorKvm = new UsbNode { Kind = "Hub", InstanceId = hubId, Children = [kvmKeyboard] };
+        kvm.Apply(new Snapshot { Controllers = [new UsbNode { Kind = "Controller", Children = [monitorKvm] }] });
+        Check(monitorKvm.QuickReconnects == 3 && kvmKeyboard.QuickReconnects == 0, "Devices that drop with their hub are explained by the hub.");
+        for (int i = 0; i < 3; i++) { kvm.Removed(keyboardId, t0.AddSeconds(600 + i * 20)); kvm.Arrived(keyboardId, t0.AddSeconds(602 + i * 20)); }
+        kvmKeyboard.QuickReconnects = 0; monitorKvm.QuickReconnects = 0;
+        kvm.Apply(new Snapshot { Controllers = [new UsbNode { Kind = "Controller", Children = [monitorKvm] }] });
+        Check(kvmKeyboard.QuickReconnects == 3 && kvmKeyboard.QuickReconnectTimes[0] == t0.AddSeconds(602), "A device that also drops on its own is flagged for those drops.");
+        // A hub with no instance can't explain its devices' drops, so they count as their own.
+        var anonymous = new UsbNode { Kind = "Hub", Children = [new UsbNode { Kind = "Device", InstanceId = hubId }] };
+        kvm.Apply(new Snapshot { Controllers = [anonymous] });
+        Check(anonymous.QuickReconnects == 0 && anonymous.Children[0].QuickReconnects == 3, "Without a hub instance, a device's drops are its own.");
+        Check(ReconnectTracker.InstanceIdFromPath(@"\\?\USB#VID_0451&PID_8442#MSFT20E30108613F47#{f18a0e88-c30c-11d0-8815-00a0c906bed8}") == @"USB\VID_0451&PID_8442\MSFT20E30108613F47", "Hub interface paths name their instance too.");
     }
 }

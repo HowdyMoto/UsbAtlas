@@ -68,6 +68,7 @@ public sealed class UsbScanner
         DeviceIdentity.ClassifySockets(snapshot);
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         HubRelationships.Analyze(snapshot);
+        HubRelationships.NoteReducedSpeed(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         PowerSaving.Read(snapshot, devices);
         PowerSaving.Analyze(snapshot);
@@ -128,7 +129,7 @@ public sealed class UsbScanner
             (node.Speed, node.LinkMbps) = DecodeSpeed(data[23], flags);
             if (hasV2) node.SuperSpeedPlusCapable = (flags & 8) != 0;
             node.SpeedLimited = ((flags & 2) != 0 && (flags & 1) == 0) || ((flags & 8) != 0 && (flags & 4) == 0);
-            if (node.SpeedLimited) node.Notes.Add("This device reports support for a faster USB link than its current connection. Check the upstream port, hub and cable.");
+            if (node.Kind == "Hub" && node.LinkMbps == 480) node.TransactionTranslators = TransactionTranslators(data);
             node.DriverKey = QueryName(handle, 264, port, 8);
             node.DeviceClass = ClassName(data[8]);
             ushort language = 0x0409;
@@ -185,6 +186,10 @@ public sealed class UsbScanner
         if ((flags & 1) != 0) return ("SuperSpeed · 5 Gb/s", 5000);
         return speed switch { 0 => ("Low speed · 1.5 Mb/s", 1.5), 1 => ("Full speed · 12 Mb/s", 12), 2 => ("High speed · 480 Mb/s", 480), 3 => ("SuperSpeed · 5 Gb/s", 5000), _ => ("Not reported", null) };
     }
+    // A high-speed hub's transaction translators carry its full- and low-speed devices. bDeviceProtocol follows
+    // the 4-byte port index and the device descriptor's first six bytes: 1 is one TT shared by every port, 2 is
+    // one per port. Windows' hub driver runs a hub that offers one per port that way.
+    internal static string TransactionTranslators(byte[] connectionInfo) => connectionInfo[10] switch { 1 => "Single", 2 => "Per port", _ => "Not reported" };
     internal static int DecodePower(byte maxPower, ushort bcdUsb) => maxPower * (bcdUsb >= 0x0300 ? 8 : 2);
     private static int SpeedClass(byte speed, int flags) => (flags & 5) != 0 ? 3 : speed;
 

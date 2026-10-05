@@ -24,11 +24,14 @@ public partial class MainWindow
             if (!cards.ContainsKey(hub.Id) || !cards.ContainsKey(leaf.Id) || focusedBranch != null)
                 throw new Exception("Show all branches must restore the full topology.");
             var usb2 = new UsbNode { Kind = "Hub", UsbVersion = "USB 2.10", LinkMbps = 480, SpeedLimited = true };
-            if (Issues(usb2).Any(i => i.Text == "Reduced speed"))
+            if (Issues(usb2).Any(i => i.Text == "Running at USB 2"))
                 throw new Exception("Native-speed USB 2 hub sections must not warn about their USB 3 counterpart.");
-            usb2.Kind = "Device";
-            if (!Issues(usb2).Any(i => i.Text == "Reduced speed"))
-                throw new Exception("Ordinary devices must retain their Windows-reported reduced-speed warning.");
+            usb2.Usb3SideMissing = true;
+            if (!Issues(usb2).Contains((NodeVisuals.Severity.Note, "Running at USB 2")))
+                throw new Exception("A USB 2 hub section whose USB 3 side didn't connect must say so, calmly while it slows nothing.");
+            usb2.Usb3SideMissing = false; usb2.Kind = "Device";
+            if (!Issues(usb2).Contains((NodeVisuals.Severity.Warning, "Running at USB 2")))
+                throw new Exception("A device slower than it supports must warn.");
             SelectNode(hub); editSelectedLabel!();
             TextBox Input() => ((StackPanel)inlineLabelHost!.Content).Children.OfType<TextBox>().Single();
             Input().Text = "My unsaved hub label";

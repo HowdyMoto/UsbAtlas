@@ -44,7 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -124,38 +124,11 @@ public partial class MainWindow : Window
     }
     private static string ShortSpeed(UsbNode n) => n.LinkMbps switch { 5000 => "5 Gb/s", 480 => "480 Mb/s", 12 => "12 Mb/s", 1.5 => "1.5 Mb/s", _ => n.Speed.StartsWith("SuperSpeedPlus") ? "≥10 Gb/s" : "Rate unknown" };
     private const string NotApplicable = "—";
-    private static string IssueHelp(string issue) => issue switch
-    {
-        "Port error" => "Windows could not read this port. A device may still be connected.",
-        "Reduced speed" => "A faster link is supported. Check the upstream port, hub and cable.",
-        "Could exceed when streaming" => "The devices sharing this link can reserve more, at their peak, than the link can set aside for timed transfers. They fit now because some are idle; once enough cameras, microphones or audio devices start streaming at the same time, Windows may refuse one with Insufficient bandwidth. Move a streaming device to a port on a different hub or controller.",
-        "Link nearly full" => "Reservations already hold at least 80% of the bus time this link can set aside for timed transfers such as audio, video and input. Another device of that kind, or one that starts streaming, may be refused with Insufficient bandwidth. Move a busy device to a port on a different hub or controller.",
-        "Insufficient bandwidth" => "Windows could not configure this device because the bus cannot reserve the bandwidth it asks for. Move it, or a busy audio or video device on the same controller, to another port.",
-        "Insufficient power" => "Windows refused to configure this device because it asks for more power than the port can supply. Connect it to a powered hub or directly to the computer.",
-        "Overcurrent" => "The device drew more current than the port allows, so Windows switched the port off. Reconnect it to a powered hub or another port; a damaged cable or device can also cause this.",
-        "Power at risk" => "This device declares more current than its port is guaranteed to supply, so it may disconnect or misbehave under load. See Detection details.",
-        "Over power budget" => "The devices behind this bus-powered hub declare more current, in total, than its upstream port is guaranteed to supply. See Detection details.",
-        "Hub adapter not detected" => "This hub can run from its own power supply but is running on bus power. If it has an adapter, check that it is plugged in.",
-        "Unstable connection" => "USB Atlas observed at least three disconnect-and-reconnect cycles within five minutes, each returning within 30 seconds. This records reconnects, not their cause: unplugging, restarting or changing USB modes can trigger it, as can power interruptions or a loose cable. The warning stays until USB Atlas is restarted.",
-        PowerSaving.Warning => "Windows may suspend this game controller when it looks idle, and a wheel, pedals or button box suspended mid-session can be slow to wake or drop out. Turn off USB selective suspend in Power Options, or clear “Allow the computer to turn off this device to save power” on its Power Management tab in Device Manager. See Detection details.",
-        _ => "Enumeration is incomplete; counts may omit downstream devices. See Detection details."
-    };
     // One layout per kind of selection, so ports can be compared by flipping between them: every port,
     // device and hub shows the same rows in the same places. "—" marks a row that doesn't apply or has
-    // nothing attached; "Not reported" marks a value an attached device left out. Content that varies
-    // (explanations, actions, evidence) follows the comparable rows.
-    private static string WarningExplanation(UsbNode node, string issue)
-    {
-        var explanation = IssueHelp(issue);
-        if (issue == "Reduced speed") explanation += $"\nObserved link: {ShortSpeed(node)}. Windows reports capability for a faster connection; the exact achievable rate is not measured.";
-        if (issue == "Unstable connection")
-        {
-            explanation += $"\nObserved this session: {node.QuickReconnects} quick reconnects.";
-            if (node.QuickReconnectTimes.Count > 0)
-                explanation += "\nReconnect times: " + string.Join(", ", node.QuickReconnectTimes.Select(t => t.ToString("HH:mm:ss"))) + " (local time).";
-        }
-        return explanation;
-    }
+    // nothing attached; "Not reported" marks a value an attached device left out. What an issue means
+    // leads, above the rows, since it's what people come to Properties for; actions and evidence follow them.
+    private Explanations.Explanation Explain(UsbNode node, string issue) => Explanations.For(node, issue, FindPath(node.Id));
     private Button WarningBadge(UsbNode node, NodeVisuals.Severity severity, string issue)
     {
         var badge = new Button { Content = NodeVisuals.StatusBadge(severity, issue), Style = (Style)FindResource("WarningButton"), Padding = new Thickness(0), Tag = "warning-action" };
@@ -170,7 +143,7 @@ public partial class MainWindow : Window
             Details.Children.OfType<FrameworkElement>().FirstOrDefault(x => Equals(x.Tag, "warning:" + issue))?.BringIntoView();
         }
         badge.Click += (_, e) => { Explain(); e.Handled = true; };
-        badge.ToolTip = "Click to explain. " + WarningExplanation(node, issue);
+        badge.ToolTip = this.Explain(node, issue).What + " Click to see what to do.";
         return badge;
     }
     private void CopyDetailsClick(object sender, RoutedEventArgs e)
@@ -196,7 +169,8 @@ public partial class MainWindow : Window
         bool host = node.Kind is "Controller" or "Root hub", attached = node.Kind is "Device" or "Hub", hub = node.Kind == "Hub";
         string Reported(string value) => attached ? (value.Length > 0 && value != "Not reported" ? value : "Not reported") : node.Kind == "Unavailable" ? "Unknown" : NotApplicable;
 
-        // Fixed-height heading, role line and status row keep everything below in place.
+        // A fixed-height heading, role line and status row keep the rows in place, except that an issue's
+        // explanation, which leads, pushes them down by its own height.
         var heading = new DockPanel { Height = 48, Margin = new Thickness(0, 0, 0, 4) };
         var symbol = NodeVisuals.Icon(node, 26); symbol.Margin = new Thickness(0, 0, 8, 0); DockPanel.SetDock(symbol, Dock.Left); heading.Children.Add(symbol);
         var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, LineHeight = 24, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, MaxHeight = 48, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName };
@@ -222,6 +196,8 @@ public partial class MainWindow : Window
         foreach (var (severity, text) in Issues(node)) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 0, 4, 0);  status.Children.Add(badge); }
         if (status.Children.Count == 0) status.Children.Add(new TextBlock { Text = "No issues", FontSize = 12, Foreground = Brush("TextMuted"), VerticalAlignment = VerticalAlignment.Center });
         Details.Children.Add(status);
+        var issues = Issues(node);
+        foreach (var (_, issue) in issues) AddExplanation(node, issue, issues.Count > 1);
         AddHubSnapControls(node);
 
 
@@ -240,7 +216,7 @@ public partial class MainWindow : Window
                 metrics.Children.Add(stack);
             }
             string unread = node.Kind == "Unavailable" ? "Unknown" : NotApplicable;
-            Metric(NodeVisuals.Metric.Link, attached ? (ShortSpeed(node) == "Rate unknown" ? "Unknown" : ShortSpeed(node)) : unread, "Negotiated link", 0,
+            Metric(NodeVisuals.Metric.Link, attached ? (ShortSpeed(node) == "Rate unknown" ? "Unknown" : ShortSpeed(node)) : unread, "Link speed", 0,
                 "The signaling rate negotiated when the device connected. Everything upstream on the same path shares it; it is not a measured speed.");
             Metric(NodeVisuals.Metric.Reserved, attached ? (node.ReservedMbps is double reserved ? UsbBudgets.Rate(reserved) : "Unknown") : unread, "Reserved", 1,
                 "Bus time held for this device's open interrupt and isochronous pipes, such as audio, video and input. Bulk transfers, such as storage, reserve nothing and share what is left.");
@@ -251,13 +227,13 @@ public partial class MainWindow : Window
             Field("VID / PID", attached && node.VendorId.Length > 0 ? $"{node.VendorId} : {node.ProductId}" : Reported(""));
             Field("Manufacturer", Reported(node.Manufacturer));
             Field("Serial", Reported(node.Serial));
-            Field("USB revision", Reported(node.UsbVersion));
+            Field("USB version", Reported(node.UsbVersion), "The USB version the device says it was built to (bcdUSB). How fast it runs now is Link speed.");
             // Polling applies to devices with an open interrupt input pipe; hubs poll only for port changes.
             Field("Polling rate", node.Kind == "Device" ? node.PollIntervalMs is double ms ? $"{UsbBudgets.PollingRate(ms)} · {UsbBudgets.PollingInterval(ms)}" : node.ReservedMbps != null ? NotApplicable : "Not reported" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable);
             Field("Power source", Reported(node.PowerSource));
             Field("Power saving", attached ? PowerSavingText(node) : Reported(""));
-            Field("At nominal 5 V", attached && node.MaxPowerMa is int draw ? $"{draw * 0.005:0.##} W declared" : Reported(""));
-            Field("Peak reserved", attached && node.PeakReservedMbps is double peak ? $"Up to {UsbBudgets.Rate(peak)} when active" : Reported(""));
+            Field("Power at 5 V", attached && node.MaxPowerMa is int draw ? $"{draw * 0.005:0.##} W declared" : Reported(""), "Its power request at USB's nominal 5 volts, from its descriptor (MaxPower). A declared maximum, not a measurement.");
+            Field("Reserved at peak", attached && node.PeakReservedMbps is double peak ? $"Up to {UsbBudgets.Rate(peak)} when active" : Reported(""), "The most bus time it would hold when fully active, such as a camera while streaming, from its busiest alternate settings.");
             if (UsbBudgets.LinkUse(node) is (var use, var room, _))
             {
                 var usage = new DockPanel { ToolTip = MetricHelp(node) };
@@ -268,34 +244,46 @@ public partial class MainWindow : Window
             }
             else Field("Link use", attached ? "Not reported" : Reported(""));
             Section("Port");
-            Field("Logical path", pathLabels.GetValueOrDefault(node.Id, NotApplicable));
+            Field("Path", pathLabels.GetValueOrDefault(node.Id, NotApplicable), PathHelp);
             Field("Port number", node.Port.ToString("00"));
             Field("Port name", PortNameEditor(node));
             Field("Port supports", node.Protocols);
             Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)));
-            Field("Location", node.Location == "Unknown" ? "Not reported" : node.Location + " · inferred");
-            Field("Supply capacity", "Unknown · not measured");
+            Field("Location", node.Location switch { "Unknown" => "Not reported", "External" => "Likely outside the computer", "Internal" => "Likely built in", "Host" => "In the computer", var other => other },
+                "Worked out from whether Windows says the port is one you can plug into, and what it's connected through. Windows doesn't report where hardware sits.");
+            Field("Power available", "Unknown · not measured", SupplyHelp);
             Section("Hub");
-            Field("Logical ports", hub ? node.PortCount.ToString() : NotApplicable);
-            Field("Downstream", hub ? ProtocolSummary(node) : NotApplicable);
-            Field("End devices", hub ? node.Walk().Count(n => n.Kind == "Device").ToString() : NotApplicable);
+            Field("Ports", hub ? node.PortCount.ToString() : NotApplicable, PortsHelp);
+            Field("Its ports support", hub ? ProtocolSummary(node) : NotApplicable);
+            Field("Devices behind", hub ? node.Walk().Count(n => n.Kind == "Device").ToString() : NotApplicable);
+            // Only a single TT is shared; a hub with one per port gives each port its own, which Link use covers.
+            Field("Slower devices", hub ? TtType(node) : NotApplicable, "Full- and low-speed devices, such as keyboards, mice and many controllers and audio interfaces, reach the computer through the hub's transaction translator (TT): one link shared by all ports, or one per port.");
+            if (UsbBudgets.SharedTtUse(node) is (var ttNow, _, _, _))
+            {
+                var usage = new DockPanel { ToolTip = "Bus time that full- and low-speed devices on every port reserve on the one 12 Mb/s bus behind this hub's single transaction translator." };
+                var share = new TextBlock { Text = UsbBudgets.Share(ttNow, UsbBudgets.FullSpeedReservableMbps), FontSize = 12, Margin = new Thickness(8, 0, 0, 0) };
+                DockPanel.SetDock(share, Dock.Right); usage.Children.Add(share);
+                var bar = NodeVisuals.LinkBar(ttNow / UsbBudgets.FullSpeedReservableMbps); bar.VerticalAlignment = VerticalAlignment.Center; usage.Children.Add(bar);
+                Field("Shared link", usage, "How much of the shared 12 Mb/s link's reservable time (10.8 Mb/s) the slower devices on every port hold. Low-speed devices count eight times their payload, since each byte takes eight times as long.");
+            }
+            else Field("Shared link", node.TransactionTranslators == "Per port" ? "Not shared · one per port" : NotApplicable);
         }
         else
         {
             var roots = node.Kind == "Controller" ? node.Children.Where(c => c.Kind == "Root hub").ToList() : [node];
             Section("Host");
-            Field("Logical path", pathLabels.GetValueOrDefault(node.Id, NotApplicable));
+            Field("Path", pathLabels.GetValueOrDefault(node.Id, NotApplicable), PathHelp);
             Field("Port support", ProtocolSummary(node));
-            Field("Logical ports", roots.Sum(r => r.PortCount).ToString());
-            Field("Occupied", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString());
-            Field("End devices", node.Walk().Count(n => n.Kind == "Device").ToString());
+            Field("Ports", roots.Sum(r => r.PortCount).ToString(), PortsHelp);
+            Field("In use", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString());
+            Field("Devices", node.Walk().Count(n => n.Kind == "Device").ToString());
             Field("Connector", NodeVisuals.Connector(node));
             Field("Location", "Host hardware");
             Field("Power source", node.PowerSource);
             // The root hub is what Device Manager lists, and what sim hardware guides point to.
             Field("Power saving", PowerSavingText(MergedRoot(node) ?? node));
             Field("Power plan", PowerSaving.PlanSummary(snapshot));
-            Field("Supply capacity", "Unknown · not measured");
+            Field("Power available", "Unknown · not measured", SupplyHelp);
         }
         Section("Upstream path");
         // A merged root hub is part of its host, so the path reads H01 › 03.
@@ -309,15 +297,6 @@ public partial class MainWindow : Window
             if (ancestor != chain.Last()) pathRow.Children.Add(new TextBlock { Text = "›", Foreground = Brush("TextMuted"), Margin = new Thickness(0, 3, 4, 0) });
         }
         Details.Children.Add(pathRow);
-
-        foreach (var (_, issue) in Issues(node))
-        {
-            var explanation = new TextBlock {  FontSize = 12, Foreground = Brush("TextSecondary"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12), Tag = "warning:" + issue };
-            explanation.Inlines.Add(new System.Windows.Documents.Run(issue + " · " + NodeVisuals.ShortName(node)) { FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary") });
-            explanation.Inlines.Add(new System.Windows.Documents.LineBreak());
-            explanation.Inlines.Add(new System.Windows.Documents.Run(WarningExplanation(node, issue)));
-            Details.Children.Add(explanation);
-        }
         AddLabelEditor(node);
         var relationship = HubRelationships.Description(node, snapshot);
         if (relationship.Length > 0)
@@ -381,22 +360,58 @@ public partial class MainWindow : Window
         return snapshot.Controllers.Select(SearchPath).FirstOrDefault(x => x != null) ?? [];
     }
     private void Text(string value, double size = 13, string color = "TextPrimary") => Details.Children.Add(new TextBlock { Text = value, FontSize = size, Foreground = Brush(color), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 9) });
+    // What an issue means, in a panel under the status badges: what is happening, whether it affects
+    // anything now, and what to do. With several issues each panel names its own.
+    private void AddExplanation(UsbNode node, string issue, bool named)
+    {
+        var e = Explain(node, issue);
+        var body = new StackPanel();
+        TextBlock Line(string text, string color = "TextPrimary", bool heading = false) => new()
+        {
+            Text = text, FontSize = heading ? 12 : 13, FontWeight = heading ? FontWeights.SemiBold : FontWeights.Normal, Foreground = Brush(color),
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, heading ? 4 : 0, 0, heading ? 2 : 6)
+        };
+        if (named) body.Children.Add(Line(issue, heading: true));
+        body.Children.Add(Line(e.What));
+        if (e.Affects.Length > 0) { body.Children.Add(Line("Does it affect you?", "TextSecondary", true)); body.Children.Add(Line(e.Affects)); }
+        if (e.Cause.Length > 0 || e.Steps is { Count: > 0 })
+        {
+            body.Children.Add(Line(e.Steps is { Count: > 0 } ? "What to do" : "Why", "TextSecondary", true));
+            if (e.Cause.Length > 0) body.Children.Add(Line(e.Cause));
+            foreach (var step in e.Steps ?? [])
+            {
+                var row = new DockPanel { Margin = new Thickness(2, 0, 0, 0) };
+                var bullet = Line("•", "TextSecondary"); bullet.Margin = new Thickness(0, 0, 7, 6); DockPanel.SetDock(bullet, Dock.Left);
+                row.Children.Add(bullet); row.Children.Add(Line(step));
+                body.Children.Add(row);
+            }
+        }
+        Details.Children.Add(new Border
+        {
+            Child = body, Background = Brush("Subtle"), BorderBrush = Brush("Divider"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(11, 9, 11, 3), Margin = new Thickness(0, 0, 0, 10), Tag = "warning:" + issue
+        });
+    }
     private void Section(string title)
     {
         Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 9, 0, 8) });
         Details.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary"), Margin = new Thickness(0, 0, 0, 7), Tag = "section" });
     }
     // Values stay on one line (full text in the tooltip) so every row keeps its height; missing values are muted.
-    private void Field(string label, string value)
+    // Plain row names; where a technical term sits behind one, the label's tooltip names it.
+    private const string PathHelp = "The host, then each port number on the way here. Windows numbers the USB 2 and USB 3 halves of a USB 3 socket as separate logical ports.";
+    private const string PortsHelp = "Logical ports Windows reports. On the computer, a USB 3 socket counts as two, one USB 2 and one USB 3; a USB 3 hub instead appears as two hubs, each with one port per socket.";
+    private const string SupplyHelp = "How much power the port can supply. Windows doesn't report it, so USB Atlas can't tell.";
+    private void Field(string label, string value, string? help = null)
     {
         bool missing = value is NotApplicable or "Not reported" || value.StartsWith("Unknown", StringComparison.Ordinal);
-        Field(label, new TextBlock { Text = value, FontSize = 13, Foreground = Brush(missing ? "TextMuted" : "TextPrimary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value });
+        Field(label, new TextBlock { Text = value, FontSize = 13, Foreground = Brush(missing ? "TextMuted" : "TextPrimary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value }, help);
     }
-    private void Field(string label, FrameworkElement value)
+    private void Field(string label, FrameworkElement value, string? help = null)
     {
         var row = new Grid { Margin = new Thickness(0, 0, 0, 5), Tag = "field", MinHeight = 18 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(112) }); row.ColumnDefinitions.Add(new ColumnDefinition());
-        row.Children.Add(new TextBlock { Text = label, FontSize = 13, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+        row.Children.Add(new TextBlock { Text = label, FontSize = 13, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = help });
         value.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(value, 1); row.Children.Add(value);
         Details.Children.Add(row);
     }

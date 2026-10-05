@@ -47,6 +47,10 @@ public sealed class UsbNode
     public int CompanionPortNumber { get; set; }
     public string CompanionHubId { get; set; } = "";
     public bool IsUsb2Companion { get; set; }
+    // A USB 3 hub's USB 2 side whose USB 3 side didn't connect: the USB 3 half of its socket is empty, or
+    // shows an error when the USB 3 side tried to connect and failed (Usb3SideFailed).
+    public bool Usb3SideMissing { get; set; }
+    public bool Usb3SideFailed { get; set; }
     public int QuickReconnects { get; set; }
     public List<DateTime> QuickReconnectTimes { get; set; } = [];
     public string VendorId { get; set; } = "";
@@ -56,6 +60,9 @@ public sealed class UsbNode
     public string DeviceClass { get; set; } = "";
     public string DriverKey { get; set; } = "";
     public bool SpeedLimited { get; set; }
+    // A high-speed hub's transaction translators, from its bDeviceProtocol: Single (one for all ports),
+    // Per port, Not reported, or None for devices and hubs that aren't running at high speed.
+    public string TransactionTranslators { get; set; } = "None";
     public bool ScanIncomplete { get; set; }
     public bool? PortIsUserConnectable { get; set; }
     public bool? PortConnectorIsTypeC { get; set; }
