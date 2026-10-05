@@ -53,7 +53,7 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 - Select a controller, hub, device, or numbered port to inspect it. The inspector keeps the same rows in the same places for every port, device and hub, so you can click from port to port to compare them. — marks a row that doesn't apply (nothing attached, or not a hub); Not reported marks a value an attached device left out. Copy details and your label follow the comparable rows.
 - The left device tree provides traditional expandable branches in port order. Selection stays synchronized with the graph and inspector. Selecting a tree entry brings its card into view at the current zoom and briefly rings it; clicking the selected entry again finds it after you have panned away. Selecting on the canvas highlights the entry in the tree and scrolls to it. Drag its divider to resize it, or use **Hide / Show devices** to collapse and restore the panel. Search applies to both views; the tree lists empty ports only when they match a search.
 - Click the name or pencil in **Properties** to edit a label in place and give hardware a recognizable name, such as “Dell monitor KVM”. Save or Enter applies it to cards and search; Cancel or Escape discards edits, and Reset restores the detected name. The detected identity remains visible underneath.
-- Search names, VID:PID, manufacturers, serials, device types, logical paths, port names, sockets such as “USB-C” or “10 Gb/s”, or issue labels such as “Reduced speed”. Matches are outlined and the first result is selected and revealed. Enter / Shift+Enter moves between results; Escape clears search. Ancestors remain visible for context.
+- Search names, VID:PID, manufacturers, serials, device types, logical paths, port names, sockets such as “USB-C” or “10 Gb/s”, polling rates such as “1000 Hz”, HID collections such as “Joystick”, or issue labels such as “Reduced speed”. Matches are outlined and the first result is selected and revealed. Enter / Shift+Enter moves between results; Escape clears search. Ancestors remain visible for context.
 - Tab through cards and controls. Arrow keys on a card move between visible nodes; Enter or Space selects without rebuilding the graph.
 - Double-click a hub/controller, or use its +/− button, to fold a branch. Search temporarily reveals matching descendants without discarding folded state.
 - Drag the inspector divider to resize it, or use **Hide / Show properties** to reclaim the graph area.
@@ -62,7 +62,7 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 - **Layout** offers explicit Vertical and Horizontal choices and changes tree direction and preserves selection and folded branches.
 - Every logical port appears as a numbered socket along the hub's bottom edge in Vertical mode and its right edge in Horizontal mode, drawn as the kind of socket it is (see **Sockets** below); a legend beneath the graph shows each kind. A socket in use has its cavity filled in the color of its connection, as a plug would fill it, accent blue along the selected path; an empty one stays hollow. Empty ports never take a full device card. Windows sees each USB 3 socket as two logical ports, one USB 2 and one USB 3. When both are on the same hub, as on most host ports, they are drawn as one socket split at a seam, with both numbers on its tongue, at the place of the lower-numbered port; each half still selects, fills and connects on its own, so you can see which half a device is using. A USB 3 hub appears to Windows as two hubs, a USB 2 hub and a USB 3 hub with the same sockets, so its halves are on separate cards, and each card says which card it shares its sockets with. Every socket's tooltip names its other half. Hubs with many ports grow along the port edge to keep each socket readable.
 - Connections never cross. A hub's devices sit in one row in the order of its sockets (port order, with a split socket's halves together), and their connections fan out from the ports, bending at most twice. When the window is too narrow, a hub with only end devices lists them as a staircase beside it, read top to bottom, with its ports gathered at the card's right end. Rows never wrap; if the graph is still wider than the window, scroll or use **Fit all**.
-- The issue button lists reduced-speed links, incomplete scans, port failures, power problems, unstable connections and scan diagnostics. Select a hardware issue to reveal its node. See **Power checks** below for what each power issue means.
+- The issue button lists reduced-speed links, incomplete scans, port failures, power problems, unstable connections, game controllers Windows may suspend, and scan diagnostics. Select a hardware issue to reveal its node. See **Power checks** and **Power saving** below for what each power issue means.
 - The graph, tree and inspector rescan automatically when Windows reports USB devices being connected or disconnected. Rescans wait for the burst of notifications to settle. The status bar names what was connected or disconnected, and newly connected devices briefly ring.
 - Click **Refresh**, press **F5**, or enable ten-second auto-refresh. A thin progress bar appears at the top of the canvas while scanning and fades out over 180 ms. Even instant scans remain briefly visible. Unchanged scans preserve graph controls and inspector state.
 - Export the snapshot as JSON. Demo hardware is available through `--demo` when launching from the command line.
@@ -71,7 +71,7 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 
 Each card leads with its icon and a shortened name. Driver suffixes such as “- 1.10 (Microsoft)” and company words such as “Semiconductor Corp.” are dropped, and “eXtensible Host Controller” becomes xHCI. Your own labels are never shortened. The full name, the device type, the logical path (`H01/04/02`) and the location are in the card's tooltip and the inspector.
 
-Below the name, one line of figures carries a glyph for each number: opposed arrows for the negotiated link rate, and a lightning bolt for the current the device requests. Hubs and devices that stream also show a bandwidth meter (see **Bandwidth meter** below). The inspector shows link rate, reserved bandwidth and power for every port. A hub's numbered sockets show which of its ports are in use. Repeated hub names can be distinguished by their paths in the inspector.
+Below the name, one line of figures carries a glyph for each number: opposed arrows for the negotiated link rate, a stopwatch for how often a keyboard, mouse, HID control or game controller is polled, and a lightning bolt for the current the device requests. Hubs and devices that stream also show a bandwidth meter (see **Bandwidth meter** below). The inspector shows link rate, reserved bandwidth and power for every port, and the polling rate and power-saving setting of every device. A hub's numbered sockets show which of its ports are in use. Repeated hub names can be distinguished by their paths in the inspector.
 
 Windows gives each USB host controller one root hub, and to you they are one thing, so they share one host card. Its sockets are the root ports, and it shows the host's path and port support. A controller that reports several root hubs keeps them as separate cards.
 
@@ -94,6 +94,15 @@ maker of the chip inside (a hub in a Dell monitor may appear as Realtek), not th
 retail brand; clicking its name or pencil in Properties can rename it. Detection details record where
 each name came from, along with the original USB strings, Windows name and lookup results.
 
+**Game controllers:** wheels, pedals, shifters, handbrakes, button boxes, joysticks and
+game pads are recognized by the HID collections Windows lists for them (a Joystick, Game
+pad, Multi-axis controller, Simulation controls or Game controls collection is how games
+find them), and by name: sim racing and flight sim brands such as Fanatec, Moza, Simucube,
+Simagic, Heusinkveld, Asetek SimSports, Cammus, Thrustmaster, VRS, Virpil, VKB and
+Winwing, and the parts of a rig, such as “wheel base”, “pedals”, “shifter”, “handbrake” or
+“button box”. A keyboard or mouse that also offers a game pad collection stays a keyboard
+or mouse. Detection details list a device's HID collections.
+
 **Storage kinds:** USB itself reports optical drives, floppy drives and fast (UAS) drive
 enclosures. Flash drives, card readers and ordinary disk enclosures all report plain SCSI
 storage, so their product names decide; a drive with an uninformative name is shown as
@@ -112,7 +121,7 @@ are unavailable. These are protocol families, not an exact negotiated rate or
 a controller-wide bandwidth budget. External hubs show their upstream port's
 protocols separately from their own downstream-port support.
 
-The scanner enumerates host controller interfaces using SetupAPI, resolves each root hub, and recursively queries every physical hub port with read-only USB IOCTLs. Names are matched through the device's driver key, with USB product descriptors as a fallback.
+The scanner enumerates host controller interfaces using SetupAPI, resolves each root hub, and recursively queries every physical hub port with read-only USB IOCTLs. Names are matched through the device's driver key, with USB product descriptors as a fallback. HID collections and power-saving settings are traced to their USB device through the Windows device tree; Device Manager's power-saving setting is read through WMI (`MSPower_DeviceEnable`) and the power plan through the Windows power API.
 
 **Bandwidth:** negotiated signaling rate, not traffic measured or free bandwidth. Hub children share the upstream link. Windows' legacy speed field is corrected using EX V2 flags. SuperSpeedPlus is shown as 10 Gb/s or higher because the implemented query does not resolve lane count or exact rate. Controller-wide capacity is unknown; it cannot be derived by adding port speeds. The device's USB specification revision is separate from its current negotiated link.
 
@@ -124,6 +133,14 @@ The meter's full width is the most the host will reserve for timed transfers on 
 
 **Power:** the active configuration's `MaxPower` descriptor is decoded in 2 mA units for USB 2 and 8 mA units for USB 3. This is a declared maximum, not live current. Watts assume nominal 5 V. Self-powered descriptors and hub bus-power flags are displayed when available. Actual supply budgets, USB-C current advertisement, Power Delivery contracts, cable ratings, and live electrical draw are not available through this backend. Unknown values remain unknown. A meter or hardware-specific telemetry is needed for actual draw; a separate capture backend would be needed for live traffic.
 
+**Polling rate:** how often the host asks a device's fastest interrupt input endpoint for new
+data, from its endpoint descriptor: 1000 Hz means every 1 ms. At full and low speed the
+descriptor counts 1 ms frames, and hosts poll at the largest power of two that fits, so a
+10 ms endpoint is polled every 8 ms (125 Hz); at high speed and faster it counts
+2^(bInterval−1) microframes of 125 µs, up to 8000 Hz. It is the rate the host asks, not a
+measured report rate: a device skips a poll when it has nothing new, and its sensors or
+firmware may update less often. Hubs poll only for port changes, so they show none.
+
 **Power checks:** declared draw is compared with what the USB specification guarantees, not with a measured supply.
 
 - **Insufficient power** and **Overcurrent** (errors) are reported by Windows: it refused to configure a device that asks for more than the port can supply, or switched off a port that drew too much. Where the device descriptor is still readable, the port is named after the device and shows what it asked for.
@@ -134,11 +151,25 @@ The meter's full width is the most the host will reserve for timed transfers on 
 
 Many hubs report themselves as self-powered whether or not an adapter is connected, so the bus-power checks can only catch hubs that report honestly.
 
+**Power saving:** Windows can suspend an idle USB device while the PC is in use (USB
+selective suspend) only when three things allow it: the power plan's **USB selective
+suspend setting**, the device's own **Allow the computer to turn off this device to save
+power** setting on its Power Management tab in Device Manager, and a driver that idles the
+device. Properties shows the device's setting as On, Off, Not offered (no driver offers it),
+or Unused by driver (on, but its HID driver isn't set to use selective suspend); a device
+with several functions is suspended only when all of them are idle, so one function with it
+off keeps the device awake. Host properties show the root hub's setting and the power plan,
+plugged in and on battery, in Detection details. While the plan's setting is off, no USB
+device is suspended, and devices read “On · plan disables it”. A hub is suspended only after
+everything plugged into it is, so the setting matters most on devices.
+
+- **Selective suspend on** (warning): a game controller that Windows may suspend, because the power plan's setting is on (or unreported; Windows turns it on by default) and so is its own. Sim hardware makers advise against suspending wheels, pedals and button boxes, which can be slow to wake or drop out mid-session. Turn off USB selective suspend in Power Options (Change advanced power settings › USB settings), or clear the device's own setting in Device Manager.
+
 **Topology:** Windows-reported companion-port mappings identify confirmed USB 2/3 hub pairs, labeled on cards and linked from Properties. USB 2 hub sections at their native 480 Mb/s do not receive a Reduced speed warning. Ports reported as inaccessible to users are marked as internal connections; enclosure boundaries remain unknown.
 
 USB 2/3 companion logical ports can refer to the same physical socket; Windows names each port's companion, and both are drawn as that socket, split at a seam when they are on the same hub. An external USB 3 hub may appear as two hubs, whose cards name each other. Connector shape is never inferred from USB version. Empty counts are logical ports. Errors and inaccessible hubs remain visible; a scan can be partial if hardware changes during enumeration.
 
-Snapshots and exports may contain serial numbers. Scans are local; the application makes no network requests and does not reset, disable, or reconfigure devices.
+Snapshots and exports may contain serial numbers. Scans are local; the application makes no network requests and does not reset, disable, or reconfigure devices, and it reads power settings without changing them.
 
 ## Verification commands
 
@@ -166,6 +197,6 @@ Native layout and IOCTL constants are checked against the installed Windows SDK 
 
 Connector detection uses Microsoft's [USB port connector properties](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ns-usbioctl-_usb_port_connector_properties) and [port flags](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ns-usbioctl-_usb_port_properties).
 
-`--verify-ui` checks actual WPF card bounds, connections, socket shapes and tongue colors, filtering, folding, selection scrolling and fit. Every connection must be orthogonal, start at its port, end on its own card, avoid other cards and never cross or touch another; rows must keep socket order without wrapping, a socket's two halves must touch, including crowded hubs at several widths. It also exercises both directions with variable-height cards and 31 empty slots, search navigation, issue search, inspector collapse/restore, selection reuse, tree and canvas selection sync, and device-change rescans (simulated notifications; plug in a real device to confirm on hardware). Results are written to `ui-test.txt`. `--compact` opens the minimum supported window size; `--wide` uses a 3840×1560 window. These off-screen checks do not replace native mouse/keyboard testing.
+`--verify-ui` checks actual WPF card bounds, connections, socket shapes and tongue colors, filtering, folding, selection scrolling and fit. Every connection must be orthogonal, start at its port, end on its own card, avoid other cards and never cross or touch another; rows must keep socket order without wrapping, a socket's two halves must touch, including crowded hubs at several widths. It also checks polling rates, game controller hues and power-saving warnings on the sample wheel base, and exercises both directions with variable-height cards and 31 empty slots, search navigation, issue search, inspector collapse/restore, selection reuse, tree and canvas selection sync, and device-change rescans (simulated notifications; plug in a real device to confirm on hardware). Results are written to `ui-test.txt`. `--compact` opens the minimum supported window size; `--wide` uses a 3840×1560 window. These off-screen checks do not replace native mouse/keyboard testing.
 
 Name a socket by selecting its port and using **Port name** in Properties. Names stay with the hub port when attached devices change, appear in the tree, and are searchable. To arrange the chips inside a multi-stage hub, select each downstream hub and choose **Snap to upstream hub** under **Arrange hub stages**. The vertical layout places linked stages side by side inside a user-defined enclosure outline while retaining the real connection lines and port numbers. **Unlink from upstream hub** restores the normal layout; the horizontal layout always shows the original hierarchy. Names and grouping are saved locally.

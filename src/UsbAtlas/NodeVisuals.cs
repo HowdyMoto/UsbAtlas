@@ -68,13 +68,14 @@ internal static class NodeVisuals
         Padding = new Thickness(5, 2, 7, 2), HorizontalAlignment = HorizontalAlignment.Left, Child = StatusContent(s, text)
     };
     // Metric glyphs mark what a number measures: swap_vert for the negotiated link, schedule for bus
-    // time a device reserves, and bolt for the power it requests. Neutral ink; never a status color.
+    // time a device reserves, timer for how often an input device is polled, and bolt for the power it
+    // requests. Neutral ink; never a status color.
     // Material Symbols leave a margin inside their square, so the glyph is drawn a little larger than the text.
-    internal enum Metric { Link, Reserved, Power }
+    internal enum Metric { Link, Reserved, Polling, Power }
     internal const string MetricGlyphTag = "metric-glyph";
     internal static FrameworkElement MetricGlyph(Metric m, double size = 11)
     {
-        var glyph = Symbol(m switch { Metric.Link => "swap_vert", Metric.Reserved => "schedule", _ => "bolt" }, Ink("TextSecondary"), Math.Round(size * 1.2));
+        var glyph = Symbol(m switch { Metric.Link => "swap_vert", Metric.Reserved => "schedule", Metric.Polling => "timer", _ => "bolt" }, Ink("TextSecondary"), Math.Round(size * 1.2));
         glyph.Tag = MetricGlyphTag; glyph.Uid = m.ToString();
         return glyph;
     }

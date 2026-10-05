@@ -34,6 +34,13 @@ public sealed class UsbNode
     public double? ReservedMbps { get; set; }
     public double? PeakReservedMbps { get; set; }
     public List<string> OpenPipes { get; set; } = [];
+    // How often the host polls the fastest open interrupt input pipe, from its endpoint descriptor.
+    public double? PollIntervalMs { get; set; }
+    // Top-level HID collections Windows lists for the device, such as Joystick or Keyboard.
+    public List<string> HidUsages { get; set; } = [];
+    // Device Manager's "Allow the computer to turn off this device to save power": On, Off, Unused by
+    // driver (on, but its HID driver doesn't use selective suspend), Not offered or Not reported.
+    public string PowerSaving { get; set; } = "Not reported";
     public string InstanceId { get; set; } = "";
     public string HubSymbolicLink { get; set; } = "";
     public string CompanionHubSymbolicLink { get; set; } = "";
@@ -75,6 +82,12 @@ public sealed class Snapshot
     public bool IsDemo { get; set; }
     public List<UsbNode> Controllers { get; set; } = [];
     public List<string> Diagnostics { get; set; } = [];
+    // The active power plan's USB selective suspend setting, plugged in and on battery, and which applies now.
+    public bool? UsbSuspendPluggedIn { get; set; }
+    public bool? UsbSuspendOnBattery { get; set; }
+    public bool? OnBattery { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool? UsbSuspendActive => OnBattery == true ? UsbSuspendOnBattery : UsbSuspendPluggedIn;
     [System.Text.Json.Serialization.JsonIgnore]
     public IEnumerable<UsbNode> Nodes => Controllers.SelectMany(x => x.Walk());
 }

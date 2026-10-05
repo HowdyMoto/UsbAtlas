@@ -44,7 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link/power figures, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -137,6 +137,7 @@ public partial class MainWindow : Window
         "Over power budget" => "The devices behind this bus-powered hub declare more current, in total, than its upstream port is guaranteed to supply. See Detection details.",
         "Hub adapter not detected" => "This hub can run from its own power supply but is running on bus power. If it has an adapter, check that it is plugged in.",
         "Unstable connection" => "USB Atlas observed at least three disconnect-and-reconnect cycles within five minutes, each returning within 30 seconds. This records reconnects, not their cause: unplugging, restarting or changing USB modes can trigger it, as can power interruptions or a loose cable. The warning stays until USB Atlas is restarted.",
+        PowerSaving.Warning => "Windows may suspend this game controller when it looks idle, and a wheel, pedals or button box suspended mid-session can be slow to wake or drop out. Turn off USB selective suspend in Power Options, or clear “Allow the computer to turn off this device to save power” on its Power Management tab in Device Manager. See Detection details.",
         _ => "Enumeration is incomplete; counts may omit downstream devices. See Detection details."
     };
     // One layout per kind of selection, so ports can be compared by flipping between them: every port,
@@ -251,7 +252,10 @@ public partial class MainWindow : Window
             Field("Manufacturer", Reported(node.Manufacturer));
             Field("Serial", Reported(node.Serial));
             Field("USB revision", Reported(node.UsbVersion));
+            // Polling applies to devices with an open interrupt input pipe; hubs poll only for port changes.
+            Field("Polling rate", node.Kind == "Device" ? node.PollIntervalMs is double ms ? $"{UsbBudgets.PollingRate(ms)} · {UsbBudgets.PollingInterval(ms)}" : node.ReservedMbps != null ? NotApplicable : "Not reported" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable);
             Field("Power source", Reported(node.PowerSource));
+            Field("Power saving", attached ? PowerSavingText(node) : Reported(""));
             Field("At nominal 5 V", attached && node.MaxPowerMa is int draw ? $"{draw * 0.005:0.##} W declared" : Reported(""));
             Field("Peak reserved", attached && node.PeakReservedMbps is double peak ? $"Up to {UsbBudgets.Rate(peak)} when active" : Reported(""));
             if (UsbBudgets.LinkUse(node) is (var use, var room, _))
@@ -288,6 +292,9 @@ public partial class MainWindow : Window
             Field("Connector", NodeVisuals.Connector(node));
             Field("Location", "Host hardware");
             Field("Power source", node.PowerSource);
+            // The root hub is what Device Manager lists, and what sim hardware guides point to.
+            Field("Power saving", PowerSavingText(MergedRoot(node) ?? node));
+            Field("Power plan", PowerSaving.PlanSummary(snapshot));
             Field("Supply capacity", "Unknown · not measured");
         }
         Section("Upstream path");
@@ -339,6 +346,8 @@ public partial class MainWindow : Window
         if (node.Kind is "Controller" or "Root hub" or "Hub" or "Empty port") notes.Add("Supply capacity, USB-C charging limits and Power Delivery contracts are not queried. Device-declared draw is not the hub's available supply.");
         if (node.Kind == "Device") notes.Add(node.TypeEvidence);
         if (node.InterfaceFunctions.Count > 0) notes.Add("Reported functions: " + string.Join(", ", node.InterfaceFunctions));
+        if (node.HidUsages.Count > 0) notes.Add("HID collections: " + string.Join(", ", node.HidUsages) + ".");
+        if (host) notes.Add(PowerSaving.PlanNote(snapshot));
         var knownLinks = chain.Where(n => n.LinkMbps.HasValue).ToList();
         if (knownLinks.Count > 0) notes.Add($"Known path ceiling: {knownLinks.Min(n => n.LinkMbps):0.##} Mb/s, shared and before overhead.");
         if (node.Kind is "Hub" or "Root hub")
@@ -360,9 +369,12 @@ public partial class MainWindow : Window
         foreach (var note in notes) evidence.Children.Add(new TextBlock { Text = note, FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 0, 0, 10) });
         Details.Children.Add(new Expander { Header = "Detection details", Content = evidence, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 16, 0, 0), FontSize = 12 });
         Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 20, 0, 16) });
-        Text("Link rates are shared signaling limits. Reserved bandwidth and requested power come from device descriptors, not live measurements. Power checks compare declared draw with what the USB specification guarantees a port; supply capacity itself is not measured.", 11, "TextMuted");
+        Text("Link rates are shared signaling limits. Reserved bandwidth, polling rates and requested power come from device descriptors, not live measurements. Power checks compare declared draw with what the USB specification guarantees a port; supply capacity itself is not measured.", 11, "TextMuted");
 
     }
+    // Device Manager's power-saving setting for this hardware. Turned on, it still does nothing while the
+    // power plan's USB selective suspend is off.
+    private string PowerSavingText(UsbNode n) => n.PowerSaving == "On" && snapshot.UsbSuspendActive == false ? "On · plan disables it" : n.PowerSaving;
     private List<UsbNode> FindPath(string id)
     {
         List<UsbNode>? SearchPath(UsbNode n) { if (n.Id == id) return [n]; foreach (var c in n.Children) { var path = SearchPath(c); if (path != null) { path.Insert(0, n); return path; } } return null; }

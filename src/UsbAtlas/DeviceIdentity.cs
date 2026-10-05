@@ -163,6 +163,27 @@ internal static class DeviceIdentity
         return result;
     }
 
+    // Sim racing and flight sim hardware, by brands that make little else and by the parts of a rig.
+    // Most of it also says so through a joystick or game pad HID collection (see GameUsages).
+    private static readonly System.Text.RegularExpressions.Regex SimHardware = new(
+        @"\b(fanatec|moza|simucube|simagic|heusinkveld|simsports|cammus|conspit|thrustmaster|accuforce|simxperience|cube controls|ascher racing|simtrecs|directforce|virpil|vkb|winwing"
+        + @"|racing wheel|steering wheel|wheel ?base|driving force|direct[ -]?drive|pedals|shifter|hand ?brake|button box|hotas|flight stick|throttle quadrant|yoke|rudder)\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // Windows lists each top-level HID collection's usage in its hardware IDs, as HID_DEVICE_UP:0001_U:0004
+    // for a joystick. Games find wheels, pedals and controllers through the game usages.
+    internal static readonly string[] GameUsages = ["Joystick", "Game pad", "Multi-axis controller", "Simulation controls", "Game controls"];
+    internal static List<string> ReadHidUsages(IEnumerable<string> hardwareIds) => hardwareIds
+        .Select(id => System.Text.RegularExpressions.Regex.Match(id, @"^HID_DEVICE_UP:([0-9A-F]{4})_U:([0-9A-F]{4})$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        .Where(m => m.Success).Select(m => UsageName(Convert.ToInt32(m.Groups[1].Value, 16), Convert.ToInt32(m.Groups[2].Value, 16))).Distinct().ToList();
+    internal static string UsageName(int page, int usage) => (page, usage) switch
+    {
+        (1, 1) => "Pointer", (1, 2) => "Mouse", (1, 4) => "Joystick", (1, 5) => "Game pad", (1, 6) => "Keyboard", (1, 7) => "Keypad",
+        (1, 8) => "Multi-axis controller", (1, 0x0C) => "Wireless radio controls", (1, 0x80) => "System controls", (2, _) => "Simulation controls", (5, _) => "Game controls",
+        (0x0C, _) => "Consumer controls", (0x0D, _) => "Digitizer", (0x20, _) => "Sensor", (0x59, _) => "Lighting", (0x84 or 0x85, _) => "Power device", (>= 0xFF00, _) => "Vendor-defined",
+        _ => $"Usage page {page:X4}h, usage {usage:X4}h"
+    };
+
     internal static void Identify(UsbNode node)
     {
         if (node.Kind != "Device") return;
@@ -173,12 +194,19 @@ internal static class DeviceIdentity
             var s when s.Contains("mouse") => "Mouse",
             var s when s.Contains("webcam") || s.Contains("camera") => "Camera / video",
             var s when s.Contains("headset") || s.Contains("microphone") || s.Contains("speaker") => "Audio",
-            var s when s.Contains("gamepad") || s.Contains("joystick") || s.Contains("simagic") || s.Contains("racing wheel") => "Game controller",
+            var s when s.Contains("gamepad") || s.Contains("joystick") || SimHardware.IsMatch(s) => "Game controller",
             var s when s.Contains("quest") || s.Contains("vive") => "VR headset",
             var s when s.Contains("billboard") => "Billboard",
             _ => null
         };
         if (namedType != null) { node.DeviceType = namedType; node.TypeEvidence = "Inferred from the device product name."; return; }
+        // A keyboard or mouse that also offers a game pad collection, as some analog keyboards do, stays a keyboard or mouse.
+        if (node.HidUsages.FirstOrDefault(GameUsages.Contains) is string game && !node.InterfaceFunctions.Any(f => f is "Keyboard" or "Mouse"))
+        {
+            node.DeviceType = "Game controller";
+            node.TypeEvidence = $"Windows reports a {game.ToLowerInvariant()} HID collection, which is how games find wheels, pedals and controllers.";
+            return;
+        }
         foreach (var type in new[] { "Camera / video", "Audio", "Optical drive", "Floppy drive", "External drive", "Storage", "Keyboard", "Mouse", "Printer", "Wireless", "Serial / communications", "HID / controls", "Billboard" })
             if (node.InterfaceFunctions.Contains(type))
             {

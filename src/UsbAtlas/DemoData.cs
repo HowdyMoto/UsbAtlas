@@ -30,12 +30,19 @@ internal static class DemoData
         root.Children.Add(new UsbNode { Id = "demo/root/7", Name = "Available port 7", Kind = "Empty port", Port = 7, Status = "Empty", Protocols = "USB 3.x", CompanionId = "demo/root/3" });
         root.Children.Add(new UsbNode { Id = "demo/root/8", Name = "Available port 8", Kind = "Empty port", Port = 8, Status = "Empty", Protocols = "USB 2.0", CompanionId = "demo/root/6", PortConnectorIsTypeC = true });
         root.Children[2].CompanionId = "demo/root/7"; enclosure.CompanionId = "demo/root/8";
+        // A direct-drive wheel base on its own root port: a game controller polled every 1 ms, with an
+        // external supply, that Windows is allowed to suspend.
+        var wheel = Device("demo/root/9", "Direct-drive wheel base", 9, 12, 100, "Human interface (HID)");
+        wheel.PowerSource = "Self-powered capable"; wheel.SelfPowerCapable = true; wheel.HidUsages = ["Joystick", "Vendor-defined"];
+        root.Children.Add(wheel); root.PortCount = 9;
         // Bandwidth a device reserves for its open periodic pipes now, and the most its configuration can reserve.
         void Reserve(UsbNode n, double now, double peak) { n.ReservedMbps = now; n.PeakReservedMbps = peak; }
         Reserve(hub, 0.0001, 0.0001); Reserve(travel, 0.0001, 0.0001);
         Reserve(hub.Children[0], 0, 0); Reserve(hub.Children[1], 98.3, 196.6);
         Reserve(root.Children[1], 4.6, 4.6); Reserve(root.Children[2], 0.0064, 0.0064); Reserve(root.Children[3], 0.064, 0.064);
-        Reserve(travel.Children[0], 0, 0); Reserve(travel.Children[1], 0.0064, 0.0064); Reserve(enclosure, 0, 0);
+        Reserve(travel.Children[0], 0, 0); Reserve(travel.Children[1], 0.0064, 0.0064); Reserve(enclosure, 0, 0); Reserve(wheel, 0.512, 0.512);
+        // Input devices are polled as their interrupt endpoints ask: a 10 ms keyboard endpoint is polled every 8 ms.
+        root.Children[2].PollIntervalMs = 8; root.Children[3].PollIntervalMs = 1; travel.Children[1].PollIntervalMs = 8; wheel.PollIntervalMs = 1;
         root.Location = "Host";
         root.LocationEvidence = "Demo: logical root ports belong to the host controller.";
         hub.PortIsUserConnectable = true;
@@ -54,15 +61,18 @@ internal static class DemoData
         hub.Children[0].PortConnectorIsTypeC = true;
         enclosure.PortConnectorIsTypeC = true;
         foreach (var n in root.Walk().Skip(1)) n.PortIsUserConnectable ??= true;
-        var snapshot = new Snapshot { IsDemo = true, Controllers = [new UsbNode { Id = "demo", Name = "USB xHCI host controller", Kind = "Controller", Children = [root], PowerSource = "System supplied", Location = "Host", LocationEvidence = "Demo host controller." }] };
+        // Windows' defaults: USB selective suspend on in the power plan, and every device allowed to be turned off.
+        var snapshot = new Snapshot { IsDemo = true, UsbSuspendPluggedIn = true, UsbSuspendOnBattery = true, OnBattery = false, Controllers = [new UsbNode { Id = "demo", Name = "USB xHCI host controller", Kind = "Controller", Children = [root], PowerSource = "System supplied", Location = "Host", LocationEvidence = "Demo host controller." }] };
         foreach (var node in snapshot.Nodes)
         {
             node.NameSource = "Illustrative sample data";
             if (node.Kind is "Device" or "Hub") node.ReportedProduct = node.Name;
+            if (node.Kind is "Device" or "Hub" or "Root hub") node.PowerSaving = "On";
         }
         DeviceIdentity.ClassifySockets(snapshot);
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         UsbBudgets.AnalyzePower(snapshot);
+        PowerSaving.Analyze(snapshot);
         return snapshot;
     }
 }

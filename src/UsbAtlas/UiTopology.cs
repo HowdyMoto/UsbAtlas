@@ -49,9 +49,12 @@ public partial class MainWindow
         _ => IssueRow.Other
     };
     private sealed record MetricRow(List<(NodeVisuals.Metric? Glyph, string Text, string Words)> Parts, List<(NodeVisuals.Severity Severity, string Text)> Issues);
-    // A card's one line of figures, link rate then requested power, followed by the warnings that
-    // qualify them. Reserved bandwidth lives in the meter where it can matter, the parent's socket shows
-    // USB-C, and sockets, not a count, show occupancy.
+    // Input devices and game controllers show how often they are polled, since that is what their
+    // owners compare; for other devices it is in Properties.
+    internal static bool ShowsPolling(UsbNode n) => n.Kind == "Device" && n.PollIntervalMs != null && n.DeviceType is "Keyboard" or "Mouse" or "HID / controls" or "Game controller";
+    // A card's one line of figures, link rate, polling rate for input devices, then requested power,
+    // followed by the warnings that qualify them. Reserved bandwidth lives in the meter where it can
+    // matter, the parent's socket shows USB-C, and sockets, not a count, show occupancy.
     private static MetricRow CardFigures(UsbNode n)
     {
         var issues = Issues(n).Where(i => RowOf(i.Text) != IssueRow.Other).OrderBy(i => RowOf(i.Text)).ToList();
@@ -60,6 +63,11 @@ public partial class MainWindow
         // A named fault's badge already says what the status would.
         if (n.Kind == "Unavailable" && issues.Count == 0) parts.Add((null, n.Status, n.Status));
         else if (n.Kind is "Device" or "Hub") parts.Add((NodeVisuals.Metric.Link, link, link + " link"));
+        if (ShowsPolling(n))
+        {
+            string rate = UsbBudgets.PollingRate(n.PollIntervalMs!.Value);
+            parts.Add((NodeVisuals.Metric.Polling, rate, "polled at " + rate));
+        }
         if (n.Kind is "Device" or "Hub" or "Unavailable" && (n.MaxPowerMa.HasValue || issues.Any(i => RowOf(i.Text) == IssueRow.Power)))
         {
             var (text, words) = PowerFigure(n);
@@ -98,6 +106,8 @@ public partial class MainWindow
     {
         var lines = new List<string>();
         if (n.Kind is "Device" or "Hub") lines.Add($"Link: {n.Speed}. The signaling rate negotiated when the device connected, shared with everything upstream on the same path. Not a measured speed.");
+        if (n.Kind == "Device" && n.PollIntervalMs is double ms)
+            lines.Add($"Polling: the host asks it for input {UsbBudgets.PollingInterval(ms)} ({UsbBudgets.PollingRate(ms)}), as its endpoint descriptor requests. A device skips a poll when it has nothing new, so this is not a measured report rate.");
         if (n.Kind == "Hub" && UsbBudgets.LinkUse(n) is (var through, _, var missing))
             lines.Add($"Reserved: {UsbBudgets.Rate(through)} of bus time held by the hub and the devices behind it, which share its upstream link." + (missing > 0 ? $" {missing} device(s) behind it did not report." : "") + " Bulk transfers, such as storage, reserve nothing and share what is left.");
         else if (n.ReservedMbps is double reserved)
@@ -110,7 +120,7 @@ public partial class MainWindow
         return string.Join("\n", lines);
     }
     private static string Issue(UsbNode n) => string.Join(" · ", Issues(n).Select(i => i.Text));
-    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {n.Connector} {n.SocketSpeed} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
+    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {n.Connector} {n.SocketSpeed} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)} {string.Join(" ", n.HidUsages)} {(n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : "")}".Contains(q, StringComparison.OrdinalIgnoreCase);
     private bool Visible(UsbNode n) => visibleIds.Contains(n.Id);
     // On Windows each xHCI controller has one root hub, and to the user they are one thing: a host whose
     // sockets are the root ports. They share one card; a controller with several root hubs, or none

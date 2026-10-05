@@ -115,6 +115,27 @@ internal static class UsbBudgets
         _ => $"{mbps * 1000:0.#} kb/s"
     };
 
+    // How often the host polls an interrupt endpoint. At low and full speed bInterval counts 1 ms frames,
+    // and hosts poll at the largest power of two that fits (xHCI and EHCI schedules are power-of-two),
+    // so 10 ms is polled every 8 ms. At high speed and faster it is 2^(bInterval-1) microframes of 125 µs.
+    internal static double PollIntervalMs(byte interval, int speedClass) => speedClass >= 2
+        ? 0.125 * (1 << (Math.Clamp((int)interval, 1, 16) - 1))
+        : 1 << (int)Math.Log2(Math.Clamp((int)interval, 1, 255));
+    internal static string PollingRate(double ms)
+    {
+        double hz = 1000 / ms;
+        return hz >= 100 ? $"{hz:0} Hz" : $"{hz:0.#} Hz";
+    }
+    internal static string PollingInterval(double ms) => ms >= 1 ? $"every {ms:0.###} ms" : $"every {ms * 1000:0} µs";
+    internal static string PollingNote(byte address, byte interval, int speedClass)
+    {
+        double ms = PollIntervalMs(interval, speedClass);
+        string note = $"Polling: the host asks input endpoint {address:X2} for new data {PollingInterval(ms)} ({PollingRate(ms)}).";
+        if (speedClass < 2 && Math.Max(1, (int)interval) != ms)
+            note += $" Its descriptor asks for every {Math.Max(1, (int)interval)} ms; hosts poll full- and low-speed devices at the next shorter power-of-two interval.";
+        return note + " This is how often the host asks, set by the device's descriptor. A device skips a poll when it has nothing new, and its sensors or firmware may update less often, so it is not a measured report rate.";
+    }
+
     internal static string DescribePipe(byte address, byte attributes, ushort maxPacket, byte interval, int speedClass, int? bytesPerInterval)
     {
         string type = (attributes & 3) switch { 0 => "control", 1 => "isochronous", 2 => "bulk", _ => "interrupt" };
@@ -170,7 +191,7 @@ internal static class UsbBudgets
         }
     }
 
-    private static void Warn(UsbNode node, string label, string explanation)
+    internal static void Warn(UsbNode node, string label, string explanation)
     {
         if (node.PowerWarnings.Contains(label)) return;
         node.PowerWarnings.Add(label);

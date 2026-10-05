@@ -10,13 +10,17 @@ public sealed class UsbScanner
 {
     private static readonly Guid ControllerGuid = new("3ABF6F2D-71C4-462A-8A92-1E6861E6AF27");
     private readonly Dictionary<string, (string Name, string Manufacturer, string InstanceId)> names = new(StringComparer.OrdinalIgnoreCase);
+    // Every present devnode by instance ID: its parent, its driver service and, for a HID collection, its usages.
+    internal sealed record DevNode(string Parent, string Service, List<string> Usages);
+    private readonly Dictionary<string, DevNode> devices = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<string>> hidUsages = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
     private Snapshot snapshot = new();
 
     public Snapshot Scan()
     {
-        snapshot = new(); visited.Clear(); names.Clear();
-        ReadDeviceNames();
+        snapshot = new(); visited.Clear(); names.Clear(); devices.Clear(); hidUsages.Clear();
+        ReadDevices();
         var guid = ControllerGuid;
         var set = Native.SetupDiGetClassDevs(ref guid, null, IntPtr.Zero, 0x12);
         if (set == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -40,6 +44,8 @@ public sealed class UsbScanner
                     if (!Native.SetupDiGetDeviceInterfaceDetailData(set, ref iface, detail, size, out _, ref dev)) { snapshot.Diagnostics.Add("Controller interface details unavailable: " + Error()); continue; }
                     var path = Marshal.PtrToStringUni(detail + 4)!;
                     var controller = new UsbNode { Id = path, Kind = "Controller", Name = Property(set, ref dev, 12) ?? Property(set, ref dev, 0) ?? "USB host controller", PowerSource = "System supplied" };
+                    var instance = new StringBuilder(512);
+                    if (Native.SetupDiGetDeviceInstanceId(set, ref dev, instance, instance.Capacity, out _)) controller.InstanceId = instance.ToString();
                     controller.Location = "Host";
                     controller.LocationEvidence = "Host controller: motherboard or expansion hardware. Physical mounting is not reported.";
                     controller.Notes.Add("Controller ports may use separate USB 2 and USB 3 buses. Their link rates are not a single controller-wide bandwidth budget.");
@@ -48,7 +54,7 @@ public sealed class UsbScanner
                     if (handle.IsInvalid) { controller.ScanIncomplete = true; controller.Notes.Add("Cannot open controller: " + Error()); continue; }
                     var rootName = QueryName(handle, 258, 0, 4);
                     if (rootName.Length == 0) { controller.ScanIncomplete = true; controller.Notes.Add("Root hub unavailable: " + Error()); continue; }
-                    var root = new UsbNode { Id = path + "/root", Name = "Root hub", Kind = "Root hub", PowerSource = "System supplied" };
+                    var root = new UsbNode { Id = path + "/root", Name = "Root hub", Kind = "Root hub", PowerSource = "System supplied", InstanceId = ReconnectTracker.InstanceIdFromPath(rootName) ?? "" };
                     controller.Children.Add(root);
                     root.Location = "Host";
                     root.LocationEvidence = "Logical root ports belong to the host controller, not a separate external hub.";
@@ -63,6 +69,8 @@ public sealed class UsbScanner
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         HubRelationships.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
+        PowerSaving.Read(snapshot, devices);
+        PowerSaving.Analyze(snapshot);
         if (snapshot.Controllers.Count == 0) snapshot.Diagnostics.Add("No USB host controllers were returned by Windows.");
         return snapshot;
     }
@@ -132,6 +140,7 @@ public sealed class UsbScanner
             if (names.TryGetValue(node.DriverKey, out var identity))
             {
                 node.WindowsName = identity.Name; node.WindowsManufacturer = identity.Manufacturer; node.InstanceId = identity.InstanceId;
+                node.HidUsages = hidUsages.GetValueOrDefault(node.InstanceId) ?? [];
             }
             DeviceIdentity.ResolveName(node);
             // Match the active configuration value; descriptor index is not configuration value.
@@ -187,6 +196,7 @@ public sealed class UsbScanner
         int count = BitConverter.ToInt32(data, 27);
         if (count < 0 || 35 + count * 11 > Math.Min(returned, data.Length)) return;
         double reserved = 0;
+        (byte Address, byte Interval)? fastest = null;
         for (int i = 0; i < count; i++)
         {
             int at = 35 + i * 11;
@@ -196,8 +206,17 @@ public sealed class UsbScanner
             int? perInterval = endpoints.FirstOrDefault(e => e.Address == address && e.Attributes == attributes && e.MaxPacket == maxPacket && e.Interval == interval)?.BytesPerInterval;
             reserved += UsbBudgets.PeriodicMbps(attributes, maxPacket, interval, speedClass, perInterval);
             node.OpenPipes.Add(UsbBudgets.DescribePipe(address, attributes, maxPacket, interval, speedClass, perInterval));
+            // Input reaches the host through interrupt IN pipes; the fastest one sets how often it is polled.
+            if ((attributes & 3) == 3 && (address & 0x80) != 0 && (fastest == null || UsbBudgets.PollIntervalMs(interval, speedClass) < UsbBudgets.PollIntervalMs(fastest.Value.Interval, speedClass)))
+                fastest = (address, interval);
         }
         node.ReservedMbps = reserved;
+        // A hub's interrupt pipe only reports port changes, so hubs have no polling rate to show.
+        if (fastest is { } input && node.Kind != "Hub")
+        {
+            node.PollIntervalMs = UsbBudgets.PollIntervalMs(input.Interval, speedClass);
+            node.Notes.Add(UsbBudgets.PollingNote(input.Address, input.Interval, speedClass));
+        }
         if (endpoints.Count > 0) node.PeakReservedMbps = Math.Max(reserved, UsbBudgets.PeakPeriodicMbps(endpoints, speedClass));
     }
 
@@ -230,7 +249,9 @@ public sealed class UsbScanner
     private static string ConnectionStatus(int status) => status switch { 0 => "Empty", 1 => "Connected", 2 => "Enumeration failed", 3 => "General failure", 4 => "Overcurrent", 5 => "Insufficient power", 6 => "Insufficient bandwidth", 7 => "Hub nested too deeply", 8 => "Legacy hub", 9 => "Enumerating", 10 => "Resetting", _ => "Status " + status };
     private static string ClassName(byte value) => value switch { 0 => "Defined by interfaces", 1 => "Audio", 2 => "Communications", 3 => "Human interface (HID)", 7 => "Printer", 8 => "Mass storage", 9 => "Hub", 14 => "Video", 0xE0 => "Wireless controller", 0xEF => "Composite / miscellaneous", 0xFF => "Vendor specific", _ => $"Class 0x{value:X2}" };
 
-    private void ReadDeviceNames()
+    // Names every present device by driver key, and records each devnode's parent and service so HID
+    // collections and power settings can be traced back to the USB device they belong to.
+    private void ReadDevices()
     {
         var set = Native.SetupDiGetClassDevsNoGuid(IntPtr.Zero, null, IntPtr.Zero, 6);
         if (set == new IntPtr(-1)) return;
@@ -242,11 +263,44 @@ public sealed class UsbScanner
                 if (!Native.SetupDiEnumDeviceInfo(set, i, ref d)) break;
                 var key = Property(set, ref d, 9);
                 var name = Property(set, ref d, 12) ?? Property(set, ref d, 0);
-                var instance = new StringBuilder(512);
-                if (key != null && name != null) names[key] = (name, Property(set, ref d, 11) ?? "", Native.SetupDiGetDeviceInstanceId(set, ref d, instance, instance.Capacity, out _) ? instance.ToString() : "");
+                var buffer = new StringBuilder(512);
+                var instance = Native.SetupDiGetDeviceInstanceId(set, ref d, buffer, buffer.Capacity, out _) ? buffer.ToString() : "";
+                if (key != null && name != null) names[key] = (name, Property(set, ref d, 11) ?? "", instance);
+                if (instance.Length == 0) continue;
+                buffer.Clear();
+                var parent = Native.CM_Get_Parent(out var up, d.DevInst, 0) == 0 && Native.CM_Get_Device_ID(up, buffer, buffer.Capacity, 0) == 0 ? buffer.ToString() : "";
+                var usages = instance.StartsWith(@"HID\", StringComparison.OrdinalIgnoreCase) ? DeviceIdentity.ReadHidUsages(MultiProperty(set, ref d, 1)) : [];
+                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages);
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }
+        foreach (var (instance, node) in devices.Where(d => d.Value.Usages.Count > 0))
+            if (UsbOwner(instance, devices) is string owner)
+            {
+                if (!hidUsages.TryGetValue(owner, out var list)) hidUsages[owner] = list = [];
+                list.AddRange(node.Usages.Except(list).ToList());
+            }
+    }
+    // The USB device a devnode belongs to: itself, or the USB device above it through a composite device's
+    // interfaces (…&MI_00) and HID collections. Anything else in between, such as a Bluetooth link, means
+    // the USB device above is an adapter, not this device.
+    internal static string? UsbOwner(string instance, IReadOnlyDictionary<string, DevNode> devices)
+    {
+        string? at = instance;
+        for (int depth = 0; depth < 32 && !string.IsNullOrEmpty(at); depth++, at = devices.GetValueOrDefault(at)?.Parent)
+        {
+            if (IsUsbDevice(at)) return at;
+            if (!at.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase) && !at.StartsWith(@"HID\", StringComparison.OrdinalIgnoreCase)) return null;
+        }
+        return null;
+    }
+    internal static bool IsUsbDevice(string instance) => instance.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase)
+        && instance.Split('\\') is [_, var hardware, ..] && !hardware.Contains("&MI_", StringComparison.OrdinalIgnoreCase);
+    private static string[] MultiProperty(IntPtr set, ref Native.DeviceData d, uint property)
+    {
+        var bytes = new byte[8192];
+        return Native.SetupDiGetDeviceRegistryProperty(set, ref d, property, out _, bytes, (uint)bytes.Length, out var needed)
+            ? Encoding.Unicode.GetString(bytes, 0, (int)Math.Min(needed, (uint)bytes.Length) & ~1).Split('\0', StringSplitOptions.RemoveEmptyEntries) : [];
     }
     private static string? Property(IntPtr set, ref Native.DeviceData d, uint property)
     {
@@ -291,6 +345,8 @@ internal static class Native
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern bool SetupDiGetDeviceRegistryProperty(IntPtr set, ref DeviceData dev, uint property, out uint type, byte[] buffer, uint size, out uint needed);
     [DllImport("setupapi.dll")] internal static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
     [DllImport("setupapi.dll", EntryPoint = "SetupDiGetDeviceInstanceIdW", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern bool SetupDiGetDeviceInstanceId(IntPtr set, ref DeviceData dev, StringBuilder id, int size, out int needed);
+    [DllImport("cfgmgr32.dll")] internal static extern int CM_Get_Parent(out uint parent, uint devInst, int flags);
+    [DllImport("cfgmgr32.dll", EntryPoint = "CM_Get_Device_IDW", CharSet = CharSet.Unicode)] internal static extern int CM_Get_Device_ID(uint devInst, StringBuilder buffer, int length, int flags);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)] internal static extern bool DeviceIoControl(SafeFileHandle handle, uint code, [In] byte[] input, int inputSize, [Out] byte[] output, int outputSize, out int returned, IntPtr overlapped);
 }

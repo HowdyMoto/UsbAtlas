@@ -27,7 +27,7 @@ internal static class SelfTests
         Check(side2.CompanionHubId == side3.Id && side2.IsUsb2Companion && side3.CompanionHubId == side2.Id && !side3.IsUsb2Companion, "Hub sides must pair through their own ports' companions.");
         var demo = DemoData.Create();
         Check(demo.IsDemo, "Sample data must be explicitly identified.");
-        Check(demo.Nodes.Count(x => x.Kind == "Device") == 8, "Recursive topology traversal.");
+        Check(demo.Nodes.Count(x => x.Kind == "Device") == 9, "Recursive topology traversal.");
         Check(demo.Nodes.Select(x => x.Id).Distinct().Count() == demo.Nodes.Count(), "Stable unique graph identities.");
         var port = new UsbNode();
         Check(port.PortIsUserConnectable == null && port.PortConnectorIsTypeC == null, "Missing connector query must remain unknown.");
@@ -63,7 +63,84 @@ internal static class SelfTests
         Check(demo.Nodes.First(x => x.Name == "Portable SSD").DeviceType == "External drive", "Demo SSD is an external drive.");
         SocketTests(demo);
         BudgetTests(demo);
+        SimHardwareTests(demo);
         IdentityTests.Run();
+    }
+
+    // Polling rates, game controllers by name and HID usage, and whether Windows may suspend them.
+    private static void SimHardwareTests(Snapshot demo)
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        Check(UsbBudgets.PollIntervalMs(1, 1) == 1 && UsbBudgets.PollIntervalMs(10, 1) == 8 && UsbBudgets.PollIntervalMs(255, 0) == 128 && UsbBudgets.PollIntervalMs(0, 1) == 1, "Full- and low-speed polling rounds down to a power of two of 1 ms frames.");
+        Check(UsbBudgets.PollIntervalMs(1, 2) == 0.125 && UsbBudgets.PollIntervalMs(4, 2) == 1 && UsbBudgets.PollIntervalMs(4, 3) == 1 && UsbBudgets.PollIntervalMs(0, 2) == 0.125, "High speed and faster poll every 2^(bInterval-1) microframes.");
+        Check(UsbBudgets.PollingRate(1) == "1000 Hz" && UsbBudgets.PollingRate(0.125) == "8000 Hz" && UsbBudgets.PollingRate(8) == "125 Hz" && UsbBudgets.PollingRate(16) == "62.5 Hz", "Polling rate formatting.");
+        Check(UsbBudgets.PollingInterval(0.125) == "every 125 µs" && UsbBudgets.PollingInterval(1) == "every 1 ms" && UsbBudgets.PollingInterval(8) == "every 8 ms", "Polling interval formatting.");
+        Check(UsbBudgets.PollingNote(0x81, 10, 1).Contains("asks for every 10 ms") && !UsbBudgets.PollingNote(0x81, 8, 1).Contains("asks for every"), "Rounded full-speed polling explains the declared interval.");
+        // The fastest interrupt IN pipe sets the polling rate; OUT pipes and isochronous streams don't.
+        var pipes = new byte[4096];
+        BitConverter.GetBytes(4).CopyTo(pipes, 27);
+        byte[] open = [7, 5, 0x81, 3, 64, 0, 4, 0, 0, 0, 0, 7, 5, 0x83, 3, 64, 0, 1, 0, 0, 0, 0, 7, 5, 0x02, 3, 64, 0, 1, 0, 0, 0, 0, 7, 5, 0x84, 1, 0, 2, 1, 0, 0, 0, 0];
+        open.CopyTo(pipes, 35);
+        var wheelPipes = new UsbNode();
+        UsbScanner.ReadOpenPipes(pipes, 35 + open.Length, 1, [], wheelPipes);
+        Check(wheelPipes.PollIntervalMs == 1 && wheelPipes.Notes.Any(n => n.Contains("endpoint 83")), "The fastest interrupt input pipe sets the polling rate.");
+        var highSpeed = new UsbNode();
+        BitConverter.GetBytes(1).CopyTo(pipes, 27);
+        UsbScanner.ReadOpenPipes(pipes, 35 + 11, 2, [], highSpeed);
+        Check(highSpeed.PollIntervalMs == 1, "A high-speed interrupt input pipe with bInterval 4 is polled every 1 ms.");
+        var storage = new UsbNode();
+        pipes[35 + 3] = 2;
+        UsbScanner.ReadOpenPipes(pipes, 35 + 11, 2, [], storage);
+        Check(storage.PollIntervalMs == null && storage.ReservedMbps == 0, "Bulk pipes are not polled for input.");
+
+        // HID usages come from the hardware IDs of each collection.
+        var usages = DeviceIdentity.ReadHidUsages([@"HID\VID_0EB7&PID_0020&REV_0100", @"HID\VID_0EB7&UP:0001_U:0004", "HID_DEVICE_SYSTEM_GAME", "HID_DEVICE_UP:0001_U:0004", "HID_DEVICE_UP:FF00_U:0001", "HID_DEVICE_UP:0001_U:0004", "HID_DEVICE"]);
+        Check(usages.SequenceEqual(["Joystick", "Vendor-defined"]), "HID usages are read from HID_DEVICE_UP hardware IDs, once each.");
+        Check(DeviceIdentity.UsageName(2, 0xC8) == "Simulation controls" && DeviceIdentity.UsageName(1, 5) == "Game pad" && DeviceIdentity.UsageName(0x59, 1) == "Lighting" && DeviceIdentity.UsageName(0x40, 1) == "Usage page 0040h, usage 0001h", "HID usage names.");
+        static UsbNode Identified(string name, List<string> hid, params string[] functions) { var n = new UsbNode { Name = name, HidUsages = hid, InterfaceFunctions = [.. functions], DeviceClass = "Defined by interfaces" }; DeviceIdentity.Identify(n); return n; }
+        Check(Identified("Uninformative product", ["Joystick", "Vendor-defined"], "HID / controls").DeviceType == "Game controller", "A joystick collection marks a game controller.");
+        Check(Identified("Sony Interactive Entertainment Wireless Controller", ["Game pad"], "Audio", "HID / controls").DeviceType == "Game controller", "A game pad with audio is still a game controller.");
+        Check(Identified("Analog keyboard", ["Keyboard", "Game pad"], "Keyboard").DeviceType == "Keyboard" && Identified("Uninformative product", ["Keyboard", "Game pad"], "Keyboard", "HID / controls").DeviceType == "Keyboard", "A boot keyboard that also offers a game pad stays a keyboard.");
+        Check(Identified("Uninformative product", ["Consumer controls"], "HID / controls").DeviceType == "HID / controls", "Other HID collections don't make a game controller.");
+        foreach (var name in new[] { "FANATEC CSL DD", "Heusinkveld Sim Pedals Sprint", "MOZA HBP Handbrake", "Simucube 2 Pro", "Thrustmaster T300RS", "Logitech G923 Racing Wheel for PlayStation and PC", "Asetek SimSports Invicta Wheelbase", "VRS DirectForce Pro", "Simagic Alpha Mini", "DIY button box", "Honeycomb Bravo Throttle Quadrant", "Direct-drive wheel base" })
+            Check(Identified(name, [], "HID / controls").DeviceType == "Game controller", $"\"{name}\" is sim hardware.");
+        Check(Identified("Logitech Wheel Mouse Optical", [], "Mouse").DeviceType == "Mouse" && Identified("Thrustmaster Y-300CPX Headset", [], "Audio").DeviceType == "Audio" && Identified("Wheelock Industries sensor", [], "HID / controls").DeviceType == "HID / controls", "Sim hardware names must not capture mice, headsets or partial words.");
+
+        // A HID collection belongs to the USB device above its interface; across a Bluetooth link, to no USB device.
+        var devices = new Dictionary<string, UsbScanner.DevNode>(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"HID\VID_1234&PID_0001&MI_00\8&1"] = new(@"USB\VID_1234&PID_0001&MI_00\7&1", "", ["Joystick"]),
+            [@"USB\VID_1234&PID_0001&MI_00\7&1"] = new(@"USB\VID_1234&PID_0001\SERIAL", "HidUsb", []),
+            [@"USB\VID_1234&PID_0001\SERIAL"] = new(@"USB\ROOT_HUB30\5&1", "usbccgp", []),
+            [@"HID\{00001124-0000-1000-8000-00805F9B34FB}_VID&0002054C_PID&09CC\9&1"] = new(@"BTHENUM\{00001124}\8&2", "", ["Game pad"]),
+            [@"BTHENUM\{00001124}\8&2"] = new(@"BTH\MS_BTHBRB\7&3", "HidBth", []),
+            [@"BTH\MS_BTHBRB\7&3"] = new(@"USB\VID_0489&PID_E111&MI_00\7&4", "", []),
+            [@"USB\VID_0489&PID_E111&MI_00\7&4"] = new(@"USB\VID_0489&PID_E111\5&5", "BTHUSB", []),
+        };
+        Check(UsbScanner.UsbOwner(@"HID\VID_1234&PID_0001&MI_00\8&1", devices) == @"USB\VID_1234&PID_0001\SERIAL" && UsbScanner.UsbOwner(@"USB\VID_1234&PID_0001\SERIAL", devices) == @"USB\VID_1234&PID_0001\SERIAL", "HID collections and interfaces belong to their USB device.");
+        Check(UsbScanner.UsbOwner(@"HID\{00001124-0000-1000-8000-00805F9B34FB}_VID&0002054C_PID&09CC\9&1", devices) == null && UsbScanner.UsbOwner(@"PCI\VEN_1022&DEV_15E2\4&1", devices) == null, "A Bluetooth controller must not be attributed to the Bluetooth adapter.");
+        Check(UsbScanner.IsUsbDevice(@"USB\ROOT_HUB30\5&1") && !UsbScanner.IsUsbDevice(@"USB\VID_1234&PID_0001&MI_00\7&1"), "Composite interfaces are not USB devices.");
+
+        // Device Manager's setting, per function: one off keeps a composite device awake; a HID driver must use it.
+        static PowerSaving.Setting Setting(bool allowed, string service = "USBHUB3", bool? hid = null) => new("x", service, allowed, hid);
+        Check(PowerSaving.Classify([]) == "Not offered" && PowerSaving.Classify([Setting(true)]) == "On" && PowerSaving.Classify([Setting(false)]) == "Off", "Power saving follows Device Manager's setting.");
+        Check(PowerSaving.Classify([Setting(true, "HidUsb", true), Setting(false, "HidUsb", true)]) == "Off", "One function with power saving off keeps a composite device awake.");
+        Check(PowerSaving.Classify([Setting(true, "HidUsb", false)]) == "Unused by driver" && PowerSaving.Classify([Setting(true, "HidUsb", true)]) == "On" && PowerSaving.Classify([Setting(true, "HidUsb")]) == "On", "A HID driver suspends only when SelectiveSuspendEnabled is on; unknown is not ruled out.");
+        UsbNode Controller(string type, string saving) => new() { Kind = "Device", DeviceType = type, PowerSaving = saving };
+        List<UsbNode> Flagged(bool? plan, params UsbNode[] nodes)
+        {
+            var s = new Snapshot { UsbSuspendPluggedIn = plan, UsbSuspendOnBattery = false, OnBattery = false, Controllers = [.. nodes] };
+            PowerSaving.Analyze(s);
+            return nodes.Where(n => n.PowerWarnings.Contains(PowerSaving.Warning)).ToList();
+        }
+        var wheel = Controller("Game controller", "On");
+        Check(Flagged(true, wheel, Controller("Keyboard", "On"), Controller("Game controller", "Off"), Controller("Game controller", "Unused by driver")).SequenceEqual([wheel]), "Only game controllers that Windows may suspend are flagged.");
+        Check(Flagged(false, Controller("Game controller", "On")).Count == 0, "Nothing is flagged while the power plan's USB selective suspend is off.");
+        Check(Flagged(null, Controller("Game controller", "On")).Count == 1, "An unreported plan setting is taken as Windows' default, on.");
+        var onBattery = new Snapshot { UsbSuspendPluggedIn = true, UsbSuspendOnBattery = false, OnBattery = true };
+        Check(onBattery.UsbSuspendActive == false && PowerSaving.PlanSummary(onBattery) == "Selective suspend off" && PowerSaving.PlanNote(onBattery).Contains("on when plugged in and off on battery"), "The plan setting in force follows the power source.");
+        var demoWheel = demo.Nodes.Single(n => n.Id == "demo/root/9");
+        Check(demoWheel.DeviceType == "Game controller" && demoWheel.PowerWarnings.SequenceEqual([PowerSaving.Warning]) && demo.Nodes.Count(n => n.PowerWarnings.Contains(PowerSaving.Warning)) == 1, "The sample wheel base is a game controller Windows may suspend.");
     }
 
     private static void SocketTests(Snapshot demo)

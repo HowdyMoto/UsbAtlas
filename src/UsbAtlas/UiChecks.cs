@@ -287,8 +287,10 @@ public partial class MainWindow
             for (int i = 5; i <= 16; i++)
                 hub.Children.Add(new UsbNode { Id = hub.Id + "/routing/" + i, Kind = "Device", Name = "Routing device " + i, Port = i });
             hub.PortCount = 16;
-            // The root mixes end devices with a hub mid-row, so wires fan out in both directions.
+            // The root mixes end devices with a hub mid-row, so wires fan out in both directions. It builds on
+            // the sample's first eight root ports, so the wheel base on port 9 makes way.
             var root = snapshot.Nodes.First(n => n.Kind == "Root hub");
+            root.Children.RemoveAll(c => c.Port == 9);
             var nested = new UsbNode { Id = root.Id + "/10", Kind = "Hub", Name = "Nested hub", Port = 10, PortCount = 3 };
             for (int i = 1; i <= 3; i++) nested.Children.Add(new UsbNode { Id = nested.Id + "/" + i, Kind = "Device", Name = "Nested device " + i, Port = i });
             root.Children.Add(nested);
@@ -389,7 +391,9 @@ public partial class MainWindow
             snapshot.Nodes.First(n => n.Id == "demo/root/1/2").SpeedLimited = true;
             Draw(); UpdateLayout();
             foreach (var node in snapshot.Nodes.Where(n => n.Kind is "Device" or "Hub" && n.MaxPowerMa != null && cards.ContainsKey(n.Id)))
-                Check(Glyphs(cards[node.Id].Card).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Power]), $"Card {node.Id} must mark its link rate and requested power with glyphs.");
+                Check(Glyphs(cards[node.Id].Card).SequenceEqual(ShowsPolling(node) ? [NodeVisuals.Metric.Link, NodeVisuals.Metric.Polling, NodeVisuals.Metric.Power] : [NodeVisuals.Metric.Link, NodeVisuals.Metric.Power]),
+                    $"Card {node.Id} must mark its link rate, polling rate when it is an input device, and requested power with glyphs.");
+            Check(snapshot.Nodes.Count(ShowsPolling) == 4 && !ShowsPolling(snapshot.Nodes.First(n => n.Id == "demo/root/1/2")), "Input devices and game controllers show their polling rate; other devices don't.");
             // One line of figures, link then power; reserved bandwidth is the meter's job, and sockets, not
             // a count, show which ports are used.
             foreach (var (id, item) in cards)
@@ -443,6 +447,25 @@ public partial class MainWindow
             Check(Beside("demo/root/5/1", NodeVisuals.Metric.Power).SequenceEqual(["Power at risk"]), "Power at risk must sit beside the power request.");
             Check(Beside("demo/root/5/3", NodeVisuals.Metric.Power).SequenceEqual(["Insufficient power"]), "A power fault must sit beside the power request.");
             Check(!Beside("demo/root/3", NodeVisuals.Metric.Power).Contains("Unstable connection") && !Beside("demo/root/3", NodeVisuals.Metric.Link).Contains("Unstable connection"), "Other issues stay below the metrics.");
+            // A game controller that Windows may suspend says so below its figures, in the game controller hue.
+            var wheel = snapshot.Nodes.First(n => n.Id == "demo/root/9");
+            Check(Issue(wheel) == PowerSaving.Warning && !Beside(wheel.Id, NodeVisuals.Metric.Link).Contains(PowerSaving.Warning) && OtherIssues(wheel).Any(i => i.Text == PowerSaving.Warning), "Selective suspend on a game controller must be listed below its figures.");
+            Check(cards[wheel.Id].Card.Background == Brush("GamingFill") && VisualDescendants(cards[wheel.Id].Card).OfType<TextBlock>().Any(t => new System.Windows.Documents.TextRange(t.ContentStart, t.ContentEnd).Text.Contains("1000 Hz")), "The wheel base card must use the game controller hue and show its 1000 Hz polling.");
+            foreach (var (query, expected) in new[] { ("1000 Hz", new[] { "demo/root/4", "demo/root/9" }), ("Joystick", ["demo/root/9"]), (PowerSaving.Warning, ["demo/root/9"]) })
+            {
+                Search.Text = query; ApplySearch();
+                Check(matches.Select(n => n.Id).SequenceEqual(expected), $"Searching \"{query}\" must find {string.Join(", ", expected)}.");
+            }
+            Search.Clear(); ApplySearch();
+            SelectNode(wheel); LocateClick(this, new RoutedEventArgs()); UpdateLayout();
+            CaptureUi("sim-hardware-preview.png");
+            string Row(string label) => Details.Children.OfType<Grid>().Where(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == label).Select(g => g.Children[1]).OfType<TextBlock>().Single().Text;
+            Check(Row("Polling rate") == "1000 Hz · every 1 ms" && Row("Power saving") == "On", "Properties must show the wheel base's polling rate and power-saving setting.");
+            SelectNode(snapshot.Controllers[0]); UpdateLayout();
+            Check(Row("Power saving") == "On" && Row("Power plan") == "Selective suspend on", "Host properties must show the root hub's power-saving setting and the power plan.");
+            snapshot.UsbSuspendPluggedIn = false; SelectNode(wheel); UpdateLayout();
+            Check(Row("Power saving") == "On · plan disables it", "A device's power saving must say when the power plan disables it.");
+            snapshot.UsbSuspendPluggedIn = true;
             foreach (var (id, item) in cards)
                 Check(item.Card.Child.DesiredSize.Height <= item.Card.Height - item.Card.Padding.Top - item.Card.Padding.Bottom - 1, $"Card {id} content, including issue badges, exceeds its height.");
             VerifyStatusStyling();
