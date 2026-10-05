@@ -87,8 +87,9 @@ internal static class Explanations
             }
             case "Unstable connection":
             {
-                // The count is the whole session; the last few times say when.
-                var shown = n.QuickReconnectTimes.TakeLast(4).Select(t => t.ToString("HH:mm:ss")).ToList();
+                // The count is the whole session; the last few times say when, in the same local time format
+                // as Detection details and the status bar.
+                var shown = n.QuickReconnectTimes.TakeLast(4).Select(t => t.ToString("T")).ToList();
                 string times = shown.Count == 0 ? "" : (n.QuickReconnectTimes.Count > shown.Count ? ", most recently at " : ", at ") + (shown.Count == 1 ? shown[0] : string.Join(", ", shown[..^1]) + " and " + shown[^1]);
                 bool hub = n.Kind == "Hub";
                 var steps = new List<string>
@@ -241,7 +242,7 @@ internal static class Explanations
         if (n.Usb3SideMissing)
             return usbC
                 ? ("Its USB-C connection isn't carrying USB 3.",
-                    ["If this hub is in a monitor and the picture comes through the same cable, the cable is fine: the monitor is using the cable's fast lanes for the display. Its menu may have a setting, such as USB-C Prioritization, that gives them to USB instead; the display may then be limited to a lower resolution or refresh rate.",
+                    ["If this hub is in a monitor and the picture comes through the same cable, the cable is fine: the monitor is using the cable's fast lanes for the display. Some monitors have a menu setting, such as USB-C Prioritization, that gives some of them to USB at a cost in resolution or refresh rate. Without one, USB over this cable stays at USB 2: plug drives and other fast devices into the computer instead.",
                      "Otherwise, the cable probably carries only USB 2, as many charging cables do. Use one rated 5 Gb/s or faster."])
                 : ("Its USB 3 connection didn't come up; only its USB 2 side is connected.", [seat, cableStep]);
         // A hub upstream that runs slower holds everything behind it back. A paired USB 3 hub's USB 2 side

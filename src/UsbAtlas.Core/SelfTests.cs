@@ -450,6 +450,11 @@ internal static class SelfTests
         var monitorKvm = new UsbNode { Kind = "Hub", InstanceId = hubId, Children = [kvmKeyboard] };
         kvm.Apply(new Snapshot { Controllers = [new UsbNode { Kind = "Controller", Children = [monitorKvm] }] });
         Check(monitorKvm.QuickReconnects == 3 && kvmKeyboard.QuickReconnects == 0, "Devices that drop with their hub are explained by the hub.");
+        Check(IssueRules.For(monitorKvm).Contains((Severity.Note, "Unstable connection")) && IssueRules.For(new UsbNode { Kind = "Device", QuickReconnects = 3 }).Contains((Severity.Warning, "Unstable connection")),
+            "A whole hub reconnecting, as a KVM switch does, is a note; a device dropping on its own is a warning.");
+        string lastReturn = monitorKvm.QuickReconnectTimes[^1].ToString("T");
+        Check(monitorKvm.Notes.Any(n => n.Contains(lastReturn)) && Explanations.For(monitorKvm, "Unstable connection", [monitorKvm]).What.Contains(lastReturn),
+            "Reconnect times read the same in the explanation and in Detection details.");
         for (int i = 0; i < 3; i++) { kvm.Removed(keyboardId, t0.AddSeconds(600 + i * 20)); kvm.Arrived(keyboardId, t0.AddSeconds(602 + i * 20)); }
         kvmKeyboard.QuickReconnects = 0; monitorKvm.QuickReconnects = 0;
         kvm.Apply(new Snapshot { Controllers = [new UsbNode { Kind = "Controller", Children = [monitorKvm] }] });
