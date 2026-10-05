@@ -57,7 +57,7 @@ public partial class MainWindow
             if (!deviceLabels.TrySetSnap(node, snapshot, enabled, out var message)) { StatusText.Text = message; return; }
             // Stages are drawn only in the vertical layout, so linking one makes it the remembered layout; they
             // show at full size, framed on this hub, since a far view draws the real hierarchy instead.
-            horizontalTree = false; OrientationButton.Content = "Layout: vertical";
+            horizontalTree = false; ShowLayoutChoice();
             if (enabled) SaveLayout(false);
             focusedBranch = null; FocusBranchButton.Content = "Focus branch";
             foreach (var ancestor in FindPath(node.Id)) folded.Remove(ancestor.Id);

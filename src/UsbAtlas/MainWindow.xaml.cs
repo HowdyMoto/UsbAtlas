@@ -37,7 +37,7 @@ public partial class MainWindow : Window
         ((System.Windows.Shapes.Path)((Canvas)copyGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextPrimary");
         CopyDetailsIcon.Content = copyGlyph;
         horizontalTree = horizontal ?? SavedLayoutIsHorizontal();
-        OrientationButton.Content = horizontalTree ? "Layout: horizontal" : "Layout: vertical";
+        ShowLayoutChoice();
         ThemeButton.Content = Theme.IsDark ? "Light mode" : "Dark mode";
         Loaded += async (_, _) =>
         {
@@ -527,21 +527,30 @@ public partial class MainWindow : Window
         finally { arranging = false; }
     }
     private double FitScale() => Math.Min((GraphScroll.ViewportWidth - 32) / Graph.Width, (GraphScroll.ViewportHeight - 32) / Graph.Height);
-    private void OrientationClick(object sender, RoutedEventArgs e)
+    // Layout is a two-way choice, so both options show, the current one is marked, and one click switches.
+    private void LayoutChoiceClick(object sender, RoutedEventArgs e)
     {
-        var menu = new ContextMenu();
-        foreach (bool horizontal in new[] { false, true })
+        bool horizontal = sender == HorizontalLayoutButton;
+        if (horizontal == horizontalTree) return;
+        SetOrientation(horizontal);
+        if (!SaveLayout(horizontal)) StatusText.Text = "Layout changed; preference could not be saved.";
+    }
+    private void ShowLayoutChoice()
+    {
+        foreach (var (button, horizontal) in new[] { (HorizontalLayoutButton, true), (VerticalLayoutButton, false) })
         {
-            var item = new MenuItem { Header = horizontal ? "Horizontal" : "Vertical", IsCheckable = true, IsChecked = horizontalTree == horizontal };
-            item.Click += (_, _) => { SetOrientation(horizontal); if (!SaveLayout(horizontal)) StatusText.Text = "Layout changed; preference could not be saved."; };
-            menu.Items.Add(item);
+            bool chosen = horizontalTree == horizontal;
+            if (chosen) { button.SetResourceReference(BackgroundProperty, "SelectionStrong"); button.SetResourceReference(BorderBrushProperty, "Accent"); }
+            else { button.ClearValue(BackgroundProperty); button.ClearValue(BorderBrushProperty); }
+            Panel.SetZIndex(button, chosen ? 1 : 0);
+            button.FontWeight = chosen ? FontWeights.SemiBold : FontWeights.Normal;
+            System.Windows.Automation.AutomationProperties.SetItemStatus(button, chosen ? "Selected" : "");
         }
-        menu.PlacementTarget = OrientationButton; menu.IsOpen = true;
     }
     private void SetOrientation(bool horizontal)
     {
         horizontalTree = horizontal;
-        OrientationButton.Content = horizontalTree ? "Layout: horizontal" : "Layout: vertical";
+        ShowLayoutChoice();
         FitClick(this, new RoutedEventArgs());
     }
     private void GraphSizeChanged(object sender, SizeChangedEventArgs e)
@@ -678,6 +687,8 @@ public partial class MainWindow : Window
         var collapsed = folded.ToHashSet();
         SetOrientation(!horizontalTree);
         Check(selected?.Id == selection && folded.SetEquals(collapsed), "Changing direction lost selection or folded branches.");
+        var (on, off) = horizontalTree ? (HorizontalLayoutButton, VerticalLayoutButton) : (VerticalLayoutButton, HorizontalLayoutButton);
+        Check(on.Background == Brush("SelectionStrong") && on.FontWeight == FontWeights.SemiBold && off.Background == Brush("Surface") && off.FontWeight == FontWeights.Normal, "The layout control must mark the current layout and only it.");
         var switched = cards.Values.ToList();
         for (int i = 0; i < switched.Count; i++)
             for (int j = i + 1; j < switched.Count; j++)

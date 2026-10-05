@@ -829,7 +829,7 @@ public partial class MainWindow
         {
             Search.Clear(); searchTimer.Stop(); folded.Clear();
             snapshot = savedSnapshot; selected = savedSelection; horizontalTree = savedHorizontal;
-            OrientationButton.Content = horizontalTree ? "Layout: horizontal" : "Layout: vertical";
+            ShowLayoutChoice();
             FitClick(this, new RoutedEventArgs()); ShowDetails(); UpdateIssues();
         }
     }
