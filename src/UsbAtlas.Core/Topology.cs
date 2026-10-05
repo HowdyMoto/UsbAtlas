@@ -34,10 +34,18 @@ internal static class Topology
 
     // Everything search looks at: names, IDs, types, sockets, issues, path, functions and figures.
     internal static string SearchText(UsbNode n, string? path) =>
-        $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {n.Connector} {n.SocketSpeed} {IssueRules.Summary(n)} {path} {string.Join(" ", n.InterfaceFunctions)} {string.Join(" ", n.HidUsages)} {(n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : "")} {(n.Kind == "Hub" ? TtType(n) : "")}";
+        $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {n.Connector} {n.SocketSpeed} {PciText(n)} {IssueRules.Summary(n)} {path} {string.Join(" ", n.InterfaceFunctions)} {string.Join(" ", n.HidUsages)} {(n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : "")} {(n.Kind == "Hub" ? TtType(n) : "")}";
 
     internal static string TtType(UsbNode n) => n.TransactionTranslators switch { "Single" => "Share one link · single TT", "Per port" => "Link per port · multi-TT", "Not reported" => "Not reported", _ => "None" };
-    internal static string ShortSpeed(UsbNode n) => n.LinkMbps switch { 5000 => "5 Gb/s", 480 => "480 Mb/s", 12 => "12 Mb/s", 1.5 => "1.5 Mb/s", _ => n.Speed.StartsWith("SuperSpeedPlus") ? "≥10 Gb/s" : "Rate unknown" };
+    internal static string ShortSpeed(UsbNode n) => n.LinkMbps switch { > 5000 and var fast => $"{fast / 1000:0.##} Gb/s", 5000 => "5 Gb/s", 480 => "480 Mb/s", 12 => "12 Mb/s", 1.5 => "1.5 Mb/s", _ => n.Speed.StartsWith("SuperSpeedPlus") ? "≥10 Gb/s" : "Rate unknown" };
+    // A host controller's PCI identity and place, such as "PCI 1022:1128 at 04:00.3".
+    internal static string PciText(UsbNode n) => n.PciId.Length == 0 ? "" : $"PCI {n.PciId}{(n.PciAddress.Length > 0 ? " at " + n.PciAddress : "")}";
+    // Who made the controller chip, for the makers of nearly every USB host controller.
+    internal static string PciVendor(string pciId) => pciId.Split(':')[0] switch
+    {
+        "8086" => "Intel", "1022" or "1002" => "AMD", "1B21" => "ASMedia", "1912" => "Renesas", "1033" => "NEC", "1106" => "VIA",
+        "104C" => "Texas Instruments", "1B73" => "Fresco Logic", "1B6F" => "Etron", "10DE" => "NVIDIA", _ => ""
+    };
 
     // Input devices and game controllers show how often they are polled, since that is what their
     // owners compare; for other devices it is in Properties.

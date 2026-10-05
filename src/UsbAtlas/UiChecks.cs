@@ -628,6 +628,16 @@ public partial class MainWindow
             var text = Descendants(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
             Check(text.Contains("Port support") && text.Any(t => t.Contains("USB 3.x")), "Host inspector lost reported port protocols.");
             Check(text.Contains("Power available") && text.Contains("Unknown · not measured") && !text.Contains("Link speed"), "Host inspector must distinguish unknown supply from peripheral metrics.");
+            Check(text.Contains("PCI device") && text.Contains("Not reported"), "A host without a PCI identity must say so.");
+            // Detection details stays folded until opened, so its lines are read from its content.
+            List<string> Evidence() => Details.Children.OfType<Expander>().Single().Content is StackPanel lines ? lines.Children.OfType<TextBlock>().Select(t => t.Text).ToList() : [];
+            snapshot.Controllers[0].PciId = "8086:A36D"; snapshot.Controllers[0].PciAddress = "00:14.0"; ShowDetails(); UpdateLayout();
+            text = Descendants(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
+            Check(text.Contains("Intel · 8086:A36D · 00:14.0") && Evidence().Any(t => t.Contains("PCI identity: 8086:A36D")), "Host inspector must show the controller's PCI identity.");
+            // A port map note explains itself like any other issue, and names the firmware as the cause.
+            var noted = snapshot.Nodes.First(n => n.PortMapWarnings.Count > 0); SelectNode(noted); UpdateLayout();
+            text = Descendants(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
+            Check(text.Any(t => t.Contains("without a USB 2 half")) && text.Any(t => t.Contains("firmware")) && Evidence().Any(t => t.StartsWith("Port map evidence: ")), "A port map note must be explained in Properties with its evidence.");
             var hub = snapshot.Nodes.First(n => n.Kind == "Hub"); SelectNode(hub); UpdateLayout();
             Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, "edit-device-name")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var editor = inlineLabelHost!; UpdateLayout();

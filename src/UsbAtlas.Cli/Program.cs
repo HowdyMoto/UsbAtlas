@@ -31,10 +31,20 @@ internal static class Program
           events                 Recent USB events from the Windows logs. --since 24h (default), --max 100,
                                  --errors for critical, error and warning events only.
           watch                  Report devices connecting, disconnecting and changing as it happens, and
-                                 devices that drop and come back. --for 60s (default; 0 runs until Ctrl+C),
-                                 --verbose for every Windows notification.
+                                 devices that drop and come back. When the computer sleeps and wakes, it
+                                 reports what didn't come back or came back slower. --for 60s (default; 0
+                                 runs until Ctrl+C), --verbose for every Windows notification, --out FILE
+                                 to also append each event to FILE as a line of JSON.
           scan                   The full snapshot as JSON. --out FILE saves it; --raw includes descriptors.
           diff <before> [<after>]  What changed between two saved snapshots, or between one and now.
+          map                    This machine's port map as JSON: each host controller's ports as the
+                                 firmware describes them to Windows (what each speaks, whether it can be
+                                 plugged into, USB-C, debug capable, and the other half of its socket) and
+                                 what is wired in. --out FILE saves it; --devices also expects what is
+                                 plugged in now, for a test fixture.
+          check [<map>]          Check the firmware's port map for contradictions and, given a map saved
+                                 from a known-good unit, that this machine matches it. A field deleted
+                                 from the map isn't checked.
           mcp                    Serve the commands as Model Context Protocol tools on stdin/stdout.
           self-test              Run the built-in checks.
           version                Print the version.
@@ -51,7 +61,7 @@ internal static class Program
 
         Exit codes
           0  Success; for issues, nothing worse than notes.
-          1  issues found warnings.
+          1  issues found warnings; check found a mismatch or a port map finding.
           2  issues found errors.
           3  Failure: bad arguments, a target that matches nothing or several things, a file that won't
              load, or a scan Windows refused.
@@ -61,6 +71,7 @@ internal static class Program
           usbatlas-cli show H01/02 --json
           usbatlas-cli scan --out before.json   (change something)   usbatlas-cli diff before.json
           usbatlas-cli watch --for 30s
+          usbatlas-cli map --out board.json   (on another unit)   usbatlas-cli check board.json
           claude mcp add usb-atlas -- "C:\path\to\usbatlas-cli.exe" mcp
         """;
 
@@ -128,12 +139,30 @@ internal static class Program
                     string json = JsonSerializer.Serialize(s.Snapshot, Json.Options);
                     if (o.Get("out") is string file)
                     {
-                        try { File.WriteAllText(file, json); }
-                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new CliException($"Can't write {file}: {ex.Message}"); }
+                        Save(file, json);
                         output.WriteLine($"Saved {s.Snapshot.Nodes.Count(n => n.Kind == "Device")} devices and {s.Snapshot.Nodes.Count(n => n.Kind == "Hub")} hubs to {file}.");
                     }
                     else output.WriteLine(json);
                     return 0;
+                }
+                case "map":
+                {
+                    var map = PortMapFile.Export(Session.Open(o), o.Has("devices"));
+                    if (o.Get("out") is string file)
+                    {
+                        Save(file, Json.Write(map));
+                        output.WriteLine($"Saved the port map of {map["controllers"]!.AsArray().Count} controllers and {PortMapFile.PortCount(map)} ports to {file}. Check a machine against it with usbatlas-cli check {file}.");
+                    }
+                    else output.WriteLine(Json.Write(map));
+                    return 0;
+                }
+                case "check":
+                {
+                    if (o.Positional.Count > 1) throw new CliException("check takes one port map file, or none to check only that the port map is consistent: check [<map.json>].");
+                    var map = o.Positional.Count == 1 ? PortMapFile.Load(o.Positional[0]) : null;
+                    var report = PortMapFile.Check(Session.Open(o), map, o.Positional.Count == 1 ? Path.GetFileName(o.Positional[0]) : null);
+                    Print(report);
+                    return report["result"]!.ToString() == "pass" ? 0 : 1;
                 }
                 case "diff":
                 {
@@ -148,9 +177,14 @@ internal static class Program
                 }
                 case "watch":
                 {
-                    var summary = Watch.Run(o, o.Duration("for", TimeSpan.FromSeconds(60)), o.Has("verbose"), o.Has("redact"),
-                        e => { output.Write(o.Json ? Json.Write(e, false) + Environment.NewLine : Watch.Text(e)); output.Flush(); }, cancel);
-                    output.Write(o.Json ? Json.Write(summary, false) + Environment.NewLine : Watch.Text(summary));
+                    // --out keeps every event as a line of JSON, whatever the console shows.
+                    using var log = o.Get("out") is string logFile ? OpenLog(logFile) : null;
+                    void Emit(JsonObject e)
+                    {
+                        output.Write(o.Json ? Json.Write(e, false) + Environment.NewLine : Watch.Text(e)); output.Flush();
+                        log?.WriteLine(Json.Write(e, false)); log?.Flush();
+                    }
+                    Emit(Watch.Run(o, o.Duration("for", TimeSpan.FromSeconds(60)), o.Has("verbose"), o.Has("redact"), Emit, cancel));
                     return 0;
                 }
                 case "self-test":
@@ -173,5 +207,15 @@ internal static class Program
         }
     }
 
+    private static void Save(string file, string text)
+    {
+        try { File.WriteAllText(file, text); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new CliException($"Can't write {file}: {ex.Message}"); }
+    }
+    private static StreamWriter OpenLog(string file)
+    {
+        try { return new StreamWriter(file, true, new UTF8Encoding(false)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new CliException($"Can't write {file}: {ex.Message}"); }
+    }
     private static string Need(string value, string usage) => value.Length > 0 ? value : throw new CliException("Usage: usbatlas-cli " + usage);
 }

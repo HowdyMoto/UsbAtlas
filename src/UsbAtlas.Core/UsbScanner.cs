@@ -49,6 +49,10 @@ public sealed class UsbScanner
                     var controller = new UsbNode { Id = path, Kind = "Controller", Name = Property(set, ref dev, 12) ?? Property(set, ref dev, 0) ?? "USB host controller", PowerSource = "System supplied" };
                     var instance = new StringBuilder(512);
                     if (Native.SetupDiGetDeviceInstanceId(set, ref dev, instance, instance.Capacity, out _)) controller.InstanceId = instance.ToString();
+                    (controller.PciId, controller.PciSubsystem, controller.PciRevision) = PciIdentity(controller.InstanceId);
+                    // SPDRP_BUSNUMBER and SPDRP_ADDRESS; a PCI address is its device number over its function number.
+                    if (controller.PciId.Length > 0 && DwordProperty(set, ref dev, 21) is uint bus && DwordProperty(set, ref dev, 28) is uint address)
+                        controller.PciAddress = $"{bus:X2}:{address >> 16:X2}.{address & 0xFFFF:X}";
                     controller.Location = "Host";
                     controller.LocationEvidence = "Host controller: motherboard or expansion hardware. Physical mounting is not reported.";
                     controller.Notes.Add("Controller ports may use separate USB 2 and USB 3 buses. Their link rates are not a single controller-wide bandwidth budget.");
@@ -72,6 +76,7 @@ public sealed class UsbScanner
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         HubRelationships.Analyze(snapshot);
         HubRelationships.NoteReducedSpeed(snapshot);
+        PortMap.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
         PowerSaving.Read(snapshot, devices);
@@ -113,6 +118,13 @@ public sealed class UsbScanner
                 node.CompanionPortNumber = BitConverter.ToUInt16(connector, 14);
                 if (connectorReturned > 16)
                     node.CompanionHubSymbolicLink = Encoding.Unicode.GetString(connector, 16, (Math.Min(connectorReturned, connector.Length) - 16) & ~1).Split('\0')[0];
+                // A socket with several companions lists them by CompanionIndex, until one has no port number.
+                for (ushort index = 1; node.PortHasMultipleCompanions == true && index < 8; index++)
+                {
+                    var more = new byte[4096]; Put(more, 0, port); BitConverter.GetBytes(index).CopyTo(more, 12);
+                    if (!Query(handle, 278, more, out var moreReturned) || moreReturned <= 16 || BitConverter.ToUInt16(more, 14) == 0) break;
+                    node.MoreCompanions.Add(new() { PortNumber = BitConverter.ToUInt16(more, 14), HubSymbolicLink = Encoding.Unicode.GetString(more, 16, (Math.Min(moreReturned, more.Length) - 16) & ~1).Split('\0')[0] });
+                }
             }
             DeviceIdentity.AssignLocation(node, hub);
             var v2 = new byte[16]; Put(v2, 0, port); Put(v2, 4, 16); Put(v2, 8, 7);
@@ -140,6 +152,17 @@ public sealed class UsbScanner
             var bcd = BitConverter.ToUInt16(data, 6);
             node.UsbVersion = $"USB {bcd >> 8:X}.{(bcd >> 4) & 15:X}{bcd & 15:X}";
             (node.Speed, node.LinkMbps) = DecodeSpeed(data[23], flags);
+            // A SuperSpeedPlus link's lane speed and lane count come from a query of their own, which
+            // Windows refuses for slower links.
+            if ((flags & 4) != 0)
+            {
+                var plus = new byte[24]; Put(plus, 0, port); Put(plus, 4, plus.Length);
+                if (Query(handle, 289, plus, out var plusReturned) && plusReturned >= 24)
+                {
+                    if (CaptureRaw) node.Raw!.SuperSpeedPlus = Convert.ToHexString(plus, 8, 16);
+                    if (DecodeSuperSpeedPlus(plus) is (var speed, var mbps, var lanes)) (node.Speed, node.LinkMbps, node.LinkLanes) = (speed, mbps, lanes);
+                }
+            }
             if (hasV2) node.SuperSpeedPlusCapable = (flags & 8) != 0;
             node.SpeedLimited = ((flags & 2) != 0 && (flags & 1) == 0) || ((flags & 8) != 0 && (flags & 4) == 0);
             if (node.Kind == "Hub" && node.LinkMbps == 480) node.TransactionTranslators = TransactionTranslators(data);
@@ -203,6 +226,33 @@ public sealed class UsbScanner
         if ((flags & 4) != 0) return ("SuperSpeedPlus · 10 Gb/s or higher", null);
         if ((flags & 1) != 0) return ("SuperSpeed · 5 Gb/s", 5000);
         return speed switch { 0 => ("Low speed · 1.5 Mb/s", 1.5), 1 => ("Full speed · 12 Mb/s", 12), 2 => ("High speed · 480 Mb/s", 480), 3 => ("SuperSpeed · 5 Gb/s", 5000), _ => ("Not reported", null) };
+    }
+    // USB_NODE_CONNECTION_SUPERSPEEDPLUS_INFORMATION: the port index and length, then the RX sublink speed
+    // and lane count and the TX pair. A sublink speed is a mantissa (bits 16-31) scaled by an exponent
+    // (bits 4-5: bits, kilobits, megabits or gigabits per second) for one lane, and lane counts are one
+    // less than the lanes. Null when Windows fills in nothing usable, which keeps "10 Gb/s or higher".
+    internal static (string Speed, double Mbps, int Lanes)? DecodeSuperSpeedPlus(byte[] info)
+    {
+        if (info.Length < 24) return null;
+        static (double Mbps, int Lanes) Sublink(byte[] b, int at)
+        {
+            uint speed = BitConverter.ToUInt32(b, at);
+            int lanes = (int)Math.Min(BitConverter.ToUInt32(b, at + 4), 7) + 1;
+            return ((speed >> 16) * Math.Pow(1000, (speed >> 4) & 3) / 1e6 * lanes, lanes);
+        }
+        var (rx, rxLanes) = Sublink(info, 8); var (tx, txLanes) = Sublink(info, 16);
+        // A link is as fast as its slower direction; the two match on every host port made so far.
+        double mbps = Math.Min(rx, tx); int lanes = Math.Min(rxLanes, txLanes);
+        if (mbps < 5000 || mbps > 80000 || lanes > 4) return null;
+        return ($"SuperSpeedPlus · {mbps / 1000:0.##} Gb/s{(lanes > 1 ? $" · {lanes} lanes" : "")}", mbps, lanes);
+    }
+    // PCI\VEN_1022&DEV_1128&SUBSYS_380C17AA&REV_00\… names the vendor and device, the subsystem's device
+    // then vendor, and the revision. Each reads vendor:device, as lspci prints them.
+    internal static (string Id, string Subsystem, string Revision) PciIdentity(string instanceId)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(instanceId, @"^PCI\\VEN_([0-9A-F]{4})&DEV_([0-9A-F]{4})(?:&SUBSYS_([0-9A-F]{4})([0-9A-F]{4}))?(?:&REV_([0-9A-F]{2}))?", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return ("", "", "");
+        return ($"{m.Groups[1].Value}:{m.Groups[2].Value}".ToUpperInvariant(), m.Groups[3].Success ? $"{m.Groups[4].Value}:{m.Groups[3].Value}".ToUpperInvariant() : "", m.Groups[5].Value.ToUpperInvariant());
     }
     // A high-speed hub's transaction translators carry its full- and low-speed devices. bDeviceProtocol follows
     // the 4-byte port index and the device descriptor's first six bytes: 1 is one TT shared by every port, 2 is
@@ -326,6 +376,11 @@ public sealed class UsbScanner
         var bytes = new byte[8192];
         return Native.SetupDiGetDeviceRegistryProperty(set, ref d, property, out _, bytes, (uint)bytes.Length, out var needed)
             ? Encoding.Unicode.GetString(bytes, 0, (int)Math.Min(needed, (uint)bytes.Length) & ~1).Split('\0', StringSplitOptions.RemoveEmptyEntries) : [];
+    }
+    private static uint? DwordProperty(IntPtr set, ref Native.DeviceData d, uint property)
+    {
+        var bytes = new byte[4];
+        return Native.SetupDiGetDeviceRegistryProperty(set, ref d, property, out _, bytes, 4, out var needed) && needed == 4 ? BitConverter.ToUInt32(bytes) : null;
     }
     private static string? Property(IntPtr set, ref Native.DeviceData d, uint property)
     {

@@ -108,7 +108,10 @@ internal static class SelfTests
         var port = new UsbNode();
         Check(port.PortIsUserConnectable == null && port.PortConnectorIsTypeC == null, "Missing connector query must remain unknown.");
         DeviceIdentity.ApplyPortProperties(port, 9);
-        Check(port.PortIsUserConnectable == true && port.PortConnectorIsTypeC == true, "Decode user-accessible USB-C flags.");
+        Check(port.PortIsUserConnectable == true && port.PortConnectorIsTypeC == true && port.PortIsDebugCapable == false && port.PortHasMultipleCompanions == false, "Decode user-accessible USB-C flags.");
+        DeviceIdentity.ApplyPortProperties(port, 6);
+        Check(port.PortIsDebugCapable == true && port.PortHasMultipleCompanions == true && port.PortIsUserConnectable == false, "Decode the debug-capable and multiple-companion flags.");
+        DeviceIdentity.ApplyPortProperties(port, 9);
         DeviceIdentity.ApplyPortProperties(port, 0);
         Check(port.PortConnectorIsTypeC == false, "Non-Type-C must not be guessed as Type-A.");
         DeviceIdentity.AssignLocation(port, new UsbNode { Location = "External" });
@@ -138,6 +141,8 @@ internal static class SelfTests
         Check(Identified("LED flash ring light", Interface(3, 0, 0)).DeviceType == "HID / controls", "Storage names must not reclassify devices without storage.");
         Check(demo.Nodes.First(x => x.Name == "Portable SSD").DeviceType == "External drive", "Demo SSD is an external drive.");
         SocketTests(demo);
+        LinkRateTests();
+        PortMapTests(demo);
         BudgetTests(demo);
         SimHardwareTests(demo);
         IdentityTests.Run();
@@ -217,6 +222,100 @@ internal static class SelfTests
         Check(onBattery.UsbSuspendActive == false && PowerSaving.PlanSummary(onBattery) == "Selective suspend off" && PowerSaving.PlanNote(onBattery).Contains("on when plugged in and off on battery"), "The plan setting in force follows the power source.");
         var demoWheel = demo.Nodes.Single(n => n.Id == "demo/root/9");
         Check(demoWheel.DeviceType == "Game controller" && demoWheel.PowerWarnings.SequenceEqual([PowerSaving.Warning]) && demo.Nodes.Count(n => n.PowerWarnings.Contains(PowerSaving.Warning)) == 1, "The sample wheel base is a game controller Windows may suspend.");
+    }
+
+    // A SuperSpeedPlus link's rate and lanes, as Windows reports them, and what they do to the figures.
+    private static void LinkRateTests()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        // Port index and length, then RX and TX: a sublink speed (mantissa in the high word, exponent 3 for
+        // Gb/s in bits 4-5, SuperSpeedPlus protocol in bit 14) and a lane count that is one less than the lanes.
+        static byte[] Info(uint speed, uint lanes) => [.. BitConverter.GetBytes(1), .. BitConverter.GetBytes(24), .. BitConverter.GetBytes(speed), .. BitConverter.GetBytes(lanes), .. BitConverter.GetBytes(speed), .. BitConverter.GetBytes(lanes)];
+        const uint Gen2 = 0x000A4030, Gen1 = 0x00050030;
+        Check(UsbScanner.DecodeSuperSpeedPlus(Info(Gen2, 0)) is ("SuperSpeedPlus · 10 Gb/s", 10000, 1), "One 10 Gb/s lane is 10 Gb/s.");
+        Check(UsbScanner.DecodeSuperSpeedPlus(Info(Gen2, 1)) is ("SuperSpeedPlus · 20 Gb/s · 2 lanes", 20000, 2), "Two 10 Gb/s lanes are 20 Gb/s.");
+        Check(UsbScanner.DecodeSuperSpeedPlus(Info(Gen1, 1)) is ("SuperSpeedPlus · 10 Gb/s · 2 lanes", 10000, 2), "Two 5 Gb/s lanes are 10 Gb/s.");
+        Check(UsbScanner.DecodeSuperSpeedPlus(Info(0, 0)) == null && UsbScanner.DecodeSuperSpeedPlus(new byte[8]) == null, "A rate Windows left empty stays unresolved.");
+        byte[] uneven = Info(Gen2, 1); BitConverter.GetBytes(Gen1).CopyTo(uneven, 16); BitConverter.GetBytes(0).CopyTo(uneven, 20);
+        Check(UsbScanner.DecodeSuperSpeedPlus(uneven) is (_, 5000, 1), "A link is as fast as its slower direction.");
+        var twenty = new UsbNode { Kind = "Device", LinkMbps = 20000, LinkLanes = 2, Speed = "SuperSpeedPlus · 20 Gb/s · 2 lanes" };
+        var gen1x2 = new UsbNode { Kind = "Device", LinkMbps = 10000, LinkLanes = 2 };
+        var unresolved = new UsbNode { Kind = "Device", Speed = "SuperSpeedPlus · 10 Gb/s or higher" };
+        Check(Topology.ShortSpeed(twenty) == "20 Gb/s" && Topology.ShortSpeed(new UsbNode { LinkMbps = 10000 }) == "10 Gb/s" && Topology.ShortSpeed(unresolved) == "≥10 Gb/s" && Topology.ShortSpeed(new UsbNode { LinkMbps = 5000 }) == "5 Gb/s", "A resolved rate is shown exactly, and an unresolved one as a floor.");
+        Check(Math.Abs(UsbBudgets.ReservableMbps(twenty)!.Value - 20000 * 128.0 / 132 * 0.9) < 0.01 && UsbBudgets.ReservableMbps(gen1x2) == 7200
+            && Math.Abs(UsbBudgets.ReservableMbps(unresolved)!.Value - 10000 * 128.0 / 132 * 0.9) < 0.01, "Reservable time follows the resolved rate and its lanes' encoding; unresolved assumes 10 Gb/s.");
+        Check(UsbBudgets.SuperSpeed(twenty) && !HubRelationships.ReducedSpeed(twenty), "A resolved SuperSpeedPlus link is a USB 3 link at full speed.");
+        Check(UsbScanner.PciIdentity(@"PCI\VEN_1022&DEV_1128&SUBSYS_380C17AA&REV_00\4&4A6783B&0&0441") == ("1022:1128", "17AA:380C", "00"), "A PCI instance ID names vendor:device, the subsystem's vendor:device and the revision.");
+        Check(UsbScanner.PciIdentity(@"pci\ven_8086&dev_a36d") == ("8086:A36D", "", "") && UsbScanner.PciIdentity(@"ACPI\PNP0D10\0") == ("", "", ""), "A short PCI ID still names the chip, and a controller that isn't on PCI has none.");
+        var host = new UsbNode { Kind = "Controller", PciId = "8086:A36D", PciAddress = "00:14.0" };
+        Check(Topology.PciText(host) == "PCI 8086:A36D at 00:14.0" && Topology.PciVendor(host.PciId) == "Intel" && Topology.PciText(new UsbNode()) == "" && Topology.SearchText(host, "H01").Contains("8086:A36D"), "A host controller is named and found by its PCI identity.");
+    }
+
+    // The firmware's port map: root ports whose description contradicts itself are noted, and nothing else is.
+    private static void PortMapTests(Snapshot demo)
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        static UsbNode Port(int number, string protocols, bool user = true, bool? usbC = false) => new() { Id = "r/" + number, Port = number, Kind = "Empty port", Protocols = protocols, PortIsUserConnectable = user, PortConnectorIsTypeC = usbC };
+        static void Link(UsbNode a, UsbNode b) { a.CompanionId = b.Id; a.CompanionPortNumber = b.Port; }
+        static Snapshot Board(params UsbNode[] ports) { var s = new Snapshot { Controllers = [new UsbNode { Id = "c", Kind = "Controller", Children = [new UsbNode { Id = "r", Kind = "Root hub", Children = [.. ports] }] }] }; PortMap.Analyze(s); return s; }
+        const string Usb2 = "USB 1.x / USB 2.0", Usb3 = "USB 3.x";
+
+        // A well-described board: a paired socket, a USB 2-only socket, and built-in ports that pair with nothing.
+        UsbNode a2 = Port(1, Usb2), a3 = Port(2, Usb3), only2 = Port(3, Usb2), camera = Port(4, Usb2, false), internal3 = Port(5, Usb3, false);
+        Link(a2, a3); Link(a3, a2);
+        var good = Board(a2, a3, only2, camera, internal3);
+        Check(good.Nodes.All(n => n.PortMapWarnings.Count == 0 && IssueRules.For(n).Count == 0), "A consistent port map has no findings: USB 2-only sockets and built-in USB 3 ports are fine.");
+
+        var lone3 = Port(1, Usb3);
+        Board(lone3);
+        Check(lone3.PortMapWarnings.SequenceEqual([PortMap.NoUsb2Half]) && lone3.Notes.Count(n => n.StartsWith("Port map evidence: ")) == 1, "A USB 3 port you can plug into needs a USB 2 half.");
+        var finding = IssueRules.For(lone3).Single();
+        var explained = Explanations.For(lone3, finding.Text, [lone3]);
+        Check(finding.Severity == Severity.Note && explained.What.Contains("without a USB 2 half") && explained.Affects.StartsWith("No:") && explained.Cause.Contains("firmware") && explained.Steps!.Count == 2, "A port map finding is a note that says nothing plugged in is affected and that the firmware is the cause.");
+        PortMap.Analyze(new Snapshot { Controllers = [new UsbNode { Id = "c", Kind = "Controller", Children = [new UsbNode { Id = "r", Kind = "Root hub", Children = [lone3] }] }] });
+        Check(lone3.PortMapWarnings.Count == 1 && lone3.Notes.Count == 1, "Checking a snapshot again repeats nothing.");
+
+        UsbNode one2 = Port(1, Usb2), one3 = Port(2, Usb3), other2 = Port(3, Usb2);
+        Link(one2, one3); Link(one3, other2); Link(other2, one3);
+        Board(one2, one3, other2);
+        Check(one2.PortMapWarnings.SequenceEqual([PortMap.CompanionOneWay]) && one3.PortMapWarnings.Count == 0 && other2.PortMapWarnings.Count == 0 && one2.Notes.Any(n => n.Contains("H01/02 names H01/03")),
+            "A port whose other half names a different port is paired one way, and the evidence names the ports.");
+
+        UsbNode same1 = Port(1, Usb2), same2 = Port(2, Usb2);
+        Link(same1, same2); Link(same2, same1);
+        Board(same1, same2);
+        Check(same1.PortMapWarnings.SequenceEqual([PortMap.SameVersionHalves]) && same2.PortMapWarnings.Count == 0, "Two USB 2 ports can't be the halves of one socket, and a pair is noted once.");
+
+        UsbNode c2 = Port(1, Usb2, true, true), c3 = Port(2, Usb3, false, false);
+        Link(c2, c3); Link(c3, c2);
+        Board(c2, c3);
+        Check(c2.PortMapWarnings.SequenceEqual([PortMap.HalvesDisagree]) && c2.Notes.Any(n => n.Contains("USB-C") && n.Contains("plug into")), "Halves that differ on USB-C or on being a port you can plug into are noted with both differences.");
+        c3.PortConnectorIsTypeC = null; c3.PortIsUserConnectable = null; c2.Notes.Clear();
+        PortMap.Analyze(new Snapshot { Controllers = [new UsbNode { Id = "c", Kind = "Controller", Children = [new UsbNode { Id = "r", Kind = "Root hub", Children = [c2, c3] }] }] });
+        Check(c2.PortMapWarnings.Count == 0, "What Windows didn't report about a half isn't a disagreement, and a finding that no longer holds is cleared.");
+
+        var missing = Port(1, Usb3); missing.CompanionPortNumber = 9; missing.CompanionHubSymbolicLink = "elsewhere";
+        var partial = Board(missing);
+        Check(missing.PortMapWarnings.SequenceEqual([PortMap.CompanionMissing]), "A port whose named other half isn't in the scan is noted.");
+        partial.Controllers[0].ScanIncomplete = true; PortMap.Analyze(partial);
+        Check(missing.PortMapWarnings.Count == 0, "When part of the scan couldn't be read, a missing half isn't called missing.");
+
+        // A socket with several companions is paired when any of them names it back.
+        UsbNode multi3 = Port(1, Usb3), first2 = Port(2, Usb2), second2 = Port(3, Usb2);
+        Link(multi3, first2); Link(first2, multi3); Link(second2, multi3);
+        multi3.PortHasMultipleCompanions = true; multi3.MoreCompanions.Add(new() { PortNumber = 3, HubSymbolicLink = "ROOT" });
+        var several = new Snapshot { Controllers = [new UsbNode { Id = "c", Kind = "Controller", Children = [new UsbNode { Id = "r", Kind = "Root hub", HubSymbolicLink = @"\\?\root", Children = [multi3, first2, second2] }] }] };
+        HubRelationships.ResolveCompanions(several); PortMap.Analyze(several);
+        Check(multi3.MoreCompanions[0].Id == second2.Id && several.Nodes.All(n => n.PortMapWarnings.Count == 0), "Further companions resolve to their ports and count as halves.");
+
+        // A plug-in hub's ports aren't described by firmware, so they aren't judged.
+        var hubPort = Port(1, Usb3); hubPort.Id = "r/1/1";
+        var plugIn = new UsbNode { Id = "r/1", Port = 1, Kind = "Hub", Protocols = Usb2, PortIsUserConnectable = true, Children = [hubPort] };
+        Board(plugIn);
+        Check(hubPort.PortMapWarnings.Count == 0, "Only root ports are checked.");
+
+        var studio = demo.Nodes.First(n => n.Name == "Studio desktop hub");
+        Check(demo.Nodes.Where(n => n.PortMapWarnings.Count > 0).ToList() is [var noted] && noted == studio && studio.PortMapWarnings.SequenceEqual([PortMap.NoUsb2Half]), "The sample host's USB 3 port with no USB 2 half shows the port map note, and its paired sockets don't.");
     }
 
     private static void SocketTests(Snapshot demo)
@@ -359,6 +458,16 @@ internal static class SelfTests
         var anonymous = new UsbNode { Kind = "Hub", Children = [new UsbNode { Kind = "Device", InstanceId = hubId }] };
         kvm.Apply(new Snapshot { Controllers = [anonymous] });
         Check(anonymous.QuickReconnects == 0 && anonymous.Children[0].QuickReconnects == 3, "Without a hub instance, a device's drops are its own.");
+        // Waking powers devices back up: returns just after a wake aren't drops, and later ones still are.
+        var sleeper = new ReconnectTracker();
+        for (int i = 0; i < 3; i++)
+        {
+            sleeper.Removed(id, t0.AddSeconds(i * 60)); sleeper.Woke(t0.AddSeconds(i * 60 + 1));
+            sleeper.Removed(id, t0.AddSeconds(i * 60 + 2)); sleeper.Arrived(id, t0.AddSeconds(i * 60 + 5));
+        }
+        Check(Flagged(sleeper, id) == 0, "Devices that return as the computer wakes aren't counted as drops.");
+        for (int i = 0; i < 3; i++) { sleeper.Removed(id, t0.AddSeconds(300 + i * 10)); sleeper.Arrived(id, t0.AddSeconds(302 + i * 10)); }
+        Check(Flagged(sleeper, id) == 3, "Drops well after a wake still count.");
         Check(ReconnectTracker.InstanceIdFromPath(@"\\?\USB#VID_0451&PID_8442#MSFT20E30108613F47#{f18a0e88-c30c-11d0-8815-00a0c906bed8}") == @"USB\VID_0451&PID_8442\MSFT20E30108613F47", "Hub interface paths name their instance too.");
     }
 }

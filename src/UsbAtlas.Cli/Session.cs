@@ -67,6 +67,8 @@ internal sealed class Session
         {
             var snapshot = JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(file), Json.Options) ?? throw new CliException($"{file} is empty.");
             Normalize(snapshot);
+            // Derived from what the file holds, so a snapshot saved before a rule existed is still checked by it.
+            PortMap.Analyze(snapshot);
             if (snapshot.Controllers.Count == 0 && snapshot.Diagnostics.Count == 0) throw new CliException($"{file} has no controllers. Is it a USB Atlas snapshot (usbatlas-cli scan, or Export in the app)?");
             return snapshot;
         }
@@ -91,6 +93,8 @@ internal sealed class Session
                 else if (p.PropertyType.IsGenericType && p.PropertyType.GetGenericTypeDefinition() == typeof(List<>)) p.SetValue(n, Activator.CreateInstance(p.PropertyType));
             n.Children.RemoveAll(c => c == null);
             n.DriverProblems.RemoveAll(p => p == null);
+            n.MoreCompanions.RemoveAll(c => c == null);
+            foreach (var c in n.MoreCompanions) { c.HubSymbolicLink ??= ""; c.Id ??= ""; }
             foreach (var c in n.Children) stack.Push(c);
         }
     }

@@ -50,11 +50,13 @@ internal static class UsbBudgets
 
     // The most payload the host will reserve for periodic transfers on a link: 90% of a low- or
     // full-speed frame, 80% of a high-speed microframe, and 90% of SuperSpeed bus time after line
-    // encoding (8b/10b at 5 Gb/s, 128b/132b beyond). SuperSpeedPlus lane rates aren't resolved, so 10 Gb/s is assumed.
+    // encoding (8b/10b on 5 Gb/s lanes, 128b/132b on faster ones). When Windows doesn't report a
+    // SuperSpeedPlus link's rate, 10 Gb/s is assumed.
     internal const double FullSpeedReservableMbps = 10.8;
     internal static double? ReservableMbps(UsbNode n) => n.LinkMbps switch
     {
         1.5 => 1.35, 12 => FullSpeedReservableMbps, 480 => 384, 5000 => 3600,
+        > 5000 and var fast => fast * (fast / (n.LinkLanes ?? 1) <= 5000 ? 0.8 : 128.0 / 132) * 0.9,
         _ => n.Speed.StartsWith("SuperSpeedPlus", StringComparison.Ordinal) ? 10000 * 128.0 / 132 * 0.9 : null
     };
 

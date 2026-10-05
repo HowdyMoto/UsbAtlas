@@ -93,6 +93,7 @@ internal static class Reports
         if (Topology.ShowsPolling(n)) parts.Add(UsbBudgets.PollingRate(n.PollIntervalMs!.Value));
         if (n.Kind is "Device" or "Hub" or "Unavailable" && (n.MaxPowerMa.HasValue || Topology.UsesExternalPower(n))) parts.Add(Topology.PowerFigure(n).Text);
         if (n.Kind == "Unavailable") parts.Insert(0, n.Status);
+        if (n.Kind == "Controller" && Topology.PciText(n) is { Length: > 0 } pci) parts.Add(pci);
         return string.Join(" · ", parts);
     }
 
@@ -145,13 +146,16 @@ internal static class Reports
             ("serial", J.S(n.Serial)), ("instanceId", J.S(n.InstanceId)), ("id", n.Id),
             ("deviceClass", J.S(n.DeviceClass)), ("interfaceFunctions", J.Some(n.InterfaceFunctions.Select(x => (JsonNode)x))), ("hidUsages", J.Some(n.HidUsages.Select(x => (JsonNode)x))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
-            node["link"] = J.Obj(("usbVersion", n.UsbVersion), ("speed", n.Speed), ("linkMbps", J.N(n.LinkMbps)), ("superSpeedPlusCapable", n.SuperSpeedPlusCapable),
+            node["link"] = J.Obj(("usbVersion", n.UsbVersion), ("speed", n.Speed), ("linkMbps", J.N(n.LinkMbps)), ("lanes", n.LinkLanes), ("superSpeedPlusCapable", n.SuperSpeedPlusCapable),
                 ("slowerThanSupported", n.SpeedLimited ? true : null), ("protocols", n.Protocols));
         else node["protocols"] = J.Obj(("ports", n.Protocols), ("downstream", J.S(n.DownstreamProtocols)));
         if (parent != null || n.Port > 0)
             node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("evidence", J.S(n.SocketEvidence)),
-                ("userConnectable", n.PortIsUserConnectable), ("usbC", n.PortConnectorIsTypeC),
-                ("sharesSocketWith", n.CompanionId.Length > 0 && s.ById(n.CompanionId) is UsbNode c ? s.PathOf(c) : null));
+                ("userConnectable", n.PortIsUserConnectable), ("usbC", n.PortConnectorIsTypeC), ("debugCapable", n.PortIsDebugCapable),
+                ("sharesSocketWith", n.CompanionId.Length > 0 && s.ById(n.CompanionId) is UsbNode c ? s.PathOf(c) : null),
+                ("alsoSharesSocketWith", J.Some(n.MoreCompanions.Where(m => m.Id.Length > 0 && s.ById(m.Id) != null).Select(m => (JsonNode)s.PathOf(s.ById(m.Id)!)))));
+        if (n.PciId.Length > 0)
+            node["controller"] = J.Obj(("pciId", n.PciId), ("vendor", J.S(Topology.PciVendor(n.PciId))), ("subsystem", J.S(n.PciSubsystem)), ("revision", J.S(n.PciRevision)), ("pciAddress", J.S(n.PciAddress)));
         node["location"] = J.Obj(("where", n.Location), ("evidence", n.LocationEvidence));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable),

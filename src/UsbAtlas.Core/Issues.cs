@@ -18,6 +18,8 @@ internal static class IssueRules
         if (HubRelationships.ReducedSpeed(n)) issues.Add((Explanations.SpeedSeverity(n), Explanations.SpeedLabel(n)));
         foreach (var warning in n.PowerWarnings) issues.Add((Explanations.PowerSeverity(n, warning), warning));
         if (n.QuickReconnects > 0) issues.Add((Severity.Warning, "Unstable connection"));
+        // Firmware describing a port wrongly changes nothing plugged into it, so each finding is a note.
+        foreach (var finding in n.PortMapWarnings) issues.Add((Severity.Note, finding));
         // A nearly full link still fits everything on it, so it's a note; peaks that can't all fit are a warning.
         if (UsbBudgets.LinkNearlyFull(n)) issues.Add((Severity.Note, "Link nearly full"));
         if (UsbBudgets.CouldExceedWhenStreaming(n)) issues.Add((Severity.Warning, "Could exceed when streaming"));
