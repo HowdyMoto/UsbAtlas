@@ -146,6 +146,9 @@ public sealed class UsbScanner
             if (status == 0) { node.Kind = "Empty port"; node.Name = "Available port " + port; continue; }
             if (status is 4 or 5) { ReadPowerFault(handle, port, data, node); continue; }
             if (status != 1) { node.Kind = "Unavailable"; node.Name = "Port " + port + " · " + node.Status; continue; }
+            // Windows reports a port connected as soon as something is there, before it has read its device
+            // descriptor. Until then the fields are zeros, and a zero speed would read as low speed.
+            if (!DescriptorRead(data)) { node.Kind = "Unavailable"; node.Status = "Enumerating"; node.Name = "Port " + port + " · Still connecting"; continue; }
             node.Kind = data[24] != 0 ? "Hub" : "Device";
             node.VendorId = BitConverter.ToUInt16(data, 12).ToString("X4");
             node.ProductId = BitConverter.ToUInt16(data, 14).ToString("X4");
@@ -258,6 +261,8 @@ public sealed class UsbScanner
     // the 4-byte port index and the device descriptor's first six bytes: 1 is one TT shared by every port, 2 is
     // one per port. Windows' hub driver runs a hub that offers one per port that way.
     internal static string TransactionTranslators(byte[] connectionInfo) => connectionInfo[10] switch { 1 => "Single", 2 => "Per port", _ => "Not reported" };
+    // The device descriptor follows the 4-byte port index: bLength 18, bDescriptorType 1 once Windows has read it.
+    internal static bool DescriptorRead(byte[] connectionInfo) => connectionInfo[4] == 18 && connectionInfo[5] == 1;
     internal static int DecodePower(byte maxPower, ushort bcdUsb) => maxPower * (bcdUsb >= 0x0300 ? 8 : 2);
     private static int SpeedClass(byte speed, int flags) => (flags & 5) != 0 ? 3 : speed;
 
@@ -298,7 +303,7 @@ public sealed class UsbScanner
     {
         node.Kind = "Unavailable"; node.Name = "Port " + port + " · " + node.Status;
         node.Notes.Add(UsbBudgets.FaultNote(node.Status));
-        if (data[4] != 18 || data[5] != 1) return;
+        if (!DescriptorRead(data)) return;
         node.VendorId = BitConverter.ToUInt16(data, 12).ToString("X4");
         node.ProductId = BitConverter.ToUInt16(data, 14).ToString("X4");
         var bcd = BitConverter.ToUInt16(data, 6);

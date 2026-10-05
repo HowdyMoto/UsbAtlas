@@ -29,6 +29,7 @@ internal static class CliTests
         FileTests();
         PortMapTests();
         WakeTests();
+        WatchNoiseTests();
         McpTests();
         CommandTests();
     }
@@ -347,6 +348,45 @@ internal static class CliTests
         Check(Watch.Text(J.Obj(("time", "08:01:00.000"), ("event", "summary"), ("watchedSeconds", 60), ("rescans", 1), ("changes", 1), ("sleeps", 1), ("notBackAfterWaking", 1), ("slowerAfterWaking", 0), ("unstable", new JsonArray()),
             ("issues", J.Obj(("errors", 0), ("warnings", 0), ("notes", 0))))).Contains("slept once: 1 not back after waking, 0 back slower"), "The summary totals what sleeping cost.");
         Check(Watch.Text(J.Obj(("time", "08:00:00.000"), ("event", "sleep"))).Contains("going to sleep") && Watch.Text(J.Obj(("time", "08:00:09.000"), ("event", "wake"), ("checkingIn", "8 s"))).Contains("checking what came back in 8 s"), "Sleep and wake are reported as they happen.");
+    }
+
+    // What a long watch showed: devices caught while Windows was still setting them up, and issues "resolved" by
+    // unplugging, then announced again when their device came back.
+    private static void WatchNoiseTests()
+    {
+        static Session Without(string name) { var s = DemoData.Create(); s.Controllers[0].Children[0].Children.RemoveAll(n => n.Name == name); return new(s, "demo"); }
+        var before = Demo(); var unplugged = Without("Travel hub");
+        var gone = Diff.Compare(before, unplugged);
+        Check(gone["disconnected"]!.AsArray().Any(n => n!["name"]!.ToString() == "Travel hub") && gone["resolvedIssues"]!.AsArray().Count == 0, "Unplugging a device doesn't resolve its issues.");
+        var reported = Diff.IssueKeys(before);
+        Check(Diff.Compare(before, unplugged, reported)["resolvedIssues"]!.AsArray().Count == 0 && reported.Keys.Any(k => k.EndsWith("|Over power budget")), "A watch keeps an unplugged device's issues as reported.");
+        var back = Diff.Compare(unplugged, Demo(), reported);
+        Check(back["connected"]!.AsArray().Any(n => n!["name"]!.ToString() == "Travel hub") && back["newIssues"]!.AsArray().Count == 0, "A device that comes back with issues already reported doesn't announce them again.");
+        Check(Diff.Compare(unplugged, Demo())["newIssues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Over power budget"), "Without a watch's memory, a device that connects with an issue reports it.");
+        Diff.Compare(Demo(), unplugged, reported);
+        var clean = DemoData.Create(); clean.Nodes.First(n => n.Name == "Travel hub").PowerWarnings.Remove("Hub adapter not detected");
+        var fixedOnReturn = Diff.Compare(unplugged, new(clean, "demo"), reported);
+        Check(fixedOnReturn["resolvedIssues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Hub adapter not detected" && i["name"]!.ToString() == "Travel hub") && fixedOnReturn["newIssues"]!.AsArray().Count == 0
+            && !reported.Keys.Any(k => k.EndsWith("|Hub adapter not detected")), "A device that comes back without a reported issue resolves it.");
+
+        // A scan taken while a device is being set up isn't reported until two scans agree.
+        var settling = DemoData.Create(); settling.Nodes.First(n => n.Name == "Studio camera").ReservedMbps = 0;
+        var scans = new Queue<Session>([new(settling, "demo"), Demo(), Demo()]);
+        int pauses = 0;
+        var settled = Watch.ScanUntilSteady(Without("Mechanical keyboard"), () => scans.Dequeue(), () => { pauses++; return true; });
+        Check(settled.Snapshot.Nodes.First(n => n.Name == "Studio camera").ReservedMbps == 98.3 && pauses == 2 && scans.Count == 0, "A watch rescans until two scans agree.");
+        pauses = 0;
+        Watch.ScanUntilSteady(Demo(), Demo, () => { pauses++; return true; });
+        Check(pauses == 0, "Nothing changed, so one scan is enough.");
+        pauses = 0; int flips = 0;
+        Watch.ScanUntilSteady(Without("Mechanical keyboard"), () => flips++ % 2 == 0 ? Demo() : new(settling, "demo"), () => { pauses++; return true; });
+        Check(pauses == Watch.SteadyTries, "A device that never settles is reported after a few tries.");
+
+        // Counts read naturally, and a watch without an end says so.
+        string Watching(object span, int notes) => Watch.Text(J.Obj(("time", "08:00:00.000"), ("event", "watching"), ("for", span.ToString()), ("devices", 14), ("hubs", 1),
+            ("issues", J.Obj(("errors", 0), ("warnings", 2), ("notes", notes))), ("tracksSleep", true)));
+        Check(Watching("until stopped", 1).Contains("watching until stopped · 14 devices, 1 hub · 0 errors, 2 warnings, 1 note.") && Watching("90 s", 3).Contains("watching for 90 s ·") && Watching("90 s", 3).Contains("3 notes"),
+            "The watching line reads naturally.");
     }
 
     private static void McpTests()

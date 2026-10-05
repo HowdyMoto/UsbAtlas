@@ -16,6 +16,10 @@ internal static class SelfTests
         var hubInfo = new byte[35]; new byte[] { 18, 1, 0x00, 0x02, 9, 0, 2, 64 }.CopyTo(hubInfo, 4);
         Check(UsbScanner.TransactionTranslators(hubInfo) == "Per port", "bDeviceProtocol 2 is one TT per port.");
         hubInfo[10] = 1; Check(UsbScanner.TransactionTranslators(hubInfo) == "Single", "bDeviceProtocol 1 is one TT for all ports.");
+        Check(UsbScanner.DescriptorRead(hubInfo) && !UsbScanner.DescriptorRead(new byte[35]), "A port whose device descriptor Windows hasn't read yet isn't a device.");
+        var connecting = new UsbNode { Kind = "Unavailable", Status = "Enumerating" };
+        Check(IssueRules.For(connecting).SequenceEqual([(Severity.Note, "Still connecting")]) && Explanations.For(connecting, "Still connecting", [connecting]).What.Contains("still setting it up"),
+            "A port still being set up is a calm note, not a port error.");
         hubInfo[10] = 0; Check(UsbScanner.TransactionTranslators(hubInfo) == "Not reported", "A high-speed hub without a TT protocol stays unknown.");
         var usb2 = new UsbNode { Id = "two", Kind = "Hub", Port = 1, VendorId = "0BDA", LinkMbps = 480, SpeedLimited = true, CompanionPortNumber = 2, CompanionHubSymbolicLink = "root" };
         var usb3 = new UsbNode { Id = "three", Kind = "Hub", Port = 2, VendorId = "0BDA", LinkMbps = 5000 };
