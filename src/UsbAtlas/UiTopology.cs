@@ -61,8 +61,21 @@ public partial class MainWindow
         if (n.Kind == "Unavailable" && issues.Count == 0) parts.Add((null, n.Status, n.Status));
         else if (n.Kind is "Device" or "Hub") parts.Add((NodeVisuals.Metric.Link, link, link + " link"));
         if (n.Kind is "Device" or "Hub" or "Unavailable" && (n.MaxPowerMa.HasValue || issues.Any(i => RowOf(i.Text) == IssueRow.Power)))
-            parts.Add((NodeVisuals.Metric.Power, n.MaxPowerMa is int ma ? $"{ma} mA" : "Unknown", n.MaxPowerMa is int mw ? $"{mw} mA requested" : "power request unknown"));
+        {
+            var (text, words) = PowerFigure(n);
+            parts.Add((NodeVisuals.Metric.Power, text, words));
+        }
         return new(parts, issues);
+    }
+    // Requested power and its source are one figure. A device or hub that asks the bus for nothing runs on
+    // its own supply, so it reads "External power" rather than a misleading 0 mA; one that also draws a
+    // little from the bus reads "External + 100 mA".
+    internal static bool UsesExternalPower(UsbNode n) => n.Kind is "Device" or "Hub" && (n.PowerSource == "Self powered" || n.MaxPowerMa == 0);
+    internal static (string Text, string Words) PowerFigure(UsbNode n)
+    {
+        if (UsesExternalPower(n))
+            return n.MaxPowerMa is > 0 ? ($"External + {n.MaxPowerMa} mA", $"external power plus {n.MaxPowerMa} mA requested from the bus") : ("External power", "external power, nothing requested from the bus");
+        return n.MaxPowerMa is int ma ? ($"{ma} mA", $"{ma} mA requested") : ("Unknown", "power request unknown");
     }
     private static List<(NodeVisuals.Severity Severity, string Text)> OtherIssues(UsbNode n) =>
         n.Kind is "Controller" or "Root hub" ? Issues(n).Concat(MergedRoot(n) is UsbNode root ? Issues(root) : []).Distinct().ToList() : Issues(n).Where(i => RowOf(i.Text) == IssueRow.Other).ToList();
@@ -91,7 +104,9 @@ public partial class MainWindow
             lines.Add($"Reserved: {UsbBudgets.Rate(reserved)} of bus time held by open interrupt and isochronous pipes" + (n.PeakReservedMbps > reserved ? $", up to {UsbBudgets.Rate(n.PeakReservedMbps.Value)} when fully active" : "") + ". Bulk transfers, such as storage, reserve nothing and share what is left.");
         if (UsbBudgets.LinkUse(n) is (var used, var capacity, _))
             lines.Add($"Meter: reservations fill {UsbBudgets.Share(used, capacity)}, the most this link reserves for timed transfers; the lighter part runs to {UsbBudgets.Rate(Math.Max(used, UsbBudgets.PeakThroughLink(n).Mbps))} if everything on it streams at once. It shows bus time set aside, not traffic measured.");
-        if (n.MaxPowerMa is int ma) lines.Add($"Power: requests up to {ma} mA ({ma * 0.005:0.##} W at 5 V) in its descriptor. A declared maximum, not a measurement.");
+        if (UsesExternalPower(n))
+            lines.Add(n.MaxPowerMa is > 0 ? $"Power: has its own supply and also requests up to {n.MaxPowerMa} mA from the bus. A declared maximum, not a measurement." : "Power: runs on its own supply and requests no current from the bus, so there is no bus draw to show.");
+        else if (n.MaxPowerMa is int ma) lines.Add($"Power: requests up to {ma} mA ({ma * 0.005:0.##} W at 5 V) in its descriptor. A declared maximum, not a measurement.");
         return string.Join("\n", lines);
     }
     private static string Issue(UsbNode n) => string.Join(" · ", Issues(n).Select(i => i.Text));
@@ -298,7 +313,10 @@ public partial class MainWindow
             fold.Click += (_, e) => { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); e.Handled = true; };
             DockPanel.SetDock(fold, Dock.Right); title.Children.Add(fold);
         }
-        title.Children.Add(new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName });
+        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName + (CanNameDevice(node) ? "\nDouble-click to rename" : "") };
+        // Double-clicking the name renames; double-clicking elsewhere on the card still folds its branch.
+        name.MouseLeftButtonDown += (_, e) => { if (e.ClickCount == 2 && CanNameDevice(node)) { EditDeviceName(node, name); e.Handled = true; } };
+        title.Children.Add(name);
         panel.Children.Add(title);
         var relationship = HubRelationships.CardLabel(node);
         if (relationship.Length > 0)
@@ -348,6 +366,7 @@ public partial class MainWindow
         {
             if (!ReferenceEquals(e.OriginalSource, card)) return;
             if (e.Key is Key.Enter or Key.Space) { SelectNode(node); e.Handled = true; }
+            else if (e.Key == Key.F2 && CanNameDevice(node)) { EditDeviceName(node, card); e.Handled = true; }
             else if (e.Key is Key.Up or Key.Down or Key.Left or Key.Right)
             {
                 var items = cards.Keys.ToList(); int i = items.IndexOf(node.Id);
@@ -355,9 +374,15 @@ public partial class MainWindow
                 SelectNode((UsbNode)cards[next].Card.Tag); cards[next].Card.Focus(); LocateClick(this, new RoutedEventArgs()); e.Handled = true;
             }
         };
+        card.ContextMenuOpening += (_, e) => { card.ContextMenu = RenameMenu(node, CanNamePort(node) ? node : null, card); if (card.ContextMenu.Items.Count == 0) e.Handled = true; };
         card.GotKeyboardFocus += (_, _) => card.BorderBrush = Brush("Accent");
         card.LostKeyboardFocus += (_, _) => UpdateSelection();
         Canvas.SetLeft(card, x); Canvas.SetTop(card, y); Panel.SetZIndex(card, 1); Graph.Children.Add(card); cards[node.Id] = (card, bounds.TopLeft);
+        if (node.PortLabel.Length > 0 && !host)
+        {
+            var tag = PortTag(node, Math.Max(36, width / 2 - 14));
+            Canvas.SetLeft(tag, x + 8); Canvas.SetTop(tag, y - 8); Graph.Children.Add(tag);
+        }
         for (int i = 0; i < edgePorts.Count; i++)
         {
             var port = edgePorts[i];
@@ -367,11 +392,26 @@ public partial class MainWindow
             var button = new Button { Content = NodeVisuals.SocketNumber(port), Tag = port, Width = SocketWidth, Height = SocketHeight, Padding = new Thickness(0), Template = NodeVisuals.SocketTemplate(port, socketParts.GetValueOrDefault(port.Id), horizontalTree), Cursor = Cursors.Hand, ToolTip = $"Logical port {port.Port}{(port.PortLabel.Length > 0 ? " · " + port.PortLabel : "")} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{NodeVisuals.SocketLabel(port)} socket\n{port.SocketEvidence}{companion}" };
             System.Windows.Automation.AutomationProperties.SetName(button, $"Port {port.Port}, {NodeVisuals.SocketLabel(port)}, {port.DisplayName}");
             button.Click += (_, e) => { SelectNode(port); e.Handled = true; };
+            button.MouseDoubleClick += (_, e) => { EditPortName(port, button); e.Handled = true; };
+            button.KeyDown += (_, e) => { if (e.Key == Key.F2) { EditPortName(port, button); e.Handled = true; } };
+            button.ContextMenu = RenameMenu(null, port, button);
             Canvas.SetLeft(button, horizontalTree ? bounds.Right - button.Width : cross - button.Width / 2);
             Canvas.SetTop(button, horizontalTree ? cross - button.Height / 2 : bounds.Bottom - button.Height);
             Panel.SetZIndex(button, 2); Graph.Children.Add(button);
             (port.Kind == "Empty port" ? portSlots : connectedPorts)[port.Id] = button;
             portAnchors[port.Id] = horizontalTree ? new Point(bounds.Right, cross) : new Point(cross, bounds.Bottom);
+            // A named empty socket has no card to carry its name, so the tag sits just beyond it.
+            if (port.Kind == "Empty port" && port.PortLabel.Length > 0)
+            {
+                // Sockets are narrow, so the tag runs right until the next socket with a wire or its own tag.
+                double start = cross - SocketWidth / 2, end = bounds.Right + 40;
+                if (edgePorts.Skip(i + 1).FirstOrDefault(p => p.Kind != "Empty port" || p.PortLabel.Length > 0) is UsbNode next)
+                    end = (horizontalTree ? y : x) + PortOffset(node, next)!.Value - (next.Kind == "Empty port" ? SocketWidth / 2 : 0) - 3;
+                var tag = PortTag(port, horizontalTree ? 90 : Math.Max(SocketWidth, end - start));
+                tag.HorizontalAlignment = HorizontalAlignment.Left;
+                Canvas.SetLeft(tag, horizontalTree ? bounds.Right + 4 : cross - SocketWidth / 2); Canvas.SetTop(tag, horizontalTree ? cross - 7 : bounds.Bottom + 3);
+                Graph.Children.Add(tag);
+            }
         }
         var children = layout.Children;
         var childCards = children.Select(c => new Rect(left + c.X + c.CardX, top + c.Y + c.CardY, WidthFor(c.Node), HeightFor(c.Node))).ToList();
