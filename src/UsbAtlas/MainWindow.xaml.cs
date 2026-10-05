@@ -658,10 +658,6 @@ public partial class MainWindow : Window
         Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ViewportWidth + 1 && Graph.Height * GraphScale.ScaleY <= GraphScroll.ViewportHeight + 1, "Fit all leaves graph outside viewport.");
         FitClick(this, new RoutedEventArgs()); GraphScroll.UpdateLayout();
         Check(GraphScale.ScaleX >= 1, "Readable view must not shrink device text.");
-        // Rows never wrap, so a vertical graph may overflow only once every group of end devices is a
-        // staircase. Checked in whichever pass is vertical, so the default layout doesn't decide coverage.
-        void CheckStaircases() { if (!horizontalTree) Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ActualWidth + 1 || stackableHubs.IsSubsetOf(stackedHubs), "Readable layout overflows while end devices could still stack."); }
-        CheckStaircases();
         PanTransform.X = 87; PanTransform.Y = 53;
         var pointer = new Point(GraphScroll.ViewportWidth * 0.4, GraphScroll.ViewportHeight * 0.4);
         var anchored = GraphScroll.TranslatePoint(pointer, Graph);
@@ -689,7 +685,6 @@ public partial class MainWindow : Window
         foreach (var node in snapshot.Nodes.Where(n => cards.ContainsKey(n.Id)))
             foreach (var child in Children(node))
                 Check(horizontalTree ? cards[child.Id].Point.X > cards[node.Id].Point.X + cards[node.Id].Card.Width : cards[child.Id].Point.Y > cards[node.Id].Point.Y + cards[node.Id].Card.Height, "Changed direction has incorrect parent-child placement.");
-        CheckStaircases();
         SetOrientation(!horizontalTree);
     }
     private void CaptureUi(string filename)

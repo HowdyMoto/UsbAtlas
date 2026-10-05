@@ -13,7 +13,11 @@ public partial class MainWindow
         var savedSnapshot = snapshot; var savedSelection = selected; bool savedHorizontal = horizontalTree;
         var report = new List<string>();
         // A name is readable when drawn at 11 px or more on screen.
-        double NameSize() => (detail == CardDetail.Far ? 13 : 14) * GraphScale.ScaleX;
+        double NameSize()
+        {
+            var (id, item) = cards.First(c => ((UsbNode)c.Value.Card.Tag).Kind is "Device");
+            return VisualDescendants(item.Card).OfType<System.Windows.Controls.TextBlock>().First(t => t.Text == NodeVisuals.ShortName((UsbNode)item.Card.Tag)).FontSize * GraphScale.ScaleX;
+        }
         static bool Hardware(UsbNode n) => n.Kind is "Hub" or "Device" or "Unavailable";
         bool fullSize = ActualWidth >= 1400 && ActualHeight >= 900;
         void Open(string name)
@@ -58,6 +62,8 @@ public partial class MainWindow
             selected = snapshot.Controllers[0];
             Open("40 devices");
             CaptureUi("overview-40-preview.png");
+            Check(root.Children.Take(5).All(h => packedHubs.Contains(h.Id)), "Far cards in the horizontal layout must pack each hub's end devices.");
+            if (fullSize) Check(NameSize() >= 11, $"40 devices must open with readable names; they are {NameSize():0.#} px.");
             Check(detail == CardDetail.Far, "40 devices must open at far cards in the default window.");
             // Within a level, zooming keeps the point under the pointer.
             var middle = new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2);

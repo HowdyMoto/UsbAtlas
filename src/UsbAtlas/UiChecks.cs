@@ -340,14 +340,26 @@ public partial class MainWindow
                     Check(!Touch((segments[i].A, segments[i].B), (segments[j].A, segments[j].B)), $"Connections {segments[i].Id} and {segments[j].Id} cross or touch.");
         foreach (var node in snapshot.Nodes.Where(n => cards.ContainsKey(n.Id)))
         {
-            if (SnappedStages(node).Count > 1 || snappedWires.Contains(node.Id)) continue;
+            if (DrawsSockets && SnappedStages(node).Count > 1 || snappedWires.Contains(node.Id)) continue;
             var kids = Children(node).Select(c => boxes[c.Id]).ToList();
             if (kids.Count < 2) continue;
-            bool stacked = stackedHubs.Contains(node.Id);
-            // Staircases read top to bottom; rows read along the cross axis and share one flow position.
-            var order = kids.Select(r => stacked ? r.Y : horizontalTree ? r.Y : r.X).ToList();
+            // Rows read along the cross axis in socket order and share one flow position. A packed group
+            // alternates between two flow positions, each card of the second centered on the gap after
+            // its neighbor in the first, so its connection passes between two cards.
+            double Along(Rect r) => horizontalTree ? r.Y : r.X;
+            double Flow(Rect r) => horizontalTree ? r.X : r.Y;
+            double Span(Rect r) => horizontalTree ? r.Height : r.Width;
+            var order = kids.Select(Along).ToList();
             Check(order.Zip(order.Skip(1)).All(p => p.First < p.Second), $"Children of {node.Id} are out of socket order.");
-            if (!stacked) Check(kids.All(r => Near(horizontalTree ? r.X : r.Y, horizontalTree ? kids[0].X : kids[0].Y)), $"Children of {node.Id} wrapped onto another row.");
+            if (!packedHubs.Contains(node.Id)) { Check(kids.All(r => Near(Flow(r), Flow(kids[0]))), $"Children of {node.Id} wrapped onto another row."); continue; }
+            Check(horizontalTree && detail == CardDetail.Far, $"Children of {node.Id} are packed outside far cards in the horizontal layout.");
+            Check(kids.Select((r, i) => Near(Flow(r), Flow(kids[i % 2]))).All(same => same) && Flow(kids[1]) > Flow(kids[0]) + kids[0].Width,
+                $"Packed children of {node.Id} must alternate between exactly two rows.");
+            for (int i = 1; i < kids.Count; i += 2)
+            {
+                double center = Along(kids[i]) + Span(kids[i]) / 2, before = Along(kids[i - 1]) + Span(kids[i - 1]);
+                Check(center > before + 0.01 && (i + 1 >= kids.Count || center < Along(kids[i + 1]) - 0.01), $"Packed child {Children(node)[i].Id} must sit on the gap between two cards of the first row.");
+            }
         }
     }
 
