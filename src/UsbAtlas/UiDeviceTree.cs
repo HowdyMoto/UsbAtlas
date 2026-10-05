@@ -107,7 +107,7 @@ public partial class MainWindow
             focusedBranch = (node.Kind == "Device" ? FindPath(node.Id).LastOrDefault(n => n.Kind == "Hub") ?? node : node).Id;
             redraw = true;
         }
-        foreach (var ancestor in FindPath(node.Id).SkipLast(1)) redraw |= folded.Remove(ancestor.Id);
+        foreach (var ancestor in FindPath(node.Id).SkipLast(1)) redraw |= folded.Remove(ancestor.Id) | folded.Remove(DrawnAs(ancestor).Id);
         if (redraw) Draw();
         SelectNode(snapshot.Nodes.FirstOrDefault(n => n.Id == node.Id) ?? node);
         RevealSelection(); Pulse(node);

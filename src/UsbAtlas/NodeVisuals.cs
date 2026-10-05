@@ -8,8 +8,9 @@ namespace UsbAtlas;
 
 internal static class NodeVisuals
 {
-    // Color says what a device does. Hubs, hosts and ports stay neutral so devices stand out, and
-    // related types share a hue (the icon tells them apart) because pale fills need wide hue gaps.
+    // An icon's ink says what a device does. Hubs, hosts and ports stay neutral so devices stand out, and
+    // related types share a hue (the icon's shape tells them apart). Cards themselves are neutral, so on
+    // the canvas color is left to status, selection and the socket speed code.
     internal static string Color(UsbNode n) => n.Kind != "Device" ? "Neutral" : n.DeviceType switch
     {
         "Keyboard" or "Mouse" or "HID / controls" => "Input",
@@ -21,9 +22,6 @@ internal static class NodeVisuals
         _ => "Neutral"
     };
     internal static readonly string[] Categories = ["Neutral", "Input", "Gaming", "Audio", "Video", "Storage", "Connectivity"];
-    // A card's fill and outline share its icon and label hue.
-    internal static string Fill(UsbNode n) => Color(n) + "Fill";
-    internal static string Edge(UsbNode n) => Color(n) + "Edge";
     internal static string Label(UsbNode n) => Topology.Label(n);
     internal static Brush Ink(string hex) => Theme.Brush(hex);
 
@@ -129,31 +127,44 @@ internal static class NodeVisuals
     // stays in the tooltip, tree and inspector. A custom label is shown as typed.
     internal static string ShortName(UsbNode n) => Topology.ShortName(n);
 
-    // A labeled meter for the bus time a link has reserved: solid for what is held now, lighter out to
-    // the most it could hold, inside an outlined surface track that reads as empty on any tint. The label
-    // is drawn twice, dark over the track and light clipped to the solid fill, so it stays legible
-    // wherever the fill ends. The labels sit outside the column grid so their width never moves the fill.
-    internal const string MeterTag = "link-meter";
-    internal static Border Meter(double now, double peak, double capacity, string label, string outline)
+    // A meter for the bus time a link has reserved, labeled above a thin bar so the label never sits on
+    // what it describes. The bar is split into parts, one per device sharing the link (one part on a
+    // device's own card): first each part's solid share for what it holds now, then each part's lighter
+    // share out to the most it could hold, both in socket order, on a track that reads as empty.
+    internal const string MeterTag = "link-meter", MeterLabelTag = "meter-label", MeterBarTag = "meter-bar";
+    internal const double MeterPeakOpacity = 0.35;
+    internal sealed record MeterPart(UsbNode Node, double Now, double Peak);
+    internal static Grid Meter(IReadOnlyList<MeterPart> parts, double capacity, string label, out List<(UsbNode Node, Border Segment)> segments)
     {
-        double solid = Math.Clamp(now / capacity, 0, 1), reach = Math.Clamp(peak / capacity, 0, 1);
-        if (solid > 0) solid = Math.Max(solid, 0.015);
-        reach = Math.Max(reach, solid);
-        var bars = new Grid();
-        foreach (var share in new[] { solid, reach - solid, 1 - reach })
-            bars.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(share, GridUnitType.Star) });
-        var fill = new Border { Background = Ink("Accent") }; bars.Children.Add(fill);
-        var possible = new Border { Background = Ink("Accent"), Opacity = 0.3 }; Grid.SetColumn(possible, 1); bars.Children.Add(possible);
-        T Text<T>(T text, string ink) where T : TextBlock
+        // A part holding anything now shows at least a sliver; peaks past what the link can reserve run to
+        // the end of the track.
+        var solids = parts.Select(p => p.Now <= 0 ? 0 : Math.Max(p.Now / capacity, 0.01)).ToList();
+        double solidTotal = solids.Sum();
+        if (solidTotal > 1) { solids = solids.Select(s => s / solidTotal).ToList(); solidTotal = 1; }
+        var extras = parts.Select(p => Math.Max(0, p.Peak - p.Now) / capacity).ToList();
+        double extraTotal = extras.Sum(), room = 1 - solidTotal;
+        if (extraTotal > room) { extras = extras.Select(e => e * room / extraTotal).ToList(); extraTotal = room; }
+        var bars = new Grid { Height = 5, ClipToBounds = true, Tag = MeterBarTag, VerticalAlignment = VerticalAlignment.Bottom };
+        var track = new Border { Background = Ink("Divider"), CornerRadius = new CornerRadius(2.5) };
+        Grid.SetColumnSpan(track, 2 * parts.Count + 1); bars.Children.Add(track);
+        var drawn = new List<(UsbNode, Border)>();
+        void Add(double share, UsbNode node, bool peak)
         {
-            text.Text = label; text.FontSize = 11; text.FontWeight = FontWeights.SemiBold; text.Foreground = Ink(ink);
-            text.Margin = new Thickness(6, 0, 0, 0); text.VerticalAlignment = VerticalAlignment.Center; text.HorizontalAlignment = HorizontalAlignment.Left;
-            return text;
+            bars.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(share, GridUnitType.Star) });
+            if (share <= 0) return;
+            var segment = new Border { Background = Ink("Neutral"), Opacity = peak ? MeterPeakOpacity : 1, ToolTip = node.DisplayName };
+            Grid.SetColumn(segment, bars.ColumnDefinitions.Count - 1); bars.Children.Add(segment); drawn.Add((node, segment));
         }
-        var light = Text(new UnspokenText { Clip = Geometry.Empty }, "OnAccent");
-        fill.SizeChanged += (_, e) => light.Clip = new RectangleGeometry(new Rect(0, 0, Math.Max(0, e.NewSize.Width - 6), 40));
-        var layers = new Grid { Children = { bars, Text(new TextBlock(), "TextPrimary"), light } };
-        return new Border { Height = 18, CornerRadius = new CornerRadius(3), Background = Ink("Surface"), BorderBrush = Ink(outline), BorderThickness = new Thickness(1), Child = layers, Tag = MeterTag, ClipToBounds = true };
+        for (int i = 0; i < parts.Count; i++) Add(solids[i], parts[i].Node, false);
+        for (int i = 0; i < parts.Count; i++) Add(extras[i], parts[i].Node, true);
+        bars.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(0, 1 - solidTotal - extraTotal), GridUnitType.Star) });
+        segments = drawn;
+        var text = new TextBlock
+        {
+            Text = label, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Ink("TextSecondary"), Height = 12, LineHeight = 12,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Top, TextTrimming = TextTrimming.CharacterEllipsis, Tag = MeterLabelTag
+        };
+        return new Grid { Height = 18, Tag = MeterTag, Children = { text, bars } };
     }
 
     // A connection is drawn as its link: wider for a faster negotiated rate, so the widths step with USB's
@@ -166,12 +177,6 @@ internal static class NodeVisuals
     internal static bool SlowLink(UsbNode n) => HubRelationships.ReducedSpeed(n);
     internal static string WireInk(UsbNode n) => SlowLink(n) && Explanations.SpeedSeverity(n) == Severity.Warning ? "Warning" : "Wire";
     internal static DoubleCollection? WireDashes(UsbNode n) => SlowLink(n) ? [2.5, 1.5] : null;
-
-    // A second drawing of text that is already read aloud, kept out of the accessibility tree.
-    private sealed class UnspokenText : TextBlock
-    {
-        protected override System.Windows.Automation.Peers.AutomationPeer? OnCreateAutomationPeer() => null;
-    }
 
     // A port is drawn as its socket: a USB-A shell with its tongue along the top, a USB-C pill with its
     // tongue centered, or a plain slot for a built-in port with no socket. The tongue carries USB's color

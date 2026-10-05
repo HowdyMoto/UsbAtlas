@@ -20,11 +20,11 @@ internal static partial class TopologyLayout
     internal sealed record Item(UsbNode Node, double X, double Y, double Width, double Height, double CardX, double CardY, List<Item> Children, bool Packed) { internal List<Item>? SnappedStages { get; init; } internal bool SnappedColumn { get; init; } }
 
     internal static Item Measure(UsbNode node, Func<UsbNode, List<UsbNode>> children, bool horizontal, Func<UsbNode, double> width, Func<UsbNode, double> height,
-        Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups = null, double gap = Gap, bool pack = false)
+        Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups = null, double gap = Gap, bool pack = false, Func<UsbNode, UsbNode?>? twin = null)
     {
         var tree = horizontal
-            ? MeasureCore(node, children, height, width, portOffset, null, gap, pack)
-            : MeasureCore(node, children, width, height, portOffset, groups, gap, pack);
+            ? MeasureCore(node, children, height, width, portOffset, null, gap, pack, twin)
+            : MeasureCore(node, children, width, height, portOffset, groups, gap, pack, twin);
         return horizontal ? Transpose(tree) : tree;
     }
 
@@ -40,14 +40,21 @@ internal static partial class TopologyLayout
         new(item.Node, item.Y, item.X, item.Height, item.Width, item.CardY, item.CardX, item.Children.Select(Transpose).ToList(), item.Packed);
 
     private static Item MeasureCore(UsbNode node, Func<UsbNode, List<UsbNode>> children, Func<UsbNode, double> cross, Func<UsbNode, double> along,
-        Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups, double gap, bool pack)
+        Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups, double gap, bool pack, Func<UsbNode, UsbNode?>? twin = null)
     {
         if (groups?.Invoke(node) is { Count: > 1 } members) return MeasureSnapped(members, children, cross, along, portOffset, groups);
         double width = cross(node), height = along(node);
         var kids = children(node);
         if (kids.Count == 0) return new(node, 0, 0, width, height, 0, 0, [], false);
-        var items = kids.Select(k => MeasureCore(k, children, cross, along, portOffset, groups, gap, pack)).ToList();
-        double Port(int i) => portOffset(node, kids[i]) ?? width * (i + 0.5) / kids.Count;
+        var items = kids.Select(k => MeasureCore(k, children, cross, along, portOffset, groups, gap, pack, twin)).ToList();
+        // A merged hub's two sides each have a port, and its two connections meet the two halves of its
+        // card's entry edge in the order of those ports. Without port graphics, connections leave evenly
+        // spaced points, the USB 2 side's (its twin's) just before the card's own.
+        var twins = kids.Select(k => twin?.Invoke(k)).ToList();
+        int entries = kids.Count + twins.Count(t => t != null);
+        int Slot(int i) => i + twins.Take(i).Count(t => t != null);
+        double Port(int i) => portOffset(node, kids[i]) ?? width * (Slot(i) + (twins[i] != null ? 1 : 0) + 0.5) / entries;
+        double TwinPort(int i) => portOffset(node, twins[i]!) ?? width * (Slot(i) + 0.5) / entries;
         // A packed group fills two rows in socket order, alternating: the first, third and later devices
         // make the first row, and each other one sits beyond it, centered on the gap after its neighbor,
         // so its connection passes straight between two cards of the first row. Connections still leave
@@ -66,7 +73,12 @@ internal static partial class TopologyLayout
         double card = items.Count == 1 ? Center(0) - Port(0) : (Center(0) + Center(items.Count - 1)) / 2 - width / 2;
         double shift = Math.Max(0, -Math.Min(card, xs.Min()));
         card += shift;
-        int lanes = LaneCount(Enumerable.Range(0, items.Count).Select(i => (card + Port(i), Center(i) + shift)));
+        int lanes = LaneCount(Enumerable.Range(0, items.Count).SelectMany(i =>
+        {
+            if (twins[i] == null) return new[] { (card + Port(i), Center(i) + shift) };
+            double quarter = cross(kids[i]) / 4; var ports = new[] { Port(i), TwinPort(i) }.Order().ToArray();
+            return [(card + ports[0], Center(i) + shift - quarter), (card + ports[1], Center(i) + shift + quarter)];
+        }));
         double drop = lanes == 0 ? LevelGap : Math.Max(LevelGap, Stub + (lanes - 1) * LaneSpacing + Clearance);
         var row = items.Select((item, i) => item with { X = xs[i] + shift, Y = height + drop + (packed && i % 2 == 1 ? firstRow + PackRowGap : 0) }).ToList();
         double right = row.Max(r => r.X + r.Width), bottom = row.Max(r => r.Y + r.Height);

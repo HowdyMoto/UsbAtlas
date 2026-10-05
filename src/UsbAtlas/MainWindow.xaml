@@ -23,12 +23,10 @@
       <Button x:Name="HorizontalLayoutButton" Content="Horizontal" Click="LayoutChoiceClick" ToolTip="Host on the left, devices to the right" Padding="8,4"/>
       <Button x:Name="VerticalLayoutButton" Content="Vertical" Click="LayoutChoiceClick" ToolTip="Host at the top, devices below" Padding="8,4" Margin="-1,0,0,0"/>
      </StackPanel>
-     <Button x:Name="LocateButton" Content="Center selection" Click="LocateClick" Padding="8,4" Margin="0,0,12,0" ToolTip="Center selection at 100%"/>
-     <Button Content="−" Click="ZoomOut" Padding="10,3" ToolTip="Zoom out"/>
-     <Button Click="ActualSizeClick" Padding="0" BorderBrush="Transparent" Background="Transparent" ToolTip="Reset to 100%"><TextBlock x:Name="ZoomLabel" FontFamily="{StaticResource MonoFont}" Text="100%" Width="52" TextAlignment="Center"/></Button>
+     <Button Content="−" Click="ZoomOut" Padding="10,3" Margin="4,0,0,0" ToolTip="Zoom out (wheel)"/>
+     <Button Click="ActualSizeClick" Padding="0" BorderBrush="Transparent" Background="Transparent" ToolTip="Full cards at 100%, laid out for the window (Shift+0)"><TextBlock x:Name="ZoomLabel" FontFamily="{StaticResource MonoFont}" Text="100%" Width="52" TextAlignment="Center"/></Button>
      <Button Content="+" Click="ZoomIn" Padding="10,3" ToolTip="Zoom in"/>
-     <Button Content="100% view" Click="FitClick" Padding="10,3" Margin="8,0,0,0"/>
-     <Button Content="Fit all" Click="OverviewClick" Padding="10,3" Margin="8,0,0,0"/>
+     <Button Content="Fit all" Click="OverviewClick" Padding="10,3" Margin="8,0,0,0" ToolTip="The whole topology, at the most detailed cards that fit (Shift+1). Shift+2 centers the selection."/>
     </StackPanel>
     <Button x:Name="TreeButton" Visibility="Collapsed" Content="Show devices" Click="TreePanelClick" DockPanel.Dock="Left" Padding="8,3" Margin="0,0,10,0" ToolTip="Show or hide the device tree"/>
     <Grid Width="210" DockPanel.Dock="Left" HorizontalAlignment="Left">
