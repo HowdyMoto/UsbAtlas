@@ -16,11 +16,11 @@ internal static partial class TopologyLayout
     internal sealed record Item(UsbNode Node, double X, double Y, double Width, double Height, double CardX, double CardY, List<Item> Children, bool Stacked) { internal List<Item>? SnappedStages { get; init; } internal bool SnappedColumn { get; init; } }
 
     internal static Item Measure(UsbNode node, Func<UsbNode, List<UsbNode>> children, bool horizontal, Func<UsbNode, double> width, Func<UsbNode, double> height,
-        Func<UsbNode, UsbNode, double?> portOffset, IReadOnlySet<string> stacked, Func<UsbNode, List<UsbNode>>? groups = null)
+        Func<UsbNode, UsbNode, double?> portOffset, IReadOnlySet<string> stacked, Func<UsbNode, List<UsbNode>>? groups = null, double gap = Gap)
     {
         var tree = horizontal
-            ? MeasureCore(node, children, height, width, portOffset, new HashSet<string>())
-            : MeasureCore(node, children, width, height, portOffset, stacked, groups);
+            ? MeasureCore(node, children, height, width, portOffset, new HashSet<string>(), null, gap)
+            : MeasureCore(node, children, width, height, portOffset, stacked, groups, gap);
         return horizontal ? Transpose(tree) : tree;
     }
 
@@ -35,13 +35,13 @@ internal static partial class TopologyLayout
         new(item.Node, item.Y, item.X, item.Height, item.Width, item.CardY, item.CardX, item.Children.Select(Transpose).ToList(), item.Stacked);
 
     private static Item MeasureCore(UsbNode node, Func<UsbNode, List<UsbNode>> children, Func<UsbNode, double> cross, Func<UsbNode, double> along,
-        Func<UsbNode, UsbNode, double?> portOffset, IReadOnlySet<string> stacked, Func<UsbNode, List<UsbNode>>? groups = null)
+        Func<UsbNode, UsbNode, double?> portOffset, IReadOnlySet<string> stacked, Func<UsbNode, List<UsbNode>>? groups = null, double gap = Gap)
     {
         if (groups?.Invoke(node) is { Count: > 1 } members) return MeasureSnapped(members, children, cross, along, portOffset, stacked, groups);
         double width = cross(node), height = along(node);
         var kids = children(node);
         if (kids.Count == 0) return new(node, 0, 0, width, height, 0, 0, [], false);
-        var items = kids.Select(k => MeasureCore(k, children, cross, along, portOffset, stacked, groups)).ToList();
+        var items = kids.Select(k => MeasureCore(k, children, cross, along, portOffset, stacked, groups, gap)).ToList();
         double Port(int i) => portOffset(node, kids[i]) ?? width * (i + 0.5) / kids.Count;
         if (stacked.Contains(node.Id) && CanStack(node, children, portOffset))
         {
@@ -49,21 +49,21 @@ internal static partial class TopologyLayout
             double column = items.Max(i => i.Width);
             double cardX = Math.Max(0, column + StackClearance - Port(0)), y = height + LevelGap;
             var placed = new List<Item>();
-            foreach (var item in items) { placed.Add(item with { X = 0, Y = y }); y += item.Height + Gap; }
-            return new(node, 0, 0, Math.Max(column, cardX + width), y - Gap, cardX, 0, placed, true);
+            foreach (var item in items) { placed.Add(item with { X = 0, Y = y }); y += item.Height + gap; }
+            return new(node, 0, 0, Math.Max(column, cardX + width), y - gap, cardX, 0, placed, true);
         }
         var xs = new List<double>();
         double x = 0;
-        foreach (var item in items) { xs.Add(x); x += item.Width + Gap; }
+        foreach (var item in items) { xs.Add(x); x += item.Width + gap; }
         double Center(int i) => xs[i] + items[i].CardX + cross(kids[i]) / 2;
         // A single child hangs straight below its port; a row is centered under the card.
         double card = items.Count == 1 ? Center(0) - Port(0) : (Center(0) + Center(items.Count - 1)) / 2 - width / 2;
         double shift = Math.Max(0, -card);
         card += shift;
         int lanes = LaneCount(Enumerable.Range(0, items.Count).Select(i => (card + Port(i), Center(i) + shift)));
-        double gap = lanes == 0 ? LevelGap : Math.Max(LevelGap, Stub + (lanes - 1) * LaneSpacing + Clearance);
-        var row = items.Select((item, i) => item with { X = xs[i] + shift, Y = height + gap }).ToList();
-        return new(node, 0, 0, Math.Max(card + width, shift + x - Gap), height + gap + items.Max(i => i.Height), card, 0, row, false);
+        double drop = lanes == 0 ? LevelGap : Math.Max(LevelGap, Stub + (lanes - 1) * LaneSpacing + Clearance);
+        var row = items.Select((item, i) => item with { X = xs[i] + shift, Y = height + drop }).ToList();
+        return new(node, 0, 0, Math.Max(card + width, shift + x - gap), height + drop + items.Max(i => i.Height), card, 0, row, false);
     }
 
     private static int Direction(double port, double child) => Math.Abs(child - port) < 1 ? 0 : Math.Sign(child - port);

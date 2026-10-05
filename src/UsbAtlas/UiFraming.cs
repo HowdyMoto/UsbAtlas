@@ -5,16 +5,65 @@ namespace UsbAtlas;
 
 public partial class MainWindow
 {
+    // USB trees are shallow and wide: at most seven tiers, any number of ports per hub. Laid out from the
+    // left, siblings stack as rows of horizontal text and position means one thing everywhere, so
+    // horizontal is the default; a layout chosen from the Layout menu is remembered.
+    private static string LayoutPath => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UsbAtlas", "layout.txt");
+    private static bool SavedLayoutIsHorizontal()
+    {
+        try { return !System.IO.File.Exists(LayoutPath) || System.IO.File.ReadAllText(LayoutPath).Trim() != "vertical"; }
+        catch (System.IO.IOException) { return true; }
+        catch (UnauthorizedAccessException) { return true; }
+    }
+    private static bool SaveLayout(bool horizontal)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(LayoutPath)!);
+            System.IO.File.WriteAllText(LayoutPath, horizontal ? "horizontal" : "vertical"); return true;
+        }
+        catch (System.IO.IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
     private string? focusedBranch;
     private HashSet<string>? focusedIds;
     private void PrepareFocus()
     {
         focusedIds = null;
-        TopologyTitle.Text = focusedBranch == null ? "TOPOLOGY" : "FOCUSED BRANCH";
+        TopologyTitle.Text = "TOPOLOGY"; TopologyTitle.SetResourceReference(TextBlock.ForegroundProperty, "TextMuted");
         if (focusedBranch == null) return;
         var node = snapshot.Nodes.FirstOrDefault(n => n.Id == focusedBranch);
         if (node == null) { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; return; }
         focusedIds = FindPath(node.Id).Concat(node.Walk()).Select(n => n.Id).ToHashSet();
+        // Focus is only ever chosen, and it says plainly how much it hides.
+        static bool Hardware(UsbNode n) => n.Kind is "Hub" or "Device" or "Unavailable";
+        TopologyTitle.Text = $"Showing {snapshot.Nodes.Count(n => Hardware(n) && focusedIds.Contains(n.Id))} of {snapshot.Nodes.Count(Hardware)} hubs and devices";
+        TopologyTitle.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimary");
+    }
+    private const double ReadableScale = 0.8, DetailAbove = 1.0;
+    // Zooming past a level's range swaps in the next level's layout. The card under the pointer, or the
+    // nearest one, stays where it was on screen. The scale follows the change in the graph's extent, kept
+    // between the two thresholds so the next wheel step doesn't swap straight back.
+    private bool SwitchDetail(double zoom, Point pointer)
+    {
+        var next = zoom < ReadableScale && detail < CardDetail.Far ? detail + 1 : zoom > DetailAbove && detail > CardDetail.Full ? detail - 1 : detail;
+        if (next == detail || cards.Count == 0) return false;
+        var at = GraphScroll.TranslatePoint(pointer, Graph);
+        static Rect Box((Border Card, Point Point) c) => new(c.Point, new Size(c.Card.Width, c.Card.Height));
+        static double Distance(Rect r, Point p) => new Vector(Math.Max(0, Math.Max(r.Left - p.X, p.X - r.Right)), Math.Max(0, Math.Max(r.Top - p.Y, p.Y - r.Bottom))).Length;
+        static Point Center(Rect r) => new(r.X + r.Width / 2, r.Y + r.Height / 2);
+        var anchor = cards.MinBy(c => Distance(Box(c.Value), at));
+        var before = Graph.TranslatePoint(Center(Box(anchor.Value)), GraphScroll);
+        double extent = horizontalTree ? Graph.Height : Graph.Width;
+        detail = next; Draw();
+        SetZoom(Math.Clamp(GraphScale.ScaleX * extent / (horizontalTree ? Graph.Height : Graph.Width), ReadableScale, DetailAbove));
+        GraphScroll.UpdateLayout();
+        if (cards.TryGetValue(anchor.Key, out var moved))
+        {
+            var after = Graph.TranslatePoint(Center(Box(moved)), GraphScroll);
+            PanTransform.X += before.X - after.X; PanTransform.Y += before.Y - after.Y;
+        }
+        return true;
     }
     private void FocusBranchClick(object sender, RoutedEventArgs e)
     {
@@ -23,17 +72,13 @@ public partial class MainWindow
         FitClick(this, new RoutedEventArgs());
         FrameSelectionPath();
     }
+    // The app opens on the whole topology, at the most detailed level that fits; it never hides branches
+    // on its own.
     private void OpenInitialView()
     {
-        double fit = Math.Min((GraphScroll.ViewportWidth - 32) / Graph.Width, (GraphScroll.ViewportHeight - 32) / Graph.Height);
-        if (fit < 0.8 && selected != null)
-        {
-            var branch = selected.Kind == "Device" ? FindPath(selected.Id).LastOrDefault(n => n.Kind == "Hub") ?? selected : selected;
-            focusedBranch = branch.Id;
-            FocusBranchButton.Content = "Show all branches";
-            Draw(); GraphScroll.UpdateLayout();
-        }
-        FrameSelectionPath();
+        if (focusedBranch != null) { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; }
+        OverviewClick(this, new RoutedEventArgs());
+        UpdateGraphHint();
     }
     private void FrameSelectionPath()
     {
@@ -45,9 +90,9 @@ public partial class MainWindow
         bounds.Inflate(24, 24);
         double fitAll = Math.Min((GraphScroll.ViewportWidth - 32) / Graph.Width, (GraphScroll.ViewportHeight - 32) / Graph.Height);
         // Fit modest topologies whole; large ones retain a readable selected upstream path.
-        double scale = fitAll >= 0.8 ? Math.Min(1, fitAll) : Math.Clamp(Math.Min((GraphScroll.ViewportWidth - 32) / bounds.Width, (GraphScroll.ViewportHeight - 32) / bounds.Height), 0.8, 1);
+        double scale = fitAll >= ReadableScale ? Math.Min(1, fitAll) : Math.Clamp(Math.Min((GraphScroll.ViewportWidth - 32) / bounds.Width, (GraphScroll.ViewportHeight - 32) / bounds.Height), ReadableScale, 1);
         ResetPan(); SetZoom(scale); GraphScroll.UpdateLayout();
-        var center = fitAll >= 0.8 ? new Point(Graph.Width / 2, Graph.Height / 2) : new Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
+        var center = fitAll >= ReadableScale ? new Point(Graph.Width / 2, Graph.Height / 2) : new Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
         GraphScroll.ScrollToHorizontalOffset(Math.Max(0, center.X * scale - GraphScroll.ViewportWidth / 2));
         GraphScroll.ScrollToVerticalOffset(Math.Max(0, center.Y * scale - GraphScroll.ViewportHeight / 2));
         GraphScroll.UpdateLayout(); RevealSelection(); UpdateGraphHint();

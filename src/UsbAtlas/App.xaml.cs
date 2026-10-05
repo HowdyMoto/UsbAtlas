@@ -22,7 +22,10 @@ public partial class App : Application
             catch (Exception ex) { File.WriteAllText("self-test.txt", ex.ToString()); Shutdown(1); }
             return;
         }
-        var window = new MainWindow(e.Args.Contains("--demo"), e.Args.Contains("--render"), e.Args.Contains("--verify-ui"), e.Args.Contains("--horizontal"));
+        // Previews and checks ignore the saved layout, so they come out the same on every machine.
+        bool? horizontal = e.Args.Contains("--vertical") ? false : e.Args.Contains("--horizontal") ? true : null;
+        if (horizontal == null && (e.Args.Contains("--render") || e.Args.Contains("--verify-ui"))) horizontal = true;
+        var window = new MainWindow(e.Args.Contains("--demo"), e.Args.Contains("--render"), e.Args.Contains("--verify-ui"), horizontal);
         if (e.Args.Contains("--compact")) { window.Width = 1050; window.Height = 650; }
         if (e.Args.Contains("--wide")) { window.Width = 3840; window.Height = 1560; }
         if (e.Args.Contains("--render"))

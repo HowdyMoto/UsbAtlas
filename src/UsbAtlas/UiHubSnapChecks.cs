@@ -24,9 +24,15 @@ public partial class MainWindow
             hubs[0].Children[0].Name = "Replacement device";
             new DeviceLabels(file).Apply(snapshot);
             if (hubs[0].Children[0].PortLabel != "Microphone" || !hubs[2].SnapToParentHub || hubs[0].Children[0].UserLabel.Length != 0) throw new Exception("Socket names and hub links must persist independently of device names.");
-            Draw(); SelectNode(hubs[0]); OverviewClick(this, new RoutedEventArgs()); UpdateLayout();
-            if (hubs.Any(h => Math.Abs(cards[h.Id].Point.Y - cards[hubs[0].Id].Point.Y) > .01) || cards[hubs[2].Id].Point.X <= cards[hubs[1].Id].Point.X) throw new Exception("Linked stages must sit side by side.");
-            VerifyWireRouting(); CaptureUi("snapped-hubs-preview.png");
+            Draw(); SelectNode(hubs[0]);
+            // Linked stages sit side by side at every level that draws sockets; a far view shows the real hierarchy.
+            foreach (var level in new[] { CardDetail.Compact, CardDetail.Full })
+            {
+                detail = level; Draw(); UpdateLayout();
+                if (hubs.Any(h => Math.Abs(cards[h.Id].Point.Y - cards[hubs[0].Id].Point.Y) > .01) || cards[hubs[2].Id].Point.X <= cards[hubs[1].Id].Point.X) throw new Exception($"Linked stages must sit side by side in {level} cards.");
+                VerifyWireRouting();
+            }
+            ResetPan(); SetZoom(Math.Min(1, FitScale())); UpdateLayout(); CaptureUi("snapped-hubs-preview.png");
             if (!Details.Children.OfType<System.Windows.Controls.Button>().Any(b => Equals(b.Tag, "select-hub-stage"))) throw new Exception("The first hub must expose downstream stage arrangement.");
             SelectNode(hubs[1]); UpdateLayout();
             var snapButton = Details.Children.OfType<System.Windows.Controls.Button>().Single(b => Equals(b.Tag, "snap-upstream-hub"));
@@ -38,6 +44,6 @@ public partial class MainWindow
             Draw();
             if (hubs[2].SnapToParentHub || hubs[1].Children.Last() != hubs[2]) throw new Exception("Unlinking must retain the real USB hierarchy.");
         }
-        finally { snapshot = old; selected = selection; focusedBranch = focus; horizontalTree = horizontal; File.Delete(file); Draw(); ShowDetails(); }
+        finally { snapshot = old; selected = selection; focusedBranch = focus; horizontalTree = horizontal; detail = CardDetail.Full; File.Delete(file); Draw(); ShowDetails(); }
     }
 }

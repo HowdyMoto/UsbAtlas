@@ -14,6 +14,7 @@ public partial class MainWindow
         var oldTimes = node.QuickReconnectTimes;
         var oldSelection = selected;
         var inspectorWasVisible = InspectorPanel.Visibility == Visibility.Visible;
+        bool wasOpen = openExplanations.Contains("Unstable connection");
         try
         {
             node.QuickReconnects = 3;
@@ -24,11 +25,15 @@ public partial class MainWindow
             var explanationText = ExplanationText("Unstable connection");
             if (selected != node || InspectorPanel.Visibility != Visibility.Visible || !explanationText.Contains("3 times this session") || !explanationText.Contains("12:02:00") || !explanationText.Contains("restarted"))
                 throw new Exception("Clicking a warning must reveal its device and explain the trigger, observed reconnects and session lifetime.");
+            var panel = (Border)Details.Children.OfType<FrameworkElement>().Single(e => Equals(e.Tag, "warning:Unstable connection"));
+            if (((StackPanel)panel.Child).Children.OfType<StackPanel>().Single(p => Equals(p.Tag, ExplanationMoreTag)).Visibility != Visibility.Visible)
+                throw new Exception("Clicking a warning must open its whole explanation.");
             CaptureUi("warning-preview.png");
         }
         finally
         {
             node.QuickReconnects = oldCount; node.QuickReconnectTimes = oldTimes;
+            if (!wasOpen) openExplanations.Remove("Unstable connection");
             selected = oldSelection; ShowDetails();
             if (!inspectorWasVisible && InspectorPanel.Visibility == Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
         }
@@ -75,6 +80,13 @@ public partial class MainWindow
             Check(text.Contains("Yes: its transfers are limited to USB 2 speed") && text.Contains("The hub it's plugged into runs at USB 2") && text.Contains("Fix that hub's USB 3 connection"),
                 "A held-back device must point to the hub that slows it.");
             CaptureUi("speed-explanation-preview.png");
+            // The slow links show on the canvas without reading a card: dashed and amber once they hold
+            // something back, and as wide as their rate, beside a faster hub's wider link.
+            SelectNode(snapshot.Controllers[0]); UpdateLayout();
+            foreach (var slow in new[] { monitor, drive })
+                Check(wires[slow.Id].StrokeDashArray is { Count: > 0 } && wires[slow.Id].Stroke == Brush("Warning"), $"The slow link to {slow.Name} must be dashed amber.");
+            Check(wires[monitor.Id].StrokeThickness == 2 && wires["demo/root/1"].StrokeThickness == 3 && wires["demo/root/1"].StrokeDashArray == null, "Links must be as wide as their rates.");
+            VerifyWireRouting();
             // With only notes, the issues button and status bar count them calmly, apart from issues.
             var calmHub = new UsbNode { Id = "calm/root/1", Kind = "Hub", Name = "Monitor hub", Port = 1, LinkMbps = 480, UsbVersion = "USB 2.10", SpeedLimited = true, Usb3SideMissing = true, Connector = "USB-C",
                 Children = [new UsbNode { Id = "calm/root/1/1", Kind = "Device", Name = "Keyboard", DeviceType = "Keyboard", Port = 1, LinkMbps = 12 }] };
@@ -291,7 +303,21 @@ public partial class MainWindow
             var (v, h) = sv ? (s, t) : (t, s);
             return Within(v.A.X, h.A.X, h.B.X) && Within(h.A.Y, v.A.Y, v.B.Y);
         }
+        // Every connection is drawn as its link, whatever is selected: width from its rate, dashes when slower
+        // than its device supports, and its link's ink unless it is on the selected path.
+        var chain = FindPath(selected?.Id ?? "").Select(n => n.Id).ToHashSet();
+        foreach (var (id, wire) in wires)
+        {
+            var node = (UsbNode)wire.Tag;
+            Check(node.Id == id && wire.StrokeThickness == NodeVisuals.WireWidth(node), $"Connection {id} must be as wide as its link rate.");
+            Check((wire.StrokeDashArray is { Count: > 0 }) == NodeVisuals.SlowLink(node), $"Connection {id} must be dashed exactly when its link is slower than its device supports.");
+            Check(wire.Stroke == Brush(chain.Contains(id) ? "Accent" : NodeVisuals.WireInk(node)), $"Connection {id} has the wrong ink.");
+        }
         var boxes = cards.ToDictionary(c => c.Key, c => new Rect(c.Value.Point, new Size(c.Value.Card.Width, c.Value.Card.Height)));
+        var all = boxes.ToList();
+        for (int i = 0; i < all.Count; i++)
+            for (int j = i + 1; j < all.Count; j++)
+                Check(!all[i].Value.IntersectsWith(all[j].Value), $"Cards {all[i].Key} and {all[j].Key} overlap.");
         var segments = new List<(string Id, Point A, Point B)>();
         foreach (var (id, route) in wireRoutes)
         {
@@ -356,10 +382,12 @@ public partial class MainWindow
             outer.Children.Add(new UsbNode { Id = "second/root/1/4", Kind = "Hub", Name = "Inner hub", Port = 4, PortCount = 4, Children = [new UsbNode { Id = "second/root/1/4/2", Kind = "Device", Name = "Chain device", Port = 2 }] });
             chainRoot.Children.AddRange([outer, new UsbNode { Id = "second/root/3", Kind = "Device", Name = "Second device", Port = 3 }]);
             snapshot.Controllers.Add(new UsbNode { Id = "second", Kind = "Controller", Name = "Second controller", Children = [chainRoot] });
+            // Every level of semantic zoom keeps the same routing rules.
+            foreach (var level in Enum.GetValues<CardDetail>())
             foreach (bool horizontal in new[] { false, true })
             foreach (double width in new[] { 650.0, 1200.0, 2400.0, 4000.0 })
             {
-                horizontalTree = horizontal; layoutWidth = width; Draw(); UpdateLayout();
+                detail = level; horizontalTree = horizontal; layoutWidth = width; Draw(); UpdateLayout();
                 VerifyWireRouting();
                 var rootOrder = Children(root).Select(c => c.Port).ToList();
                 Check(rootOrder.IndexOf(14) == rootOrder.IndexOf(6) + 1 && rootOrder.IndexOf(10) == rootOrder.IndexOf(14) + 1, "A device on a socket's higher-numbered half must sit with its socket.");
@@ -369,7 +397,7 @@ public partial class MainWindow
         }
         finally
         {
-            snapshot = savedSnapshot; horizontalTree = savedHorizontal; layoutWidth = savedWidth; Draw();
+            snapshot = savedSnapshot; horizontalTree = savedHorizontal; layoutWidth = savedWidth; detail = CardDetail.Full; Draw();
         }
     }
 
@@ -729,7 +757,7 @@ public partial class MainWindow
                 Check(portSlots.Count == snapshot.Nodes.Count(n => n.Kind == "Empty port") && cards.Values.All(c => ((UsbNode)c.Card.Tag).Kind != "Empty port"), "Empty ports must render as slots, not full cards.");
                 int logicalPorts = snapshot.Nodes.Where(n => n.Kind is "Hub" or "Root hub" && cards.ContainsKey(CardNode(n).Id)).Sum(n => n.Children.Count);
                 Check(portSlots.Count + connectedPorts.Count == logicalPorts, "Every logical port must be drawn on its hub.");
-                Check(portSlots.Values.All(b => b.Background == Brush("Surface") || b.Background == Brush("Selection")) && connectedPorts.Values.All(b => b.Background == Brush("Wire") || b.Background == Brush("Accent")), "Empty sockets must be hollow and occupied ones filled.");
+                Check(portSlots.Values.All(b => b.Background == Brush("Surface") || b.Background == Brush("Selection")) && connectedPorts.All(p => p.Value.Background == Brush(FindPath(selected?.Id ?? "").Any(n => n.Id == p.Key) ? "Accent" : NodeVisuals.WireInk((UsbNode)p.Value.Tag))), "Empty sockets must be hollow and occupied ones filled in their connection's ink.");
                 ShowDetails(); UpdateIssues(); UpdateLayout();
                 VerifyStatusStyling();
                 VerifyRoleFills();
@@ -755,6 +783,14 @@ public partial class MainWindow
                     if (wires.TryGetValue(id, out var wire))
                         Check((((PathGeometry)wire.Data).Figures[0].StartPoint - edge).Length < 0.01, "Connection must start at its own port graphic.");
                 }
+                // Simpler cards still hold their content, long labels and many sockets included.
+                foreach (var level in new[] { CardDetail.Compact, CardDetail.Far })
+                {
+                    detail = level; Draw(); UpdateLayout();
+                    foreach (var (id, item) in cards)
+                        Check(item.Card.Child.DesiredSize.Height <= item.Card.Height - item.Card.Padding.Top - item.Card.Padding.Bottom - item.Card.BorderThickness.Top - item.Card.BorderThickness.Bottom + 1, $"{level} card {id}'s content exceeds its allocated height.");
+                }
+                detail = CardDetail.Full;
             }
             horizontalTree = false; FitClick(this, new RoutedEventArgs());
             var target = snapshot.Nodes.First(n => n.Kind == "Device");
