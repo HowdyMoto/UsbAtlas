@@ -27,6 +27,11 @@ public partial class MainWindow
             Draw(); SelectNode(hubs[0]); OverviewClick(this, new RoutedEventArgs()); UpdateLayout();
             if (hubs.Any(h => Math.Abs(cards[h.Id].Point.Y - cards[hubs[0].Id].Point.Y) > .01) || cards[hubs[2].Id].Point.X <= cards[hubs[1].Id].Point.X) throw new Exception("Linked stages must sit side by side.");
             VerifyWireRouting(); CaptureUi("snapped-hubs-preview.png");
+            if (!Details.Children.OfType<System.Windows.Controls.Button>().Any(b => Equals(b.Tag, "select-hub-stage"))) throw new Exception("The first hub must expose downstream stage arrangement.");
+            SelectNode(hubs[1]); UpdateLayout();
+            var snapButton = Details.Children.OfType<System.Windows.Controls.Button>().Single(b => Equals(b.Tag, "snap-upstream-hub"));
+            if (snapButton.TranslatePoint(new Point(), Details).Y > 240) throw new Exception("Hub snapping must be near the top of Properties.");
+            CaptureUi("snap-control-preview.png");
             horizontalTree = true; Draw(); VerifyWireRouting();
             horizontalTree = false;
             if (!store.TrySetSnap(hubs[2], snapshot, false, out error)) throw new Exception(error);
