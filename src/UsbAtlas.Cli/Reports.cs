@@ -1,0 +1,250 @@
+using System.Text.Json.Nodes;
+
+namespace UsbAtlas.Cli;
+
+// Small builders for report objects. Null fields are left out, so text and JSON show only what applies.
+internal static class J
+{
+    internal static JsonObject Obj(params (string Key, JsonNode? Value)[] fields)
+    {
+        var o = new JsonObject();
+        foreach (var (key, value) in fields) if (value != null) o[key] = value;
+        return o;
+    }
+    internal static JsonArray Arr(IEnumerable<JsonNode?> items) => new([.. items]);
+    // Null for an empty list, so it's left out.
+    internal static JsonArray? Some(IEnumerable<JsonNode?> items) { var a = Arr(items); return a.Count == 0 ? null : a; }
+    internal static JsonNode? S(string? value) => string.IsNullOrEmpty(value) ? null : value;
+    internal static JsonNode? N(double? value, int digits = 3) => value is double v ? Math.Round(v, digits) : null;
+}
+
+// What each command reports, as one object that prints as JSON or text and that the MCP tools return.
+internal static class Reports
+{
+    internal static string VidPid(UsbNode n) => n.VendorId.Length > 0 ? $"{n.VendorId}:{n.ProductId}" : "";
+    internal static JsonObject Ref(Session s, UsbNode n) => J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))));
+    internal static string RefText(Session s, UsbNode n) => $"{s.PathOf(n)} {Topology.ShortName(n)} ({Topology.Label(n)}{(VidPid(n) is { Length: > 0 } id ? ", " + id : "")})";
+
+    // A merged host's root-hub issues are the host's, as on its card.
+    internal static List<(Severity Severity, string Text, UsbNode Node)> IssuesOf(Session s, UsbNode n)
+    {
+        var list = IssueRules.For(n).Select(i => (i.Severity, i.Text, n)).ToList();
+        if (Topology.MergedRoot(n) is UsbNode root) list.AddRange(IssueRules.For(root).Select(i => (i.Severity, i.Text, root)));
+        return list;
+    }
+
+    internal static JsonObject Header(Session s, string kind) => J.Obj(
+        ("schemaVersion", Session.SchemaVersion), ("report", kind), ("source", s.Source), ("capturedAt", s.Snapshot.CapturedAt.ToString("yyyy-MM-ddTHH:mm:ssK")),
+        ("redacted", s.Redacted ? "serial numbers are replaced by hashes that stay the same within this output" : null));
+
+    internal static JsonObject PowerPlan(Snapshot snapshot) => J.Obj(
+        ("usbSelectiveSuspend", PowerSaving.PlanSummary(snapshot)),
+        ("pluggedIn", snapshot.UsbSuspendPluggedIn is bool p ? (p ? "on" : "off") : "not reported"),
+        ("onBattery", snapshot.UsbSuspendOnBattery is bool b ? (b ? "on" : "off") : "not reported"),
+        ("powerSource", snapshot.OnBattery switch { true => "battery", false => "plugged in", null => "not reported" }));
+
+    internal static JsonObject Counts(Session s) => J.Obj(
+        ("controllers", s.Snapshot.Controllers.Count),
+        ("hubs", s.Snapshot.Nodes.Count(n => n.Kind == "Hub")),
+        ("devices", s.Snapshot.Nodes.Count(n => n.Kind == "Device")),
+        ("emptyPorts", s.Snapshot.Nodes.Count(n => n.Kind == "Empty port")),
+        ("portErrors", s.Snapshot.Nodes.Count(n => n.Kind == "Unavailable")));
+
+    internal static JsonObject Explain(Session s, Severity severity, string issue, UsbNode at, bool evidence)
+    {
+        var e = Explanations.For(at, issue, s.Chain(at));
+        var shown = s.IsMergedRoot(at) ? s.Parent(at)! : at;
+        return J.Obj(("severity", severity.ToString().ToLowerInvariant()), ("issue", issue),
+            ("path", s.PathOf(shown)), ("name", Topology.ShortName(shown)), ("kind", Topology.Label(shown)), ("vidPid", J.S(VidPid(shown))),
+            ("what", e.What), ("affects", J.S(e.Affects)), ("cause", J.S(e.Cause)), ("steps", J.Some((e.Steps ?? []).Select(x => (JsonNode)x))),
+            ("evidence", evidence ? J.Some(at.Notes.Select(x => (JsonNode)x)) : null));
+    }
+
+    internal static Severity? ParseSeverity(string? text) => text?.ToLowerInvariant() switch
+    {
+        null => null, "note" or "notes" => Severity.Note, "warning" or "warnings" => Severity.Warning, "error" or "errors" => Severity.Error,
+        _ => throw new CliException("--min is note, warning or error.")
+    };
+
+    internal static JsonObject Issues(Session s, Severity min = Severity.Note, bool evidence = true)
+    {
+        var all = s.Listed.SelectMany(n => IssuesOf(s, n)).ToList();
+        var shown = all.Where(i => i.Severity >= min).OrderByDescending(i => i.Severity).ToList();
+        var report = Header(s, "issues");
+        report["summary"] = J.Obj(("errors", all.Count(i => i.Severity == Severity.Error)), ("warnings", all.Count(i => i.Severity == Severity.Warning)), ("notes", all.Count(i => i.Severity == Severity.Note)));
+        report["counts"] = Counts(s);
+        report["powerPlan"] = PowerPlan(s.Snapshot);
+        if (s.Snapshot.Diagnostics.Count > 0) report["scanDiagnostics"] = J.Arr(s.Snapshot.Diagnostics.Select(d => (JsonNode)d));
+        report["issues"] = J.Arr(shown.Select(i => (JsonNode)Explain(s, i.Severity, i.Text, i.Node, evidence)));
+        return report;
+    }
+    // 0 clean or notes only, 1 warnings, 2 errors. A scan diagnostic, such as a problem Windows reports on
+    // something the scan couldn't place, counts as a warning, as in the app's issue list.
+    internal static int HealthCode(Session s) => s.Listed.SelectMany(n => IssuesOf(s, n)).Select(i => (Severity?)i.Severity).Max() switch
+    {
+        Severity.Error => 2, Severity.Warning => 1, _ => s.Snapshot.Diagnostics.Count > 0 ? 1 : 0
+    };
+
+    // One line of figures, as on a card: link, polling, power.
+    internal static string Figures(UsbNode n)
+    {
+        var parts = new List<string>();
+        if (n.Kind is "Device" or "Hub") parts.Add(Topology.ShortSpeed(n));
+        if (Topology.ShowsPolling(n)) parts.Add(UsbBudgets.PollingRate(n.PollIntervalMs!.Value));
+        if (n.Kind is "Device" or "Hub" or "Unavailable" && (n.MaxPowerMa.HasValue || Topology.UsesExternalPower(n))) parts.Add(Topology.PowerFigure(n).Text);
+        if (n.Kind == "Unavailable") parts.Insert(0, n.Status);
+        return string.Join(" · ", parts);
+    }
+
+    internal static JsonObject Tree(Session s, bool ports)
+    {
+        JsonObject Node(UsbNode n)
+        {
+            var children = (Topology.MergedRoot(n) ?? n).Children;
+            var o = J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))), ("figures", J.S(Figures(n))),
+                ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)),
+                ("issues", J.Some(IssuesOf(s, n).Select(i => (JsonNode)$"{i.Severity.ToString().ToLowerInvariant()}: {i.Text}"))));
+            var shown = children.Where(c => ports || c.Kind != "Empty port").OrderBy(c => c.Port).ToList();
+            if (shown.Count > 0) o["children"] = J.Arr(shown.Select(c => (JsonNode)Node(c)));
+            var empty = children.Where(c => c.Kind == "Empty port").OrderBy(c => c.Port).Select(c => c.Port).ToList();
+            if (!ports && empty.Count > 0) o["emptyPorts"] = J.Arr(empty.Select(p => (JsonNode)p.ToString("00")));
+            return o;
+        }
+        var report = Header(s, "tree");
+        report["counts"] = Counts(s);
+        report["controllers"] = J.Arr(s.Snapshot.Controllers.Select(c => (JsonNode)Node(c)));
+        return report;
+    }
+
+    internal static JsonObject Find(Session s, string query)
+    {
+        var report = Header(s, "find");
+        report["query"] = query;
+        report["matches"] = J.Arr(s.Find(query).Select(n =>
+        {
+            var o = Ref(s, n);
+            o["figures"] = J.S(Figures(n));
+            if (IssuesOf(s, n) is { Count: > 0 } issues) o["issues"] = J.Arr(issues.Select(i => (JsonNode)i.Text));
+            return (JsonNode)o;
+        }));
+        return report;
+    }
+
+    // Everything known about one node, its place and its neighbors, and what its issues mean.
+    internal static JsonObject Show(Session s, UsbNode n)
+    {
+        var chain = s.Chain(n).Where(c => !s.IsMergedRoot(c) || c == n).ToList();
+        var parent = chain.Count >= 2 ? chain[^2] : null;
+        var report = Header(s, "node");
+        var node = J.Obj(
+            ("path", s.PathOf(n)), ("name", n.DisplayName), ("shortName", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("nodeKind", n.Kind),
+            ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)), ("status", n.Status),
+            ("deviceType", n.Kind == "Device" ? n.DeviceType : null), ("typeEvidence", n.Kind == "Device" ? n.TypeEvidence : null),
+            ("vidPid", J.S(VidPid(n))), ("manufacturer", J.S(n.Manufacturer)), ("product", J.S(n.ReportedProduct)), ("windowsName", J.S(n.WindowsName)),
+            ("lookup", J.S(string.Join(" · ", new[] { n.LookupVendor, n.LookupProduct }.Where(x => x.Length > 0)))), ("nameSource", n.NameSource),
+            ("serial", J.S(n.Serial)), ("instanceId", J.S(n.InstanceId)), ("id", n.Id),
+            ("deviceClass", J.S(n.DeviceClass)), ("interfaceFunctions", J.Some(n.InterfaceFunctions.Select(x => (JsonNode)x))), ("hidUsages", J.Some(n.HidUsages.Select(x => (JsonNode)x))));
+        if (n.Kind is "Device" or "Hub" or "Unavailable")
+            node["link"] = J.Obj(("usbVersion", n.UsbVersion), ("speed", n.Speed), ("linkMbps", J.N(n.LinkMbps)), ("superSpeedPlusCapable", n.SuperSpeedPlusCapable),
+                ("slowerThanSupported", n.SpeedLimited ? true : null), ("protocols", n.Protocols));
+        else node["protocols"] = J.Obj(("ports", n.Protocols), ("downstream", J.S(n.DownstreamProtocols)));
+        if (parent != null || n.Port > 0)
+            node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("evidence", J.S(n.SocketEvidence)),
+                ("userConnectable", n.PortIsUserConnectable), ("usbC", n.PortConnectorIsTypeC),
+                ("sharesSocketWith", n.CompanionId.Length > 0 && s.ById(n.CompanionId) is UsbNode c ? s.PathOf(c) : null));
+        node["location"] = J.Obj(("where", n.Location), ("evidence", n.LocationEvidence));
+        if (n.Kind is "Device" or "Hub" or "Unavailable")
+            node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable),
+                ("drawThroughPortMa", n.Kind == "Hub" ? UsbBudgets.Demand(n).Known : null), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))));
+        if (n.Kind is "Device" or "Hub" or "Root hub" or "Controller")
+            node["powerSaving"] = J.Obj(("setting", Topology.PowerSavingText(Topology.MergedRoot(n) ?? n, s.Snapshot)), ("plan", PowerSaving.PlanSummary(s.Snapshot)));
+        if (n.ReservedMbps != null || n.PollIntervalMs != null || n.OpenPipes.Count > 0)
+            node["bandwidth"] = J.Obj(("reservedMbps", J.N(n.ReservedMbps, 4)), ("peakReservedMbps", J.N(n.PeakReservedMbps, 4)),
+                ("pollIntervalMs", J.N(n.PollIntervalMs)), ("pollingRate", n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : null),
+                ("openPipes", J.Some(n.OpenPipes.Select(x => (JsonNode)x))));
+        if (n.Kind is "Hub" or "Root hub" or "Controller")
+        {
+            var hub = Topology.MergedRoot(n) ?? n;
+            node["hub"] = J.Obj(("ports", hub.PortCount), ("inUse", hub.Children.Count(c => c.Kind != "Empty port")),
+                ("transactionTranslators", n.Kind == "Hub" ? Topology.TtType(n) : null),
+                ("pairedWith", n.CompanionHubId.Length > 0 && s.ById(n.CompanionHubId) is UsbNode pair ? s.PathOf(pair) : null),
+                ("usb3SideMissing", n.Usb3SideMissing ? true : null), ("relationship", J.S(HubRelationships.Description(n, s.Snapshot))));
+        }
+        if (n.DriverService.Length > 0 || n.DriverVersion.Length > 0 || n.DriverProblems.Count > 0)
+            node["driver"] = J.Obj(("service", J.S(n.DriverService)), ("version", J.S(n.DriverVersion)), ("date", J.S(n.DriverDate)), ("provider", J.S(n.DriverProvider)), ("inf", J.S(n.DriverInf)),
+                ("problems", J.Some(n.DriverProblems.Select(p => (JsonNode)J.Obj(("code", p.Code), ("meaning", p.Meaning), ("instanceId", p.InstanceId), ("name", J.S(p.Name)))))));
+        if (n.QuickReconnects > 0)
+            node["reconnects"] = J.Obj(("count", n.QuickReconnects), ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))));
+        report["node"] = node;
+        report["upstream"] = J.Arr(chain.SkipLast(1).Select(c => (JsonNode)J.Obj(("path", s.PathOf(c)), ("name", Topology.ShortName(c)), ("kind", Topology.Label(c)), ("figures", J.S(Figures(c))))));
+        if (parent != null)
+            report["siblings"] = J.Arr((Topology.MergedRoot(parent) ?? parent).Children.Where(c => c != n && c.Kind != "Empty port").OrderBy(c => c.Port)
+                .Select(c => (JsonNode)J.Obj(("path", s.PathOf(c)), ("name", Topology.ShortName(c)), ("kind", Topology.Label(c)), ("figures", J.S(Figures(c))))));
+        var children = (Topology.MergedRoot(n) ?? n).Children;
+        if (children.Count > 0)
+            report["children"] = J.Arr(children.OrderBy(c => c.Port).Select(c => (JsonNode)(c.Kind == "Empty port"
+                ? J.Obj(("path", s.PathOf(c)), ("kind", "Empty port"), ("connector", c.Connector), ("socketSpeed", c.SocketSpeed))
+                : J.Obj(("path", s.PathOf(c)), ("name", Topology.ShortName(c)), ("kind", Topology.Label(c)), ("figures", J.S(Figures(c)))))));
+        report["issues"] = J.Arr(IssuesOf(s, n).Select(i => (JsonNode)Explain(s, i.Severity, i.Text, i.Node, false)));
+        report["notes"] = J.Some(n.Notes.Select(x => (JsonNode)x));
+        return report;
+    }
+
+    // Bandwidth and power arithmetic with its inputs, for hubs and anything with a budget issue.
+    internal static JsonObject Budget(Session s, UsbNode? target)
+    {
+        var report = Header(s, "budget");
+        report["assumptions"] = "Reserved bandwidth and power come from descriptors, not measurements. Periodic (interrupt, isochronous) pipes reserve bus time; bulk transfers share what is left. Reservable capacity is 90% of a low/full-speed frame, 80% of a high-speed microframe, and 90% of SuperSpeed bus time after encoding. Power limits are what the USB specification guarantees: 500 mA (USB 2) or 900 mA (USB 3) from a standard port, 100 mA (USB 2) or 150 mA (USB 3) per port of a bus-powered hub.";
+        bool budgetIssue(UsbNode n) => IssueRules.For(n).Any(i => i.Text is "Link nearly full" or "Could exceed when streaming" or "Shared TT nearly full" or "Shared TT could exceed" or "Insufficient bandwidth" or "Power at risk" or "Over power budget" or "Insufficient power" or Explanations.AdapterNotDetected);
+        var nodes = target != null ? [target] : s.Listed.Where(n => n.Kind == "Hub" || budgetIssue(n)).ToList();
+        report["nodes"] = J.Arr(nodes.Select(n => (JsonNode)BudgetOf(s, n)));
+        return report;
+    }
+
+    private static JsonObject BudgetOf(Session s, UsbNode n)
+    {
+        var o = Ref(s, n);
+        if (UsbBudgets.LinkUse(n) is (var reserved, var capacity, var unknown))
+        {
+            double peak = Math.Max(reserved, UsbBudgets.PeakThroughLink(n).Mbps);
+            o["link"] = J.Obj(("rate", Topology.ShortSpeed(n)), ("reservableMbps", J.N(capacity, 2)), ("reservedNowMbps", J.N(reserved, 4)), ("peakMbps", J.N(peak, 4)),
+                ("nowShare", UsbBudgets.Share(reserved, capacity)), ("peakShare", UsbBudgets.Share(peak, capacity)),
+                ("unreportedDevices", unknown > 0 ? unknown : null),
+                ("state", UsbBudgets.LinkNearlyFull(n) ? "nearly full" : UsbBudgets.CouldExceedWhenStreaming(n) ? "could exceed when streaming" : "fits"));
+            // A hub's own status pipe reserves a few bits per second; under 1 kb/s isn't worth listing.
+            var contributors = (n.Kind == "Hub" ? n.Walk() : [n]).Where(d => d.Kind is "Device" or "Hub" && Math.Max(d.ReservedMbps ?? 0, d.PeakReservedMbps ?? 0) >= 0.001)
+                .OrderByDescending(d => Math.Max(d.PeakReservedMbps ?? 0, d.ReservedMbps ?? 0)).ToList();
+            if (contributors.Count > 0)
+                o["reservations"] = J.Arr(contributors.Select(d => (JsonNode)J.Obj(("path", s.PathOf(d)), ("name", Topology.ShortName(d)), ("link", Topology.ShortSpeed(d)),
+                    ("reservedMbps", J.N(d.ReservedMbps, 4)), ("peakMbps", J.N(d.PeakReservedMbps, 4)), ("pipes", J.Some(d.OpenPipes.Where(p => p.Contains("reserves")).Select(p => (JsonNode)p))))));
+        }
+        else if (n.Kind is "Device" or "Hub") o["link"] = J.Obj(("rate", Topology.ShortSpeed(n)), ("note", "Reserved bandwidth isn't known for this link."));
+        if (UsbBudgets.SharedTtUse(n) is (var ttNow, var ttPeak, var ttUnknown, var ports))
+            o["sharedTt"] = J.Obj(("type", Topology.TtType(n)), ("portsUsingIt", ports), ("reservableMbps", UsbBudgets.FullSpeedReservableMbps), ("nowMbps", J.N(ttNow, 4)), ("peakMbps", J.N(ttPeak, 4)),
+                ("unreportedDevices", ttUnknown > 0 ? ttUnknown : null),
+                ("state", UsbBudgets.SharedTtNearlyFull(n) ? "nearly full" : UsbBudgets.SharedTtCouldExceed(n) ? "could exceed" : "fits"));
+        else if (n.Kind == "Hub" && n.LinkMbps == 480) o["sharedTt"] = J.Obj(("type", Topology.TtType(n)));
+        if (n.Kind is "Device" or "Hub" or "Unavailable")
+        {
+            var power = J.Obj(("source", n.PowerSource), ("requestMa", n.MaxPowerMa), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))));
+            if (n.Kind == "Hub" && n.PowerSource == "Bus powered")
+            {
+                bool super = UsbBudgets.SuperSpeed(n);
+                var children = n.Children.Where(c => c.Kind is "Device" or "Hub").ToList();
+                int total = (n.MaxPowerMa ?? 0) + children.Sum(c => UsbBudgets.Demand(c).Known);
+                power["upstreamGuaranteeMa"] = super ? 900 : 500;
+                power["totalDemandMa"] = total;
+                power["unreportedDevices"] = children.Sum(c => UsbBudgets.Demand(c).Unknown) is > 0 and var u ? u : null;
+                power["ports"] = J.Arr(children.OrderBy(c => c.Port).Select(c =>
+                {
+                    var (known, missing) = UsbBudgets.Demand(c);
+                    int limit = UsbBudgets.SuperSpeed(c) ? 150 : 100;
+                    return (JsonNode)J.Obj(("path", s.PathOf(c)), ("name", Topology.ShortName(c)), ("demandMa", known), ("unreported", missing > 0 ? missing : null), ("portGuaranteeMa", limit), ("over", known > limit ? true : null));
+                }));
+            }
+            else if (n.Kind == "Hub") power["note"] = "Runs on its own supply; its ports' current comes from that supply, which Windows doesn't report.";
+            o["power"] = power;
+        }
+        return o;
+    }
+}

@@ -19,7 +19,7 @@ public partial class MainWindow
             node.QuickReconnects = 3;
             node.QuickReconnectTimes = [DateTime.Today.AddHours(12), DateTime.Today.AddHours(12).AddMinutes(1), DateTime.Today.AddHours(12).AddMinutes(2)];
             if (inspectorWasVisible) InspectorClick(this, new RoutedEventArgs());
-            var badge = WarningBadge(node, NodeVisuals.Severity.Warning, "Unstable connection");
+            var badge = WarningBadge(node, Severity.Warning, "Unstable connection");
             badge.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var explanationText = ExplanationText("Unstable connection");
             if (selected != node || InspectorPanel.Visibility != Visibility.Visible || !explanationText.Contains("3 times this session") || !explanationText.Contains("12:02:00") || !explanationText.Contains("restarted"))
@@ -60,7 +60,7 @@ public partial class MainWindow
             HubRelationships.Analyze(snapshot);
             Check(monitor.Usb3SideMissing && !monitor.Usb3SideFailed, "A USB 2 hub side whose socket's USB 3 half is empty must be found missing its USB 3 side.");
             Draw(); SelectNode(monitor); UpdateLayout();
-            Check(Issues(monitor).Contains((NodeVisuals.Severity.Note, "Running at USB 2")), "A hub that slows nothing plugged into it must be a calm note.");
+            Check(Issues(monitor).Contains((Severity.Note, "Running at USB 2")), "A hub that slows nothing plugged into it must be a calm note.");
             Check(VisualDescendants(cards[monitor.Id].Card).OfType<Border>().Any(b => b.Background == Brush("NoteSurface")), "The note must use the calm badge on the card.");
             var text = ExplanationText("Running at USB 2");
             Check(text.Contains("connected at USB 2 (480 Mb/s)") && text.Contains("Does it affect you?") && text.Contains("Not right now") && text.Contains("USB-C Prioritization") && text.Contains("charging cables"),
@@ -70,7 +70,7 @@ public partial class MainWindow
             Check(Details.Children.IndexOf(panel) < Details.Children.IndexOf(firstRow), "The explanation must come before the data rows.");
             var drive = monitor.Children[0]; drive.SpeedLimited = true;
             Draw(); SelectNode(drive); UpdateLayout();
-            Check(Issues(monitor).Contains((NodeVisuals.Severity.Warning, "Running at USB 2")), "A hub that holds a faster device back must warn.");
+            Check(Issues(monitor).Contains((Severity.Warning, "Running at USB 2")), "A hub that holds a faster device back must warn.");
             text = ExplanationText("Running at USB 2");
             Check(text.Contains("Yes: its transfers are limited to USB 2 speed") && text.Contains("The hub it's plugged into runs at USB 2") && text.Contains("Fix that hub's USB 3 connection"),
                 "A held-back device must point to the hub that slows it.");

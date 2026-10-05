@@ -39,8 +39,8 @@ internal static class IdentityTests
         foreach (var (reported, shown) in new[] {
             ("AMD USB 3.10 eXtensible Host Controller - 1.10 (Microsoft)", "AMD USB 3.10 xHCI"), ("Realtek Semiconductor Corp. RTS5411 Hub", "Realtek RTS5411 Hub"),
             ("Genesys Logic, Inc. USB2.0 Hub", "Genesys Logic USB2.0 Hub"), ("Alpha Imaging Tech. Corp. Razer Kiyo", "Alpha Imaging Razer Kiyo"), ("Corsair Gaming HARPOON RGB Mouse", "Corsair Gaming HARPOON RGB Mouse") })
-            Check(NodeVisuals.ShortName(new UsbNode { Name = reported }) == shown, $"\"{reported}\" must shorten to \"{shown}\".");
-        Check(NodeVisuals.ShortName(new UsbNode { Name = "Realtek Semiconductor Corp. RTS5411 Hub", UserLabel = "Desk Corp. hub" }) == "Desk Corp. hub", "A user's own label must never be shortened.");
+            Check(Topology.ShortName(new UsbNode { Name = reported }) == shown, $"\"{reported}\" must shorten to \"{shown}\".");
+        Check(Topology.ShortName(new UsbNode { Name = "Realtek Semiconductor Corp. RTS5411 Hub", UserLabel = "Desk Corp. hub" }) == "Desk Corp. hub", "A user's own label must never be shortened.");
 
         var folder = Path.Combine(Path.GetTempPath(), "UsbAtlas-identity-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);

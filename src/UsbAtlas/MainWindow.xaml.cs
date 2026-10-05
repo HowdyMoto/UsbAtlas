@@ -122,14 +122,14 @@ public partial class MainWindow : Window
         e.Handled = true;
         if (!e.IsRepeat) await Refresh();
     }
-    private static string ShortSpeed(UsbNode n) => n.LinkMbps switch { 5000 => "5 Gb/s", 480 => "480 Mb/s", 12 => "12 Mb/s", 1.5 => "1.5 Mb/s", _ => n.Speed.StartsWith("SuperSpeedPlus") ? "≥10 Gb/s" : "Rate unknown" };
+    private static string ShortSpeed(UsbNode n) => Topology.ShortSpeed(n);
     private const string NotApplicable = "—";
     // One layout per kind of selection, so ports can be compared by flipping between them: every port,
     // device and hub shows the same rows in the same places. "—" marks a row that doesn't apply or has
     // nothing attached; "Not reported" marks a value an attached device left out. What an issue means
     // leads, above the rows, since it's what people come to Properties for; actions and evidence follow them.
     private Explanations.Explanation Explain(UsbNode node, string issue) => Explanations.For(node, issue, FindPath(node.Id));
-    private Button WarningBadge(UsbNode node, NodeVisuals.Severity severity, string issue)
+    private Button WarningBadge(UsbNode node, Severity severity, string issue)
     {
         var badge = new Button { Content = NodeVisuals.StatusBadge(severity, issue), Style = (Style)FindResource("WarningButton"), Padding = new Thickness(0), Tag = "warning-action" };
         badge.Cursor = Cursors.Hand;
@@ -351,14 +351,8 @@ public partial class MainWindow : Window
         Text("Link rates are shared signaling limits. Reserved bandwidth, polling rates and requested power come from device descriptors, not live measurements. Power checks compare declared draw with what the USB specification guarantees a port; supply capacity itself is not measured.", 11, "TextMuted");
 
     }
-    // Device Manager's power-saving setting for this hardware. Turned on, it still does nothing while the
-    // power plan's USB selective suspend is off.
-    private string PowerSavingText(UsbNode n) => n.PowerSaving == "On" && snapshot.UsbSuspendActive == false ? "On · plan disables it" : n.PowerSaving;
-    private List<UsbNode> FindPath(string id)
-    {
-        List<UsbNode>? SearchPath(UsbNode n) { if (n.Id == id) return [n]; foreach (var c in n.Children) { var path = SearchPath(c); if (path != null) { path.Insert(0, n); return path; } } return null; }
-        return snapshot.Controllers.Select(SearchPath).FirstOrDefault(x => x != null) ?? [];
-    }
+    private string PowerSavingText(UsbNode n) => Topology.PowerSavingText(n, snapshot);
+    private List<UsbNode> FindPath(string id) => Topology.FindPath(snapshot, id);
     private void Text(string value, double size = 13, string color = "TextPrimary") => Details.Children.Add(new TextBlock { Text = value, FontSize = size, Foreground = Brush(color), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 9) });
     // What an issue means, in a panel under the status badges: what is happening, whether it affects
     // anything now, and what to do. With several issues each panel names its own.

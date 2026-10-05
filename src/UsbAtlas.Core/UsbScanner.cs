@@ -10,12 +10,15 @@ public sealed class UsbScanner
 {
     private static readonly Guid ControllerGuid = new("3ABF6F2D-71C4-462A-8A92-1E6861E6AF27");
     private readonly Dictionary<string, (string Name, string Manufacturer, string InstanceId)> names = new(StringComparer.OrdinalIgnoreCase);
-    // Every present devnode by instance ID: its parent, its driver service and, for a HID collection, its usages.
-    internal sealed record DevNode(string Parent, string Service, List<string> Usages);
+    // Every present devnode by instance ID: its parent, its driver service and, for a HID collection, its
+    // usages; its name, driver key and any Device Manager problem code.
+    internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0);
     private readonly Dictionary<string, DevNode> devices = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> hidUsages = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
     private Snapshot snapshot = new();
+    // Keep descriptor bytes on each node for deep diagnostics. Off for the app, which doesn't show them.
+    public bool CaptureRaw { get; init; }
 
     public Snapshot Scan()
     {
@@ -70,6 +73,7 @@ public sealed class UsbScanner
         HubRelationships.Analyze(snapshot);
         HubRelationships.NoteReducedSpeed(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
+        Drivers.Apply(snapshot, devices);
         PowerSaving.Read(snapshot, devices);
         PowerSaving.Analyze(snapshot);
         if (snapshot.Controllers.Count == 0) snapshot.Diagnostics.Add("No USB host controllers were returned by Windows.");
@@ -85,6 +89,7 @@ public sealed class UsbScanner
         var info = new byte[76];
         if (!Query(handle, 258, info, out var returned) || returned < 7) { hub.ScanIncomplete = true; hub.Notes.Add("Cannot read hub ports: " + Error()); return; }
         hub.PortCount = info[6];
+        if (CaptureRaw && info[4] >= 7 && returned >= 4 + info[4]) (hub.Raw ??= new()).Hub = Convert.ToHexString(info, 4, info[4]);
         // USB_HUB_DESCRIPTOR is 71 bytes; HubIsBusPowered follows it.
         if (hub.Kind != "Root hub" && returned >= 76) hub.PowerSource = info[75] != 0 ? "Bus powered" : "Self powered";
         for (int port = 1; port <= hub.PortCount; port++)
@@ -100,7 +105,8 @@ public sealed class UsbScanner
             var node = new UsbNode { Id = hub.Id + "/" + port, Port = port, Status = ConnectionStatus(status) };
             hub.Children.Add(node);
             var connector = new byte[4096]; Put(connector, 0, port);
-            if (Query(handle, 278, connector, out var connectorReturned) && connectorReturned >= 16)
+            bool hasConnector = Query(handle, 278, connector, out var connectorReturned) && connectorReturned >= 16;
+            if (hasConnector)
             {
                 DeviceIdentity.ApplyPortProperties(node, BitConverter.ToUInt32(connector, 8));
                 // A USB 3 socket is two logical ports, one on each bus; its companion is the other half.
@@ -112,6 +118,13 @@ public sealed class UsbScanner
             var v2 = new byte[16]; Put(v2, 0, port); Put(v2, 4, 16); Put(v2, 8, 7);
             var hasV2 = Query(handle, 279, v2, out returned) && returned >= 16;
             var flags = hasV2 ? BitConverter.ToInt32(v2, 12) : 0;
+            if (CaptureRaw)
+            {
+                var raw = node.Raw = new();
+                if (hasV2) { raw.ConnectionFlags = flags; raw.Protocols = BitConverter.ToInt32(v2, 8); }
+                if (hasConnector) raw.ConnectorProperties = BitConverter.ToUInt32(connector, 8);
+                if (status is 1 or 4 or 5 && data[4] == 18 && data[5] == 1) { raw.Device = Convert.ToHexString(data, 4, 18); raw.SpeedCode = data[23]; }
+            }
             if (hasV2)
             {
                 var protocols = BitConverter.ToInt32(v2, 8);
@@ -161,6 +174,7 @@ public sealed class UsbScanner
                         var fullConfig = Descriptor(handle, port, 2, index, 0, length);
                         if (fullConfig != null)
                         {
+                            if (CaptureRaw) node.Raw!.Configuration = Convert.ToHexString(fullConfig);
                             node.InterfaceFunctions = DeviceIdentity.ReadInterfaceFunctions(fullConfig);
                             endpoints = UsbBudgets.ReadEndpoints(fullConfig);
                         }
@@ -168,6 +182,10 @@ public sealed class UsbScanner
                     break;
                 }
             }
+            // The BOS descriptor lists USB 2.1+ and USB 3 capabilities, such as SuperSpeedPlus and LPM.
+            if (CaptureRaw && bcd >= 0x0201 && Descriptor(handle, port, 15, 0, 0, 5) is { Length: >= 5 } bosHead && bosHead[1] == 15
+                && Descriptor(handle, port, 15, 0, 0, Math.Max((ushort)5, BitConverter.ToUInt16(bosHead, 2))) is { } bos)
+                node.Raw!.Bos = Convert.ToHexString(bos);
             ReadOpenPipes(data, returnedInfo, SpeedClass(data[23], flags), endpoints, node);
             DeviceIdentity.Identify(node);
             if (node.Kind == "Hub")
@@ -275,7 +293,9 @@ public sealed class UsbScanner
                 buffer.Clear();
                 var parent = Native.CM_Get_Parent(out var up, d.DevInst, 0) == 0 && Native.CM_Get_Device_ID(up, buffer, buffer.Capacity, 0) == 0 ? buffer.ToString() : "";
                 var usages = instance.StartsWith(@"HID\", StringComparison.OrdinalIgnoreCase) ? DeviceIdentity.ReadHidUsages(MultiProperty(set, ref d, 1)) : [];
-                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages);
+                // DN_HAS_PROBLEM: Device Manager shows the problem code on the device's General tab.
+                int problem = Native.CM_Get_DevNode_Status(out var devStatus, out var code, d.DevInst, 0) == 0 && (devStatus & 0x400) != 0 ? (int)code : 0;
+                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem);
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }
@@ -351,6 +371,7 @@ internal static class Native
     [DllImport("setupapi.dll")] internal static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
     [DllImport("setupapi.dll", EntryPoint = "SetupDiGetDeviceInstanceIdW", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern bool SetupDiGetDeviceInstanceId(IntPtr set, ref DeviceData dev, StringBuilder id, int size, out int needed);
     [DllImport("cfgmgr32.dll")] internal static extern int CM_Get_Parent(out uint parent, uint devInst, int flags);
+    [DllImport("cfgmgr32.dll")] internal static extern int CM_Get_DevNode_Status(out uint status, out uint problem, uint devInst, int flags);
     [DllImport("cfgmgr32.dll", EntryPoint = "CM_Get_Device_IDW", CharSet = CharSet.Unicode)] internal static extern int CM_Get_Device_ID(uint devInst, StringBuilder buffer, int length, int flags);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)] internal static extern bool DeviceIoControl(SafeFileHandle handle, uint code, [In] byte[] input, int inputSize, [Out] byte[] output, int outputSize, out int returned, IntPtr overlapped);

@@ -1,0 +1,290 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace UsbAtlas.Cli;
+
+// Checks for the command line, run by usbatlas-cli self-test after the app's own checks. They use the
+// sample topology, so they pass on any machine.
+internal static class CliTests
+{
+    private static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+    private static bool Throws(Action action) { try { action(); return false; } catch (CliException) { return true; } }
+    private static (int Code, string Out, string Err) Run(params string[] args)
+    {
+        var output = new StringWriter(); var error = new StringWriter();
+        int code = Program.Execute(args, output, error, CancellationToken.None);
+        return (code, output.ToString(), error.ToString());
+    }
+    private static Session Demo() => new(DemoData.Create(), "demo");
+
+    internal static void Run()
+    {
+        OptionTests();
+        TargetTests();
+        ReportTests();
+        DiffTests();
+        RedactTests();
+        DescriptorTests();
+        DriverProblemTests();
+        FileTests();
+        McpTests();
+        CommandTests();
+    }
+
+    private static void OptionTests()
+    {
+        var o = Options.Parse(["show", "H01/05", "--json", "--min=warning", "--for", "90s"]);
+        Check(o.Command == "show" && o.Positional is ["H01/05"] && o.Json && o.Get("min") == "warning" && o.Duration("for", TimeSpan.Zero) == TimeSpan.FromSeconds(90), "Options parse commands, positionals, flags and both value forms.");
+        Check(Options.ParseDuration("5m") == TimeSpan.FromMinutes(5) && Options.ParseDuration("2h") == TimeSpan.FromHours(2) && Options.ParseDuration("1d") == TimeSpan.FromDays(1) && Options.ParseDuration("30") == TimeSpan.FromSeconds(30), "Durations take s, m, h and d, and plain seconds.");
+        Check(Options.ParseDuration("-1s") == null && Options.ParseDuration("soon") == null && Options.ParseDuration("1e308d") == null, "Bad durations are refused.");
+        Check(Throws(() => Options.Parse(["issues", "--bogus"])) && Throws(() => Options.Parse(["issues", "--min"])) && Throws(() => Options.Parse(["issues", "--json=yes"])) && Throws(() => Options.Parse(["tree", "--format", "xml"])), "Unknown options, missing values and values for flags are refused.");
+    }
+
+    private static void TargetTests()
+    {
+        var s = Demo();
+        var hub = s.Snapshot.Nodes.First(n => n.Name == "Studio desktop hub");
+        Check(s.PathOf(hub) == "H01/01" && s.PathOf(hub.Children[1]) == "H01/01/02", "A merged root hub shares its controller's path, so root ports read H01/NN.");
+        Check(s.Resolve("h01/01") == hub && s.Resolve("2109:0817") == hub && s.Resolve("Studio desktop") == hub && s.Resolve(hub.Id) == hub, "Targets resolve by path, VID:PID, name and ID.");
+        Check(s.Resolve("H01") == s.Snapshot.Controllers[0] && s.Resolve("demo/root") == s.Snapshot.Controllers[0], "The host path and a merged root hub's ID name the host.");
+        Check(Throws(() => s.Resolve("Available port")) && Throws(() => s.Resolve("no such thing")) && Throws(() => s.Resolve(" ")), "Ambiguous, unknown and empty targets fail with a message.");
+        try { s.Resolve("Available port"); } catch (CliException ex) { Check(ex.Message.Contains("H01/01/03") && ex.Message.Contains("matches"), "An ambiguous target lists the paths it matches."); }
+        Check(s.Find("1000 Hz").Select(n => n.Name).OrderBy(x => x).SequenceEqual(["Direct-drive wheel base", "Wireless mouse receiver"]), "Find searches polling rates as the app does.");
+        Check(!s.Listed.Any(s.IsMergedRoot), "A merged root hub isn't listed apart from its host.");
+    }
+
+    private static void ReportTests()
+    {
+        var s = Demo();
+        var issues = Reports.Issues(s);
+        var list = issues["issues"]!.AsArray();
+        Check(list.Count > 0 && list.All(i => i!["what"] != null && i["path"] != null && i["severity"] != null), "Every issue has a severity, a path and an explanation.");
+        Check(list[0]!["severity"]!.ToString() == "error" && list.Any(i => i!["issue"]!.ToString() == "Insufficient power" && i["path"]!.ToString() == "H01/05/03"), "Errors lead, and the refused drive is placed at its port.");
+        Check(list.Any(i => i!["issue"]!.ToString() == PowerSaving.Warning && i["steps"]!.AsArray().Count > 0), "A game controller Windows may suspend is listed with steps.");
+        Check(Reports.HealthCode(s) == 2, "Errors exit 2.");
+        Check(Reports.Issues(s, Severity.Error)["issues"]!.AsArray().All(i => i!["severity"]!.ToString() == "error") && (int)issues["summary"]!["errors"]! >= 1, "--min leaves out less severe issues but the summary counts them all.");
+        Check(TextOut.Render(issues).Contains("ERROR: Insufficient power — H01/05/03"), "Issue text leads each issue with severity, name and path.");
+
+        var tree = Reports.Tree(s, false);
+        string text = TextOut.Render(tree);
+        Check(text.Contains("H01/01 Studio desktop hub — Plug-in hub · 5 Gb/s") && text.Contains("empty ports 03,04"), "The tree shows each hub with its figures and summarizes empty ports.");
+        Check(text.Contains("H01/09 Direct-drive wheel base — Game controller · 12 Mb/s · 1000 Hz"), "Game controllers show their polling rate.");
+        Check(TextOut.Render(Reports.Tree(s, true)).Contains("H01/01/03 Available port 3 — Empty port"), "--ports lists every empty port.");
+
+        var show = Reports.Show(s, s.Resolve("H01/05"));
+        Check(show["node"]!["hub"]!["transactionTranslators"]!.ToString().Contains("single TT") && show["children"]!.AsArray().Count == 4 && show["siblings"]!.AsArray().Count > 0 && show["upstream"]!.AsArray().Count == 1, "show includes the hub, its children, its siblings and the chain to the host.");
+        Check(show["issues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Over power budget"), "show explains the node's issues.");
+        Check(TextOut.Render(show).Contains("transactionTranslators: Share one link · single TT"), "show renders as key: value text.");
+        var host = Reports.Show(s, s.Resolve("H01"));
+        Check(host["node"]!["hub"]!["ports"]!.GetValue<int>() == 9 && host["children"]!.AsArray().Count == 9, "A merged host shows its root ports.");
+
+        var budget = Reports.Budget(s, null);
+        var travel = budget["nodes"]!.AsArray().First(n => n!["path"]!.ToString() == "H01/05")!;
+        Check(travel["power"]!["upstreamGuaranteeMa"]!.GetValue<int>() == 500 && travel["power"]!["ports"]!.AsArray().Any(p => p!["over"] != null && p["name"]!.ToString() == "LED ring light"), "The budget shows a bus-powered hub's guarantee and the ports over theirs.");
+        Check(travel["sharedTt"]!["portsUsingIt"]!.GetValue<int>() >= 1, "The budget shows a single-TT hub's shared bus.");
+        Check(Reports.Budget(s, s.Resolve("Studio camera"))["nodes"]!.AsArray()[0]!["reservations"] != null, "A device's budget lists what it reserves.");
+        Check(TextOut.Render(Reports.Find(s, "USB-C")).Contains("match"), "Find renders as lines.");
+    }
+
+    private static void DiffTests()
+    {
+        // Demo devices report no IDs; a moved device without a serial is matched by its VID:PID.
+        static void Identify(Snapshot s) { var d = s.Nodes.First(n => n.Name == "USB flash drive"); d.VendorId = "0781"; d.ProductId = "5567"; }
+        var first = DemoData.Create(); Identify(first);
+        var before = new Session(first, "demo");
+        var next = DemoData.Create(); Identify(next);
+        var root = next.Controllers[0].Children[0];
+        root.Children.RemoveAll(n => n.Name == "Mechanical keyboard");
+        var travel = root.Children.First(n => n.Name == "Travel hub");
+        var drive = travel.Children.First(n => n.Name == "USB flash drive");
+        // Moving the flash drive (no serial) from the travel hub's port 1 to the studio hub's port 3.
+        travel.Children.Remove(drive);
+        travel.Children.Insert(0, new UsbNode { Id = "demo/root/5/1", Name = "Available port 1", Kind = "Empty port", Port = 1, Status = "Empty" });
+        var hub = root.Children.First(n => n.Name == "Studio desktop hub");
+        hub.Children.RemoveAll(n => n.Port == 3);
+        drive.Id = "demo/root/1/3"; drive.Port = 3;
+        hub.Children.Insert(2, drive);
+        var ssd = hub.Children.First(n => n.Name == "Portable SSD");
+        ssd.LinkMbps = 480; ssd.Speed = "High speed · 480 Mb/s"; ssd.SpeedLimited = true; ssd.SuperSpeedPlusCapable = false;
+        var after = new Session(next, "demo");
+        var diff = Diff.Compare(before, after);
+        Check(diff["disconnected"]!.AsArray().Any(n => n!["name"]!.ToString() == "Mechanical keyboard") && diff["connected"]!.AsArray().Count == 0, "A removed device is disconnected, and a moved one isn't connected.");
+        Check(diff["moved"]!.AsArray().Any(m => m!["from"]!.ToString() == "H01/05/01" && m["to"]!.ToString() == "H01/01/03"), "A device without a serial that leaves one port and appears at another moved.");
+        Check(diff["changed"]!.AsArray().Any(c => c!["name"]!.ToString() == "Portable SSD" && c["changes"]!.AsArray().Any(x => x!["field"]!.ToString() == "link")), "A link speed change is reported.");
+        Check(diff["newIssues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Running at USB 2" && i["path"]!.ToString() == "H01/01/01"), "An issue that appears is new.");
+        Check(!diff["newIssues"]!.AsArray().Any(i => i!["name"]!.ToString() == "USB flash drive"), "Issues follow a moved device instead of reappearing.");
+        Check(Diff.Text(diff).Contains("> moved         USB flash drive H01/05/01 → H01/01/03") && Diff.Text(diff).Contains("- disconnected  H01/03 Mechanical keyboard"), "Diff text has one line per change.");
+        Check(Diff.Empty(Diff.Compare(Demo(), Demo())), "Identical snapshots have no differences.");
+        // A redacted baseline compared with a redacted scan: redaction must be stable and idempotent.
+        var serialed = DemoData.Create(); serialed.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";
+        var again = DemoData.Create(); again.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";
+        var once = Session.Redact(serialed);
+        Check(Diff.Empty(Diff.Compare(new(Session.Redact(once), "file"), new(Session.Redact(again), "live"))), "Redacting a redacted snapshot changes nothing, so a redacted baseline diffs clean.");
+    }
+
+    private static void RedactTests()
+    {
+        var snapshot = DemoData.Create();
+        var ssd = snapshot.Nodes.First(n => n.Name == "Portable SSD");
+        ssd.Serial = "S4EVNX0R123456"; ssd.InstanceId = @"USB\VID_04E8&PID_61F5\S4EVNX0R123456"; ssd.Notes.Add("Serial S4EVNX0R123456 seen.");
+        var keyboard = snapshot.Nodes.First(n => n.Name == "Mechanical keyboard");
+        keyboard.Serial = "0000"; keyboard.VendorId = "0000";
+        var redacted = Session.Redact(snapshot);
+        string json = JsonSerializer.Serialize(redacted, Json.Options);
+        Check(!json.Contains("S4EVNX0R123456") && json.Contains("redacted-"), "Redaction removes a serial everywhere it appears.");
+        var r = redacted.Nodes.First(n => n.Name == "Portable SSD");
+        Check(r.InstanceId.EndsWith(r.Serial) && r.Serial.StartsWith("redacted-"), "The same serial becomes the same hash throughout.");
+        var k = redacted.Nodes.First(n => n.Name == "Mechanical keyboard");
+        Check(k.Serial == "0000" && k.VendorId == "0000", "Short, repetitive serials aren't identifying and stay, so they don't look unique.");
+        string text = Session.RedactText(@"Device USB\VID_05AC&PID_12A8\00008150001E1C403A28401C was configured. Parent USB\ROOT_HUB30\5&1c45f993&0&0 HID\{00001124-0000-1000-8000-00805f9b34fb}_VID&0002046d_PID&b023&Col01\9&2a0e7f1&0&0000 BTHENUM\{0000110b-0000-1000-8000-00805f9b34fb}_LOCALMFG&0002\7&1234abcd&0&A4C1385F2E91_C00000000");
+        Check(!text.Contains("00008150001E1C403A28401C") && !text.Contains("A4C1385F2E91") && text.Contains(@"ROOT_HUB30\5&1c45f993&0&0") && text.Contains("00805f9b34fb") && text.Contains(@"9&2a0e7f1&0&0000"),
+            "Text redaction hashes serial segments and Bluetooth addresses, and leaves port-based instance IDs and GUIDs alone.");
+        Check(Session.RedactText(text) == text, "Text redaction is idempotent.");
+    }
+
+    private static void DescriptorTests()
+    {
+        // A USB 3.2 device, a configuration with a bulk and an interrupt endpoint, and a BOS with a
+        // SuperSpeedPlus capability listing one 10 Gb/s sublink speed.
+        byte[] device = Convert.FromHexString("12" + "01" + "1003" + "000000" + "09" + "4C05" + "8A0D" + "0001" + "010203" + "01");
+        var d = Descriptors.Decode(device, 3, 0x0310);
+        Check(d["bcdUSB"]!.ToString() == "3.10" && d["idVendor"]!.ToString() == "054C" && d["idProduct"]!.ToString() == "0D8A", "Device descriptors decode IDs and the USB version.");
+        byte[] config = Convert.FromHexString(
+            "09022C00010100C032" +   // configuration: 44 bytes, 1 interface, self-powered, 50 units
+            "090400000203000000" +   // interface 0: 2 endpoints, HID
+            "07058103040004" +       // endpoint 81 IN interrupt, 4 bytes, bInterval 4
+            "063000000400" +         // SuperSpeed companion: 4 bytes per interval
+            "07050202000200" +       // endpoint 02 OUT bulk, 512 bytes
+            "063000000000");
+        var walked = Descriptors.Walk(config, 3, 0x0310);
+        Check(walked.Count == 6 && walked[0]["bMaxPower"]!.ToString().StartsWith("50 (400 mA)") && walked[0]["bmAttributes"]!.ToString().Contains("self-powered"), "Configurations decode power in 8 mA units at USB 3, and attributes.");
+        Check(walked[2]["bEndpointAddress"]!.ToString().Contains("endpoint 1 IN") && walked[2]["bmAttributes"]!.ToString().Contains("interrupt") && walked[2]["bInterval"]!.ToString().Contains("every 1 ms"), "Endpoints decode direction, type and service interval.");
+        Check(walked[3]["wBytesPerInterval"]!.GetValue<ushort>() == 4, "SuperSpeed companions decode bytes per interval.");
+        Check(Descriptors.Walk([9, 2, 0xFF], 2, 0x0200)[0]["error"] != null, "A bad length keeps the rest as hex.");
+        byte[] bos = Convert.FromHexString(
+            "050F150001" +           // BOS: 21 bytes, 1 capability
+            "10100A00" + "00000000" + "0000" + "0000" + // SuperSpeedPlus: one sublink speed attribute
+            "30400A00");             // ID 0, symmetric, Gb/s exponent, SuperSpeedPlus lanes, mantissa 10
+        var caps = Descriptors.Walk(bos, 3, 0x0320);
+        Check(caps[0]["bNumDeviceCaps"]!.GetValue<byte>() == 1 && caps[1]["speeds"]!.AsArray()[0]!.ToString().Contains("10 Gb/s"), "SuperSpeedPlus capabilities decode lane speeds.");
+        // A Gen 2 device lists ID 0 RX and ID 0 TX, both symmetric: bit 6 is symmetry, bit 7 direction.
+        byte[] gen2 = Convert.FromHexString("14100A00" + "01000000" + "0000" + "0000" + "30400A00" + "B0400A00");
+        var sublinks = Descriptors.Decode(gen2, 3, 0x0320)["speeds"]!.AsArray().Select(x => x!.ToString()).ToList();
+        Check(sublinks.Count == 2 && sublinks.All(x => x.Contains("symmetric") && !x.Contains("asymmetric")) && sublinks[1].Contains("TX") && sublinks[0].Contains("SuperSpeedPlus protocol"), "A TX sublink is symmetric, not asymmetric.");
+        Check(Descriptors.Decode(Convert.FromHexString("12012003000000094C058A0D000101020301"), 3, 0x0320)["bMaxPacketSize0"]!.ToString().Contains("512 bytes"), "USB 3 bMaxPacketSize0 is an exponent.");
+        Check(Descriptors.Walk([0x09, 0x29, 0x04], 2, 0x0200)[0]["error"] != null && Descriptors.Decode([0x05, 0x29, 0x04, 0x00, 0x00], 2, 0x0200)["hex"] != null, "Truncated descriptors don't read past their bytes.");
+        Check(Descriptors.ServiceMs(1, 1, 1) == 1 && Descriptors.ServiceMs(4, 1, 1) == 8 && Descriptors.ServiceMs(4, 2, 3) == 1, "Isochronous full-speed endpoints count 2^(bInterval-1) frames.");
+    }
+
+    private static void DriverProblemTests()
+    {
+        var device = new UsbNode { Kind = "Device", Name = "Camera", InstanceId = @"USB\VID_1234&PID_5678\1", DriverProblems = [new() { InstanceId = @"USB\VID_1234&PID_5678\1", Code = 43, Meaning = Drivers.Meaning(43) }] };
+        var issue = IssueRules.For(device).Single(i => i.Text == Explanations.DriverProblem);
+        var e = Explanations.For(device, issue.Text, [device]);
+        Check(issue.Severity == Severity.Error && e.What.Contains("Code 43") && e.Steps!.Count >= 3, "A problem code is an error, explained with steps.");
+        device.DriverProblems = [new() { InstanceId = @"USB\VID_1234&PID_5678&MI_02\2", Name = "Camera audio", Code = 22, Meaning = Drivers.Meaning(22) }];
+        Check(IssueRules.For(device).Single(i => i.Text == Explanations.DriverProblem).Severity == Severity.Note && Explanations.For(device, Explanations.DriverProblem, [device]).What.Contains("part of this device (Camera audio)"), "A disabled function is a note that names the function.");
+        Check(Drivers.Meaning(28).Contains("not installed") && Drivers.Meaning(999).Contains("999"), "Problem codes have Device Manager's meanings.");
+        // A merged host card shows its root hub's issues and explains them against the host.
+        var root = new UsbNode { Kind = "Root hub", InstanceId = @"USB\ROOT_HUB30\5&1", DriverProblems = [new() { InstanceId = @"USB\ROOT_HUB30\5&1", Code = 43, Meaning = Drivers.Meaning(43) }] };
+        var controller = new UsbNode { Kind = "Controller", Children = [root] };
+        Check(Explanations.For(controller, Explanations.DriverProblem, [controller]).What.Contains("Code 43 on this host"), "A host explains its merged root hub's problem.");
+        Check(Explanations.For(new UsbNode { Kind = "Device" }, Explanations.DriverProblem, []).What.Length > 0, "A node without problems still gets an explanation, not a crash.");
+        // Problems the scan can't place are reported for the whole scan.
+        var devices = new Dictionary<string, UsbScanner.DevNode>(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"USB\VID_0000&PID_0002\5&2&0&3"] = new(@"USB\ROOT_HUB30\4&1", "", [], "Unknown USB Device (Device Descriptor Request Failed)", "", 43),
+            [@"PCI\VEN_1022&DEV_15B6\4&1"] = new("", "USBXHCI", [], "USB xHCI Compliant Host Controller", "", 10),
+            [@"PCI\VEN_10DE&DEV_1234\4&2"] = new("", "nvlddmkm", [], "Display adapter", "", 43),
+        };
+        var snap = new Snapshot();
+        Drivers.Apply(snap, devices);
+        Check(snap.Diagnostics.Count == 2 && snap.Diagnostics.Any(d => d.Contains("Code 43") && d.Contains("Descriptor Request Failed")) && snap.Diagnostics.Any(d => d.Contains("Code 10")),
+            "Unplaced USB problems become scan diagnostics, and other hardware's don't.");
+    }
+
+    private static void FileTests()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "usbatlas-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var demo = DemoData.Create();
+            string camel = Path.Combine(folder, "camel.json"), pascal = Path.Combine(folder, "pascal.json"), bad = Path.Combine(folder, "bad.json");
+            File.WriteAllText(camel, JsonSerializer.Serialize(demo, Json.Options));
+            File.WriteAllText(pascal, JsonSerializer.Serialize(demo, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(bad, "{ not json");
+            foreach (var file in new[] { camel, pascal })
+            {
+                var loaded = new Session(Session.LoadFile(file), "file");
+                Check(Json.Write(Reports.Issues(loaded)["issues"]) == Json.Write(Reports.Issues(Demo())["issues"]), "A saved snapshot, from the CLI or the app, reports the same issues.");
+            }
+            Check(Throws(() => Session.LoadFile(bad)) && Throws(() => Session.LoadFile(Path.Combine(folder, "missing.json"))), "Bad and missing files fail with a message.");
+            string nulls = Path.Combine(folder, "nulls.json");
+            File.WriteAllText(nulls, """{"controllers":[{"kind":"Controller","name":null,"children":null,"notes":null},null]}""");
+            Check(Run("tree", "--input", nulls).Code == 0 && Run("issues", "--input", nulls).Code == 0, "Nulls in a file stand in as empty values instead of crashing.");
+            File.WriteAllText(nulls, """{"controllers":null}""");
+            Check(Run("tree", "--input", nulls).Code == 3, "A file with no controllers fails with a message.");
+            var (code, output, _) = Run("diff", camel, pascal);
+            Check(code == 0 && output.Contains("No changes."), "diff compares two files.");
+            Check(Run("issues", "--input", camel, "--json").Code == 2, "issues reads --input.");
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    private static void McpTests()
+    {
+        var input = new StringReader(string.Join("\n",
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}""",
+            """{"jsonrpc":"2.0","method":"notifications/initialized"}""",
+            """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""",
+            """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"usb_issues","arguments":{"min_severity":"error"}}}""",
+            """{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"usb_show","arguments":{"target":"H01/05","format":"json"}}}""",
+            """{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"usb_show","arguments":{"target":"nothing like this"}}}""",
+            """{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"usb_show","arguments":{}}}""",
+            """{"jsonrpc":"2.0","id":7,"method":"bogus"}""",
+            "not json",
+            """{"jsonrpc":"2.0","id":"eight","method":"ping"}""",
+            """{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"usb_baseline","arguments":{}}}""",
+            """{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"usb_diff","arguments":{}}}"""));
+        var output = new StringWriter();
+        Mcp.Serve(["--demo"], input, output, CancellationToken.None);
+        var replies = output.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonNode.Parse(l)!.AsObject()).ToList();
+        Check(replies.Count == 11, $"Every request gets one reply and notifications none (got {replies.Count}).");
+        JsonObject Reply(JsonNode id) => replies.First(r => JsonNode.DeepEquals(r["id"], id));
+        Check(Reply(1)["result"]!["protocolVersion"]!.ToString() == "2025-06-18" && Reply(1)["result"]!["capabilities"]!["tools"] != null, "initialize agrees a protocol version and offers tools.");
+        var tools = Reply(2)["result"]!["tools"]!.AsArray();
+        Check(tools.Count == 11 && tools.All(t => t!["inputSchema"]!["properties"]!["format"] != null && t["annotations"]!["readOnlyHint"]!.GetValue<bool>()), "Every tool is listed, read-only, with a format option.");
+        string Text(JsonObject r) => r["result"]!["content"]![0]!["text"]!.ToString();
+        Check(Text(Reply(3)).Contains("ERROR: Insufficient power") && !Text(Reply(3)).Contains("WARNING:") && !Reply(3)["result"]!["isError"]!.GetValue<bool>(), "usb_issues runs the issues command; finding errors isn't a tool error.");
+        Check(JsonNode.Parse(Text(Reply(4)))!["node"]!["path"]!.ToString() == "H01/05", "format json returns the same report as JSON.");
+        Check(Reply(5)["result"]!["isError"]!.GetValue<bool>() && Text(Reply(5)).Contains("Nothing matches"), "A target that matches nothing is a tool error with the message.");
+        Check(Reply(6)["result"]!["isError"]!.GetValue<bool>(), "A missing required argument is a tool error.");
+        Check(Reply(7)["error"]!["code"]!.GetValue<int>() == -32601, "Unknown methods are JSON-RPC errors.");
+        Check(replies.Any(r => r["id"] == null && r["error"]!["code"]!.GetValue<int>() == -32700), "Unparseable lines get a parse error.");
+        Check(Reply("eight")["result"] != null, "String IDs are echoed.");
+        // The server outlives a file that makes a command fail.
+        string broken = Path.Combine(Path.GetTempPath(), $"usbatlas-mcp-test-{Guid.NewGuid():N}.json");
+        File.WriteAllText(broken, """{"controllers":[{"kind":"Controller","children":[{"kind":"Hub","children":null}]}]}""");
+        try
+        {
+            var o2 = new StringWriter();
+            Mcp.Serve(["--input", broken], new StringReader("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"usb_tree","arguments":{}}}""" + "\n" + """{"jsonrpc":"2.0","id":2,"method":"ping"}"""), o2, CancellationToken.None);
+            Check(o2.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 2, "The MCP server answers after a command fails.");
+        }
+        finally { File.Delete(broken); }
+        Check(Text(Reply(9)).Contains("Baseline saved") && Text(Reply(10)).Contains("No changes."), "usb_baseline then usb_diff compares with the saved state.");
+    }
+
+    private static void CommandTests()
+    {
+        Check(Run("issues", "--demo").Code == 2 && Run("tree", "--demo").Code == 0 && Run("help").Out.Contains("Exit codes"), "Commands run and issues exits with the health of what it found.");
+        Check(Run("bogus").Code == 3 && Run("show", "--demo").Code == 3 && Run("show", "--demo", "nothing").Code == 3 && Run("issues", "--demo", "--min", "loud").Code == 3, "Failures exit 3.");
+        Check(Run("show", "--demo", "Studio", "camera").Out.Contains("H01/01/02"), "Several words form one target.");
+        var (code, output, _) = Run("scan", "--demo");
+        Check(code == 0 && JsonNode.Parse(output)!["controllers"]!.AsArray().Count == 1, "scan writes the snapshot as JSON.");
+        Check(Run("raw", "--demo", "H01/01").Out.Contains("no descriptors"), "raw explains when a snapshot has no descriptors.");
+        Check(Run("watch", "--demo").Code == 3, "watch refuses sample data.");
+        Check(Run("budget", "--demo", "--json").Out.TrimStart().StartsWith('{') && Run("show", "--demo", "H01/05", "--format", "json").Out.TrimStart().StartsWith('{'), "--json and --format json write JSON.");
+    }
+}

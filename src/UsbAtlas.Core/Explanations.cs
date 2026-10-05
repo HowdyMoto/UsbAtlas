@@ -9,10 +9,16 @@ internal static class Explanations
     internal sealed record Explanation(string What, string Affects = "", string Cause = "", List<string>? Steps = null);
 
     internal const string AdapterNotDetected = "Hub adapter not detected";
+    internal const string DriverProblem = "Windows reports a problem";
+    // Disabled on purpose is worth knowing; waiting for a restart or for removal leaves it working until then.
+    internal static Severity? DriverProblemSeverity(UsbNode n) =>
+        n.DriverProblems.Count == 0 ? null
+        : n.DriverProblems.All(p => p.Code is 22 or 29) ? Severity.Note
+        : n.DriverProblems.All(p => p.Code is 14 or 22 or 29 or 47) ? Severity.Warning : Severity.Error;
     // A hub on bus power whose devices fit what the port gives it loses nothing yet; one that can't power them does.
-    internal static NodeVisuals.Severity PowerSeverity(UsbNode n, string warning) =>
+    internal static Severity PowerSeverity(UsbNode n, string warning) =>
         warning == AdapterNotDetected && !n.PowerWarnings.Contains("Over power budget") && !n.Children.Any(c => c.PowerWarnings.Contains("Power at risk"))
-            ? NodeVisuals.Severity.Note : NodeVisuals.Severity.Warning;
+            ? Severity.Note : Severity.Warning;
 
     // path runs from the host controller down to n.
     internal static Explanation For(UsbNode n, string issue, IReadOnlyList<UsbNode> path)
@@ -64,7 +70,7 @@ internal static class Explanations
                 int own = n.MaxPowerMa ?? 0, total = own + children.Sum(c => UsbBudgets.Demand(c).Known), upstream = UsbBudgets.SuperSpeed(n) ? 900 : 500;
                 var hungriest = children.OrderByDescending(c => UsbBudgets.Demand(c).Known).FirstOrDefault();
                 var steps = new List<string> { "Plug in the hub's power adapter, if it has one." };
-                if (hungriest != null) steps.Add($"Or move {NodeVisuals.ShortName(hungriest)} straight to the computer.");
+                if (hungriest != null) steps.Add($"Or move {Topology.ShortName(hungriest)} straight to the computer.");
                 steps.Add("If the hub is on a USB-C or charging port, it may be getting more power than this assumes; Windows doesn't report it.");
                 return new($"This hub runs on the computer's power, and it and its devices can ask for {total} mA in all, but a standard port promises only {upstream} mA.",
                     "Maybe: if they all draw their most at once, devices may disconnect or the hub may shut off.", "", steps);
@@ -73,7 +79,7 @@ internal static class Explanations
             {
                 // Devices that don't report their draw count as nothing in the budget, so say so rather than promise they fit.
                 int unreported = n.Children.Where(c => c.Kind is "Device" or "Hub").Sum(c => UsbBudgets.Demand(c).Unknown);
-                string affects = PowerSeverity(n, issue) == NodeVisuals.Severity.Warning ? "Yes: without the adapter, its devices can ask for more power than it can give."
+                string affects = PowerSeverity(n, issue) == Severity.Warning ? "Yes: without the adapter, its devices can ask for more power than it can give."
                     : unreported > 0 ? $"Probably not: the devices that report their power fit within what it gets from the computer, but {unreported} {(unreported == 1 ? "device doesn't say how much it uses" : "devices don't say how much they use")}."
                     : "Not right now: what's plugged into it fits within the power it gets from the computer.";
                 return new("This hub can use its own power adapter, but it's running on the computer's power.", affects, "",
@@ -123,6 +129,8 @@ internal static class Explanations
                     "Not yet, while some are idle. When they stream at the same time, Windows may refuse one and it stops working.", "",
                     [$"Move {Names(busiest)} to another hub or straight to the computer.", "Or use a hub with one translator per port (Multi-TT)."]);
             }
+            case DriverProblem:
+                return DriverExplanation(n, noun);
             case PowerSaving.Warning:
                 return new("Windows may turn this game controller off to save power when it looks idle.",
                     "Maybe: a wheel, pedals or button box turned off mid-session can be slow to wake or drop out.", "",
@@ -131,6 +139,33 @@ internal static class Explanations
             default:
                 return new($"{issue}. See Detection details.");
         }
+    }
+    // The worst problem leads; Device Manager shows the same code on the device's General tab.
+    private static Explanation DriverExplanation(UsbNode n, string noun)
+    {
+        // A host's card also shows its merged root hub's issues.
+        var problems = n.DriverProblems.Count > 0 ? n.DriverProblems : Topology.MergedRoot(n)?.DriverProblems ?? [];
+        if (problems.Count == 0) return new($"{DriverProblem}. See Detection details.");
+        var p = problems.OrderBy(p => p.Code is 22 or 29 ? 2 : p.Code is 14 or 47 ? 1 : 0).First();
+        bool own = p.InstanceId.Equals(n.InstanceId, StringComparison.OrdinalIgnoreCase) || n.Kind == "Controller" && p.InstanceId.StartsWith(@"USB\ROOT_HUB", StringComparison.OrdinalIgnoreCase);
+        string where = own ? $"this {noun}" : $"part of this {noun} ({p.Name})";
+        string others = problems.Count > 1 ? $" {problems.Count - 1} more of its functions also report a problem." : "";
+        string what = $"Windows reports Code {p.Code} on {where}: “{p.Meaning}”{others}";
+        return p.Code switch
+        {
+            22 => new(what, $"Yes, on purpose: Windows doesn't use {(own ? "it" : "that part")} while it's disabled.", "", ["To use it, open Device Manager, right-click it and choose Enable device."]),
+            29 => new(what, "Yes: Windows can't use it.", "The computer's firmware turned it off.", ["Check the USB settings in the computer's firmware (BIOS/UEFI) setup."]),
+            14 => new(what, "Maybe: it may not work fully until Windows restarts.", "", ["Restart the computer."]),
+            47 => new(what, "Yes: it was ejected and stays off until it's unplugged.", "", ["Unplug it and plug it back in."]),
+            28 or 1 or 18 or 24 => new(what, "Yes: Windows can't use it without its driver.", "",
+                ["Check Windows Update › Advanced options › Optional updates for a driver.", "Or install the driver from the manufacturer's website.", "In Device Manager, Update driver › Search automatically can also find one."]),
+            43 => new(what, "Yes: Windows stopped it, so it isn't working.",
+                n.Kind == "Device" && n.VendorId is "0000" or "" ? "It didn't answer when Windows asked what it is, which usually means a bad cable, a loose plug or not enough power." : "The device or its driver reported a failure.",
+                ["Unplug it, wait a few seconds and plug it back in.", "Try another cable and another port, ideally straight into the computer.", "In Device Manager, Uninstall device, then unplug and replug it so Windows sets it up again.", "If it fails everywhere, the device may be faulty."]),
+            52 or 48 => new(what, "Yes: Windows won't load its driver.", "", ["Install the current driver from the manufacturer, or check Windows Update for one."]),
+            _ => new(what, "Probably: Windows may not be able to use it.", "",
+                ["Unplug it and plug it back in, or restart the computer.", "In Device Manager, Update driver, or Uninstall device and then replug it so Windows sets it up again.", "Install the current driver from the manufacturer."])
+        };
     }
     private static string Percent(double part, double whole) => UsbBudgets.Share(part, whole).Split(' ')[0];
 
@@ -143,8 +178,8 @@ internal static class Explanations
 
     // A slow hub that slows nothing plugged into it is worth knowing, not a warning, and so is a built-in
     // connection, which there's no way to change.
-    internal static NodeVisuals.Severity SpeedSeverity(UsbNode n) =>
-        n.Kind == "Hub" && HeldBack(n).Count == 0 || n.Connector == "Internal" ? NodeVisuals.Severity.Note : NodeVisuals.Severity.Warning;
+    internal static Severity SpeedSeverity(UsbNode n) =>
+        n.Kind == "Hub" && HeldBack(n).Count == 0 || n.Connector == "Internal" ? Severity.Note : Severity.Warning;
 
     // path runs from the host controller down to n.
     internal static Explanation Speed(UsbNode n, IReadOnlyList<UsbNode> path)
@@ -200,7 +235,7 @@ internal static class Explanations
             steps.Add($"{(steps.Count > 0 ? "Or plug" : "Plug")} this {noun} into {port} on the computer or a faster hub. {tongue}");
             string rate = usb2 ? "USB 2" : "5 Gb/s";
             bool direct = upstream == path.TakeWhile(p => p.Id != n.Id).LastOrDefault();
-            return (direct ? $"The hub it's plugged into runs at {rate}." : $"It's connected through {NodeVisuals.ShortName(upstream)}, which runs at {rate}.", steps);
+            return (direct ? $"The hub it's plugged into runs at {rate}." : $"It's connected through {Topology.ShortName(upstream)}, which runs at {rate}.", steps);
         }
         return (usb2, n.SocketSpeed) switch
         {
@@ -216,7 +251,7 @@ internal static class Explanations
     // and what people call them. A device you named keeps its name, and so does a lone device of unknown kind.
     internal static string Kinds(List<UsbNode> devices)
     {
-        if (devices.Count == 1 && (devices[0].UserLabel.Length > 0 || Kind(devices[0]) == null)) return NodeVisuals.ShortName(devices[0]);
+        if (devices.Count == 1 && (devices[0].UserLabel.Length > 0 || Kind(devices[0]) == null)) return Topology.ShortName(devices[0]);
         var parts = devices.Where(d => d.UserLabel.Length == 0 && Kind(d) != null).GroupBy(d => Kind(d)!)
             .Select(g => g.Count() == 1 ? g.Key : $"{g.Count()} {(g.Key == "mouse" ? "mice" : g.Key + "s")}").ToList();
         bool typed = parts.Count > 0;
@@ -236,7 +271,7 @@ internal static class Explanations
     // "A", "A and B", "A, B and C", or "A, B and 3 more devices".
     internal static string Names(List<UsbNode> nodes)
     {
-        var names = nodes.Select(NodeVisuals.ShortName).ToList();
+        var names = nodes.Select(Topology.ShortName).ToList();
         if (names.Count > 3) names = [.. names.Take(2), $"{names.Count - 2} more devices"];
         return names.Count == 1 ? names[0] : string.Join(", ", names[..^1]) + " and " + names[^1];
     }

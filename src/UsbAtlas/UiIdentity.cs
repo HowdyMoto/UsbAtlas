@@ -34,7 +34,7 @@ public partial class MainWindow
         var cancel = new Button { Content = "Cancel", Padding = new Thickness(8, 3, 8, 3), Margin = new Thickness(6, 0, 0, 0) };
         var clear = new Button { Content = "Reset", Padding = new Thickness(8, 3, 8, 3), ToolTip = "Remove your label and use the detected name" };
         var error = new ContentControl { Margin = new Thickness(0, 5, 0, 0) };
-        void Fail(string message) => error.Content = NodeVisuals.StatusBadge(NodeVisuals.Severity.Error, message);
+        void Fail(string message) => error.Content = NodeVisuals.StatusBadge(Severity.Error, message);
         void Save(string value)
         {
             var current = snapshot.Nodes.FirstOrDefault(n => n.Id == node.Id);

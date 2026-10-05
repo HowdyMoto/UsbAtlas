@@ -15,8 +15,9 @@
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Assets\UsbIds\usb.ids" LogicalName="UsbAtlas.usb.ids" />
-    <None Update="Assets\UsbIds\LICENSE.txt;Assets\UsbIds\NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <ProjectReference Include="..\UsbAtlas.Core\UsbAtlas.Core.csproj" />
+    <!-- Ships usbatlas-cli.exe beside the app; the app doesn't use its code. -->
+    <ProjectReference Include="..\UsbAtlas.Cli\UsbAtlas.Cli.csproj" />
     <None Include="..\..\LICENSE;..\..\THIRD-PARTY-NOTICES.md" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Resource Include="Assets\Fonts\*.ttf" />
     <None Update="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

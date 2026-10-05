@@ -59,6 +59,18 @@ public sealed class UsbNode
     public string Serial { get; set; } = "";
     public string DeviceClass { get; set; } = "";
     public string DriverKey { get; set; } = "";
+    // The driver Windows loaded for the device itself, from its driver key: service, package version and
+    // date, provider and INF. Empty when Windows has none recorded.
+    public string DriverService { get; set; } = "";
+    public string DriverVersion { get; set; } = "";
+    public string DriverDate { get; set; } = "";
+    public string DriverProvider { get; set; } = "";
+    public string DriverInf { get; set; } = "";
+    // Device Manager problem codes on the device or one of its functions (interfaces, HID collections).
+    public List<DeviceProblem> DriverProblems { get; set; } = [];
+    // Descriptors as read, only when a scan is asked to keep them.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public RawDescriptors? Raw { get; set; }
     public bool SpeedLimited { get; set; }
     // A high-speed hub's transaction translators, from its bDeviceProtocol: Single (one for all ports),
     // Per port, Not reported, or None for devices and hubs that aren't running at high speed.
@@ -82,6 +94,27 @@ public sealed class UsbNode
     public List<string> Notes { get; set; } = [];
     public List<UsbNode> Children { get; set; } = [];
     public IEnumerable<UsbNode> Walk() { yield return this; foreach (var c in Children) foreach (var n in c.Walk()) yield return n; }
+}
+// A devnode Windows reports a problem on: Device Manager's "Code N" on its General tab.
+public sealed class DeviceProblem
+{
+    public string InstanceId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public int Code { get; set; }
+    public string Meaning { get; set; } = "";
+}
+// Descriptor bytes as hex, for deep diagnostics, read through the port a device is plugged into. The hub
+// descriptor is the one Windows reports for the hub, in USB 2.0 format even for root and USB 3 hubs. ConnectionFlags and Protocols are USB_NODE_CONNECTION_INFORMATION_EX_V2's.
+public sealed class RawDescriptors
+{
+    public string Device { get; set; } = "";
+    public string Configuration { get; set; } = "";
+    public string Bos { get; set; } = "";
+    public string Hub { get; set; } = "";
+    public int? ConnectionFlags { get; set; }
+    public int? Protocols { get; set; }
+    public uint? ConnectorProperties { get; set; }
+    public int? SpeedCode { get; set; }
 }
 public sealed class Snapshot
 {

@@ -24,15 +24,7 @@ internal static class NodeVisuals
     // A card's fill and outline share its icon and label hue.
     internal static string Fill(UsbNode n) => Color(n) + "Fill";
     internal static string Edge(UsbNode n) => Color(n) + "Edge";
-    internal static string Label(UsbNode n) => n.Kind switch
-    {
-        "Controller" => "Host controller", "Root hub" => "Root ports",
-        // Where a hub sits is worked out, not reported; the Location row's tooltip says how.
-        "Hub" when n.Location == "Internal" => "Built-in hub",
-        "Hub" when n.Location == "External" => "Plug-in hub",
-        "Hub" => "Hub", "Empty port" => "Empty port", "Unavailable" => "USB port",
-        _ => n.DeviceType
-    };
+    internal static string Label(UsbNode n) => Topology.Label(n);
     internal static Brush Ink(string hex) => Theme.Brush(hex);
 
     // Every icon is a Google Material Symbol drawn in one ink at the requested size.
@@ -47,7 +39,6 @@ internal static class NodeVisuals
     // filled triangle for a warning, filled circle for an error) beside semibold text, usually on a tinted
     // pill. A note is calm gray: worth knowing, but nothing is affected now. Amber and red are reserved for
     // warnings and errors, which nothing else uses.
-    internal enum Severity { Note, Warning, Error }
     internal const string StatusGlyphTag = "status-glyph";
     internal static string StatusColor(Severity s) => s switch { Severity.Error => "Error", Severity.Warning => "Warning", _ => "Note" };
     internal static FrameworkElement StatusGlyph(Severity s, double size = 13)
@@ -136,18 +127,7 @@ internal static class NodeVisuals
 
     // Card titles drop corporate suffixes and driver boilerplate so the model reads first; the full name
     // stays in the tooltip, tree and inspector. A custom label is shown as typed.
-    internal static string ShortName(UsbNode n)
-    {
-        if (n.UserLabel.Length > 0) return n.UserLabel;
-        var name = n.Name.Replace('_', ' ');
-        name = Regex.Replace(name, @"\s+-\s+\d+(\.\d+)*(?=\s*(\(Microsoft\))?\s*$)", "");
-        name = Regex.Replace(name, @"\s*\(Microsoft\)\s*$", "");
-        name = Regex.Replace(name, @"eXtensible Host Controller", "xHCI", RegexOptions.IgnoreCase);
-        name = Regex.Replace(name, @",?\s+(Inc|Incorporated|Corp|Corporation|Co|Ltd|Limited|LLC|GmbH)\.?(?=[\s,]|$)", "", RegexOptions.IgnoreCase);
-        name = Regex.Replace(name, @"\s+(Semiconductor|Technology|Technologies|Tech|Electronics|International|Systems)\.?(?=\s|$)", "", RegexOptions.IgnoreCase);
-        name = Regex.Replace(name, @"\s{2,}", " ").Trim(' ', ',');
-        return name.Length > 0 ? name : n.Name;
-    }
+    internal static string ShortName(UsbNode n) => Topology.ShortName(n);
 
     // A labeled meter for the bus time a link has reserved: solid for what is held now, lighter out to
     // the most it could hold, inside an outlined surface track that reads as empty on any tint. The label

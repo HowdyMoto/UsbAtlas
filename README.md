@@ -39,11 +39,37 @@ the entire folder so the required assemblies and license notices stay together.
 
 Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without .NET, publish with `-r win-x64 --self-contained true` (requires downloading runtime packs); that output goes to `artifacts\publish\UsbAtlas\release_win-x64`.
 
+## Command line and AI agents
+
+`usbatlas-cli.exe` ships beside `UsbAtlas.exe` and gives the same scan, issues and explanations as text or JSON, for scripts, for support, and for AI agents doing diagnostics. Like the app, it only reads; it needs no administrator rights and makes no network requests.
+
+| Command | What it gives |
+| --- | --- |
+| `issues` | Every issue, most severe first, with what it means, whether it affects anything now, the likely cause and what to do: the app's Properties explanations. Start here. |
+| `tree` | The topology as indented lines: path, name, kind, link rate, polling rate, power, VID:PID and issues. |
+| `show <target>` | Everything about one node: identity, driver, link, socket, power, bandwidth, power saving, the chain to the host, what shares its hub, its issues explained and the evidence behind them. |
+| `find <text>` | The app's search. |
+| `budget [<target>]` | Bandwidth and power arithmetic with its inputs: reserved and peak bandwidth against each link's capacity, shared transaction translators, and bus-powered hubs' current against the specification. |
+| `raw <target>` | The node's descriptors, decoded field by field with their hex: device, configuration, interfaces, endpoints, BOS capabilities (LPM, SuperSpeedPlus lane speeds), hub descriptor, connection flags. |
+| `events` | Recent USB history from the Windows event logs: devices set up, failing to start (Kernel-PnP 411) or removed, and drivers that failed to load, placed in the topology when still connected. |
+| `watch` | Devices connecting, disconnecting, moving and changing as it happens, and devices that drop and come back; run it while replugging or wiggling a cable. |
+| `scan`, `diff` | Save a snapshot, change something, and see what changed: devices moved, links renegotiated, issues appearing or resolved. |
+
+A target is a path such as `H01/04/02` (host 1, port 4, port 2, as `tree` shows them), a VID:PID, an instance ID or words from the name. `--json` gives the same content as JSON; `--input FILE` reads a saved snapshot, including one exported from the app, and `--demo` uses the sample topology; `--redact` replaces serial numbers with stable hashes before sharing. `issues` exits 0 when it finds nothing worse than notes, 1 for warnings and 2 for errors; every command exits 3 when it fails. `usbatlas-cli help` lists everything.
+
+`usbatlas-cli mcp` serves the commands as [Model Context Protocol](https://modelcontextprotocol.io) tools over stdin and stdout, so an agent can call them directly. For Claude Code:
+
+```powershell
+claude mcp add usb-atlas -- "C:\path\to\usbatlas-cli.exe" mcp
+```
+
 ## Repository layout
 
 | Path | Contents |
 | --- | --- |
-| `src/UsbAtlas/` | Application source: C#, XAML, manifest, project file, and bundled `Assets/` (fonts, icon, USB ID database and their license files). |
+| `src/UsbAtlas/` | The app: C#, XAML, manifest, project file, and bundled `Assets/` (fonts, icon and their license files). |
+| `src/UsbAtlas.Core/` | Scanning, analysis, issues and their explanations, shared by the app and the command line, with the bundled USB ID database and its license files. No WPF. |
+| `src/UsbAtlas.Cli/` | `usbatlas-cli`: the command line and MCP server. |
 | `docs/` | Release notes. |
 | `artifacts/` | Generated and untracked: builds, publishes, release packages, previews, scans, and test results. `Directory.Build.props` routes all build output here. |
 | Root | This README, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `run-dev.ps1` (compile and run), `UsbAtlas.slnx`, and `Directory.Build.props`. |
@@ -63,7 +89,7 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 - Every logical port appears as a numbered socket along the hub's bottom edge in Vertical mode and its right edge in Horizontal mode, drawn as the kind of socket it is (see **Sockets** below); a legend beneath the graph shows each kind. A socket in use has its cavity filled in the color of its connection, as a plug would fill it, accent blue along the selected path; an empty one stays hollow. Empty ports never take a full device card. Windows sees each USB 3 socket as two logical ports, one USB 2 and one USB 3. When both are on the same hub, as on most host ports, they are drawn as one socket split at a seam, with both numbers on its tongue, at the place of the lower-numbered port; each half still selects, fills and connects on its own, so you can see which half a device is using. A USB 3 hub appears to Windows as two hubs, a USB 2 hub and a USB 3 hub with the same sockets, so its halves are on separate cards, and each card says which card it shares its sockets with. Every socket's tooltip names its other half. Hubs with many ports grow along the port edge to keep each socket readable.
 - Connections never cross. A hub's devices sit in one row in the order of its sockets (port order, with a split socket's halves together), and their connections fan out from the ports, bending at most twice. When the window is too narrow, a hub with only end devices lists them as a staircase beside it, read top to bottom, with its ports gathered at the card's right end. Rows never wrap; if the graph is still wider than the window, scroll or use **Fit all**.
 - Game controllers, including wheels, pedals, shifters, handbrakes and button boxes, are purple and show how often they are polled, such as 1000 Hz. Their Properties show whether Windows may suspend them to save power, and a game controller it may suspend is flagged. See **Game controllers**, **Polling rate** and **Power saving** below.
-- The issue button lists links slower than their devices support, incomplete scans, port failures, power problems, unstable connections, game controllers Windows may suspend, and scan diagnostics, and counts notes apart from issues. Select a hardware issue to reveal its node. See **Power checks** and **Power saving** below for what each power issue means.
+- The issue button lists links slower than their devices support, incomplete scans, port failures, devices Windows reports a problem code on (Device Manager's “Code 43” and the like, with the driver service, version and provider in Properties' Detection details), power problems, unstable connections, game controllers Windows may suspend, and scan diagnostics, and counts notes apart from issues. Select a hardware issue to reveal its node. See **Power checks** and **Power saving** below for what each power issue means.
 - The graph, tree and inspector rescan automatically when Windows reports USB devices being connected or disconnected. Rescans wait for the burst of notifications to settle. The status bar names what was connected or disconnected, and newly connected devices briefly ring.
 - Click **Refresh**, press **F5**, or enable ten-second auto-refresh. A thin progress bar appears at the top of the canvas while scanning and fades out over 180 ms. Even instant scans remain briefly visible. Unchanged scans preserve graph controls and inspector state.
 - Export the snapshot as JSON. Demo hardware is available through `--demo` when launching from the command line.
@@ -181,12 +207,13 @@ dotnet build -c Release
 $exe = Resolve-Path artifacts\bin\UsbAtlas\release\UsbAtlas.exe
 $out = New-Item -ItemType Directory -Force artifacts\diagnostics
 Start-Process $exe '--self-test' -WorkingDirectory $out -Wait
+artifacts\bin\UsbAtlas.Cli\release\usbatlas-cli.exe self-test
 Start-Process $exe '--scan scan.json' -WorkingDirectory $out -Wait
 Start-Process $exe '--demo --render' -WorkingDirectory $out -Wait
 Start-Process $exe '--demo --render --verify-ui --compact' -WorkingDirectory $out -Wait
 ```
 
-The app writes these files to its working directory, so the commands above keep them in `artifacts\diagnostics`. `--self-test` writes `self-test.txt` and exits. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits.
+The app writes these files to its working directory, so the commands above keep them in `artifacts\diagnostics`. `--self-test` writes `self-test.txt` and exits. `usbatlas-cli self-test` runs the same checks and the command line's own (every command against the sample topology, diff, redaction, descriptor decoding and the MCP protocol) and prints the result. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits.
 
 ## API references
 

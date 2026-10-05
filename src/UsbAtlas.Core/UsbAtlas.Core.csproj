@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Scanning, analysis and explanations shared by the app and the command line. No WPF. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>UsbAtlas</RootNamespace>
+    <AssemblyName>UsbAtlas.Core</AssemblyName>
+    <Version>1.2.0</Version>
+    <Authors>Wright Bagwell</Authors>
+    <Copyright>Copyright (c) 2026 Wright Bagwell</Copyright>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="UsbAtlas" />
+    <InternalsVisibleTo Include="usbatlas-cli" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\UsbIds\usb.ids" LogicalName="UsbAtlas.usb.ids" />
+    <None Update="Assets\UsbIds\LICENSE.txt;Assets\UsbIds\NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

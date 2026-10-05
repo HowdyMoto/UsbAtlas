@@ -65,14 +65,14 @@ internal static class SelfTests
         loneRoot.Children[1].Kind = "Empty port";
         // A built-in hub has no cable or plug to change.
         lone.Connector = "Internal"; HubRelationships.Analyze(loneSnapshot);
-        Check(lone.Usb3SideMissing && Explanations.SpeedSeverity(lone) == NodeVisuals.Severity.Note && Explanations.Speed(lone, [loneRoot, lone]).Steps!.Count == 0, "A built-in hub gets no cable advice.");
+        Check(lone.Usb3SideMissing && Explanations.SpeedSeverity(lone) == Severity.Note && Explanations.Speed(lone, [loneRoot, lone]).Steps!.Count == 0, "A built-in hub gets no cable advice.");
         lone.Connector = "Not reported";
         // Speed explained in plain words: what is happening, whether it affects anything, and the likely cause first.
         UsbNode Usb2Device(string name) => new() { Kind = "Device", Name = name, DeviceType = name, LinkMbps = 12 };
         var monitorHub = new UsbNode { Id = "m", Kind = "Hub", Name = "Monitor hub", LinkMbps = 480, UsbVersion = "USB 2.10", SpeedLimited = true, Usb3SideMissing = true, Connector = "USB-C", Children = [Usb2Device("Keyboard"), Usb2Device("Mouse")] };
         var monitorPath = new List<UsbNode> { new() { Kind = "Controller" }, new() { Kind = "Root hub" }, monitorHub };
         var hubSpeed = Explanations.Speed(monitorHub, monitorPath);
-        Check(Explanations.SpeedLabel(monitorHub) == "Running at USB 2" && Explanations.SpeedSeverity(monitorHub) == NodeVisuals.Severity.Note
+        Check(Explanations.SpeedLabel(monitorHub) == "Running at USB 2" && Explanations.SpeedSeverity(monitorHub) == Severity.Note
             && hubSpeed.What == "This hub is connected at USB 2 (480 Mb/s), though it supports USB 3 (5 Gb/s)."
             && hubSpeed.Affects.StartsWith("Not right now: your keyboard and mouse are USB 2 devices, so they lose nothing.") && hubSpeed.Cause == "Its USB-C connection isn't carrying USB 3."
             && hubSpeed.Steps![0].Contains("USB-C Prioritization") && hubSpeed.Steps[1].Contains("charging cables"), "A monitor hub that slows nothing is a note naming the USB-C causes, display lanes first.");
@@ -81,7 +81,7 @@ internal static class SelfTests
         var ssd = new UsbNode { Id = "m/3", Kind = "Device", Name = "Portable SSD", LinkMbps = 480, SpeedLimited = true, SocketSpeed = "≥5 Gb/s" };
         monitorHub.Children.Add(ssd);
         var ssdSpeed = Explanations.Speed(ssd, [.. monitorPath, ssd]);
-        Check(Explanations.SpeedSeverity(monitorHub) == NodeVisuals.Severity.Warning && Explanations.Speed(monitorHub, monitorPath).Affects.StartsWith("Yes: Portable SSD supports a faster link")
+        Check(Explanations.SpeedSeverity(monitorHub) == Severity.Warning && Explanations.Speed(monitorHub, monitorPath).Affects.StartsWith("Yes: Portable SSD supports a faster link")
             && ssdSpeed.Cause == "The hub it's plugged into runs at USB 2." && ssdSpeed.Steps![0].StartsWith("Fix that hub's USB 3 connection") && ssdSpeed.Steps[1].StartsWith("Or plug"),
             "A hub that holds a faster device back warns, and the device points to it.");
         var pairedStage = new UsbNode { Id = "m/9", Kind = "Hub", LinkMbps = 480, IsUsb2Companion = true };
@@ -96,7 +96,7 @@ internal static class SelfTests
         var fast = new UsbNode { Kind = "Device", LinkMbps = 5000, SpeedLimited = true, SuperSpeedPlusCapable = true, SocketSpeed = "5 Gb/s" };
         Check(Explanations.SpeedLabel(fast) == "Running at 5 Gb/s" && Explanations.Speed(fast, [fast]).What.EndsWith("though it supports 10 Gb/s or faster.") && Explanations.Speed(fast, [fast]).Cause == "This port supports up to 5 Gb/s.", "A 10 Gb/s device on a 5 Gb/s port runs at 5 Gb/s.");
         var builtIn = new UsbNode { Kind = "Device", LinkMbps = 480, SpeedLimited = true, Connector = "Internal" };
-        Check(Explanations.SpeedSeverity(builtIn) == NodeVisuals.Severity.Note && Explanations.Speed(builtIn, [builtIn]).Cause.Contains("nothing to change") && Explanations.Speed(builtIn, [builtIn]).Steps!.Count == 0, "A built-in connection can't be changed, so it is a note.");
+        Check(Explanations.SpeedSeverity(builtIn) == Severity.Note && Explanations.Speed(builtIn, [builtIn]).Cause.Contains("nothing to change") && Explanations.Speed(builtIn, [builtIn]).Steps!.Count == 0, "A built-in connection can't be changed, so it is a note.");
         Check(Explanations.Kinds([Usb2Device("Keyboard"), Usb2Device("Mouse"), Usb2Device("Mouse"), Usb2Device("HID / controls")]) == "your keyboard, 2 mice and 1 other device"
             && Explanations.Kinds([Usb2Device("Mouse"), new() { Kind = "Device", Name = "Wheel", UserLabel = "Sim wheel" }]) == "your mouse and Sim wheel"
             && Explanations.Kinds([Usb2Device("HID / controls"), Usb2Device("HID / controls")]) == "its 2 devices" && Explanations.Kinds([ssd]) == "Portable SSD", "Devices are described by what they are.");

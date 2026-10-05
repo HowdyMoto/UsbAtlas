@@ -27,22 +27,7 @@ public partial class MainWindow
     private List<UsbNode> matches = [];
     private readonly DispatcherTimer searchTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private string appliedQuery = "";
-    private static List<(NodeVisuals.Severity Severity, string Text)> Issues(UsbNode n)
-    {
-        var issues = new List<(NodeVisuals.Severity, string)>();
-        // A port refused for power or bandwidth names the fault; anything else unavailable is a generic port error.
-        if (n.Kind == "Unavailable") issues.Add((NodeVisuals.Severity.Error, UsbBudgets.IsPowerFault(n) || n.Status == "Insufficient bandwidth" ? n.Status : "Port error"));
-        if (n.ScanIncomplete) issues.Add((NodeVisuals.Severity.Warning, "Scan incomplete"));
-        if (HubRelationships.ReducedSpeed(n)) issues.Add((Explanations.SpeedSeverity(n), Explanations.SpeedLabel(n)));
-        foreach (var warning in n.PowerWarnings) issues.Add((Explanations.PowerSeverity(n, warning), warning));
-        if (n.QuickReconnects > 0) issues.Add((NodeVisuals.Severity.Warning, "Unstable connection"));
-        // A nearly full link still fits everything on it, so it's a note; peaks that can't all fit are a warning.
-        if (UsbBudgets.LinkNearlyFull(n)) issues.Add((NodeVisuals.Severity.Note, "Link nearly full"));
-        if (UsbBudgets.CouldExceedWhenStreaming(n)) issues.Add((NodeVisuals.Severity.Warning, "Could exceed when streaming"));
-        if (UsbBudgets.SharedTtNearlyFull(n)) issues.Add((NodeVisuals.Severity.Note, "Shared TT nearly full"));
-        if (UsbBudgets.SharedTtCouldExceed(n)) issues.Add((NodeVisuals.Severity.Warning, "Shared TT could exceed"));
-        return issues;
-    }
+    private static List<(Severity Severity, string Text)> Issues(UsbNode n) => IssueRules.For(n);
     private enum IssueRow { Other, Link, Power }
     // Speed and power problems sit beside the number they qualify; the rest gather below the metrics.
     private static IssueRow RowOf(string issue) => issue switch
@@ -52,10 +37,8 @@ public partial class MainWindow
         "Insufficient power" or "Overcurrent" or "Power at risk" or "Over power budget" or "Hub adapter not detected" => IssueRow.Power,
         _ => IssueRow.Other
     };
-    private sealed record MetricRow(List<(NodeVisuals.Metric? Glyph, string Text, string Words)> Parts, List<(NodeVisuals.Severity Severity, string Text)> Issues);
-    // Input devices and game controllers show how often they are polled, since that is what their
-    // owners compare; for other devices it is in Properties.
-    internal static bool ShowsPolling(UsbNode n) => n.Kind == "Device" && n.PollIntervalMs != null && n.DeviceType is "Keyboard" or "Mouse" or "HID / controls" or "Game controller";
+    private sealed record MetricRow(List<(NodeVisuals.Metric? Glyph, string Text, string Words)> Parts, List<(Severity Severity, string Text)> Issues);
+    internal static bool ShowsPolling(UsbNode n) => Topology.ShowsPolling(n);
     // A card's one line of figures, link rate, polling rate for input devices, then requested power,
     // followed by the warnings that qualify them. Reserved bandwidth lives in the meter where it can
     // matter, the parent's socket shows USB-C, and sockets, not a count, show occupancy.
@@ -79,17 +62,9 @@ public partial class MainWindow
         }
         return new(parts, issues);
     }
-    // Requested power and its source are one figure. A device or hub that asks the bus for nothing runs on
-    // its own supply, so it reads "External power" rather than a misleading 0 mA; one that also draws a
-    // little from the bus reads "External + 100 mA".
-    internal static bool UsesExternalPower(UsbNode n) => n.Kind is "Device" or "Hub" && (n.PowerSource == "Self powered" || n.MaxPowerMa == 0);
-    internal static (string Text, string Words) PowerFigure(UsbNode n)
-    {
-        if (UsesExternalPower(n))
-            return n.MaxPowerMa is > 0 ? ($"External + {n.MaxPowerMa} mA", $"external power plus {n.MaxPowerMa} mA requested from the bus") : ("External power", "external power, nothing requested from the bus");
-        return n.MaxPowerMa is int ma ? ($"{ma} mA", $"{ma} mA requested") : ("Unknown", "power request unknown");
-    }
-    private static List<(NodeVisuals.Severity Severity, string Text)> OtherIssues(UsbNode n) =>
+    internal static bool UsesExternalPower(UsbNode n) => Topology.UsesExternalPower(n);
+    internal static (string Text, string Words) PowerFigure(UsbNode n) => Topology.PowerFigure(n);
+    private static List<(Severity Severity, string Text)> OtherIssues(UsbNode n) =>
         n.Kind is "Controller" or "Root hub" ? Issues(n).Concat(MergedRoot(n) is UsbNode root ? Issues(root) : []).Distinct().ToList() : Issues(n).Where(i => RowOf(i.Text) == IssueRow.Other).ToList();
     // Reserved bandwidth earns a place on a card where it can decide anything: hubs, whose upstream link
     // everything behind them shares, and devices that stream, which reserve far more while active.
@@ -125,15 +100,15 @@ public partial class MainWindow
         else if (n.MaxPowerMa is int ma) lines.Add($"Power: requests up to {ma} mA ({ma * 0.005:0.##} W at 5 V) in its descriptor. A declared maximum, not a measurement.");
         return string.Join("\n", lines);
     }
-    private static string Issue(UsbNode n) => string.Join(" · ", Issues(n).Select(i => i.Text));
-    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {n.Connector} {n.SocketSpeed} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)} {string.Join(" ", n.HidUsages)} {(n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : "")} {(n.Kind == "Hub" ? TtType(n) : "")}".Contains(q, StringComparison.OrdinalIgnoreCase);
-    private static string TtType(UsbNode n) => n.TransactionTranslators switch { "Single" => "Share one link · single TT", "Per port" => "Link per port · multi-TT", "Not reported" => "Not reported", _ => "None" };
+    private static string Issue(UsbNode n) => IssueRules.Summary(n);
+    private bool Matches(UsbNode n, string q) => Topology.SearchText(n, pathLabels.GetValueOrDefault(n.Id)).Contains(q, StringComparison.OrdinalIgnoreCase);
+    private static string TtType(UsbNode n) => Topology.TtType(n);
     private bool Visible(UsbNode n) => visibleIds.Contains(n.Id);
     // On Windows each xHCI controller has one root hub, and to the user they are one thing: a host whose
     // sockets are the root ports. They share one card; a controller with several root hubs, or none
     // readable, keeps them apart.
     private readonly Dictionary<string, UsbNode> mergedHosts = [];
-    private static UsbNode? MergedRoot(UsbNode n) => n.Kind == "Controller" && n.Children.Count == 1 && n.Children[0].Kind == "Root hub" ? n.Children[0] : null;
+    private static UsbNode? MergedRoot(UsbNode n) => Topology.MergedRoot(n);
     // The node whose card shows this one: a merged root hub is drawn by its controller.
     private UsbNode CardNode(UsbNode n) => mergedHosts.GetValueOrDefault(n.Id) ?? n;
     // Devices follow their sockets along the edge, so connections never cross.
@@ -211,7 +186,7 @@ public partial class MainWindow
         return height;
     }
     // Lines that badges, after any leading text, wrap onto, estimated from label lengths at the badge font size.
-    private int BadgeRows(UsbNode n, IEnumerable<(NodeVisuals.Severity Severity, string Text)> issues, double lead = 0)
+    private int BadgeRows(UsbNode n, IEnumerable<(Severity Severity, string Text)> issues, double lead = 0)
     {
         double available = WidthFor(n) - 22, x = lead; int rows = lead > 0 ? 1 : 0;
         foreach (var (_, text) in issues)
@@ -592,9 +567,9 @@ public partial class MainWindow
     private void UpdateIssues()
     {
         // Notes are worth knowing but affect nothing now, so they are counted apart from what needs attention.
-        var worstOf = snapshot.Nodes.Select(n => Issues(n).Select(i => i.Severity).DefaultIfEmpty((NodeVisuals.Severity)(-1)).Max()).ToList();
-        int notes = worstOf.Count(s => s == NodeVisuals.Severity.Note), attention = worstOf.Count(s => s > NodeVisuals.Severity.Note) + snapshot.Diagnostics.Count;
-        var worst = attention > 0 ? worstOf.Append(NodeVisuals.Severity.Warning).Max() : NodeVisuals.Severity.Note;
+        var worstOf = snapshot.Nodes.Select(n => Issues(n).Select(i => i.Severity).DefaultIfEmpty((Severity)(-1)).Max()).ToList();
+        int notes = worstOf.Count(s => s == Severity.Note), attention = worstOf.Count(s => s > Severity.Note) + snapshot.Diagnostics.Count;
+        var worst = attention > 0 ? worstOf.Append(Severity.Warning).Max() : Severity.Note;
         static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n} {noun}s";
         string summary = string.Join(" · ", new[] { attention > 0 ? Count(attention, "issue") : "", notes > 0 ? Count(notes, "note") : "" }.Where(s => s.Length > 0));
         if (summary.Length == 0) { IssuesButton.Content = new TextBlock { Text = "No issues", Foreground = Brush("TextMuted") }; IssuesButton.ClearValue(BackgroundProperty); }
@@ -614,7 +589,7 @@ public partial class MainWindow
             item.Click += (_, _) => { Search.Clear(); searchTimer.Stop(); foreach (var ancestor in FindPath(node.Id)) folded.Remove(ancestor.Id); Draw(); ShowOnCanvas(node); };
             menu.Items.Add(item);
         }
-        foreach (var diagnostic in snapshot.Diagnostics) menu.Items.Add(new MenuItem { Header = diagnostic, IsEnabled = false, Icon = NodeVisuals.StatusGlyph(NodeVisuals.Severity.Warning) });
+        foreach (var diagnostic in snapshot.Diagnostics) menu.Items.Add(new MenuItem { Header = diagnostic, IsEnabled = false, Icon = NodeVisuals.StatusGlyph(Severity.Warning) });
         menu.PlacementTarget = IssuesButton; menu.IsOpen = true;
     }
 }

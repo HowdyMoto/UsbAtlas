@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/UsbAtlas.Core/UsbAtlas.Core.csproj" />
+    <Project Path="src/UsbAtlas.Cli/UsbAtlas.Cli.csproj" />
     <Project Path="src/UsbAtlas/UsbAtlas.csproj" />
   </Folder>
 </Solution>

@@ -27,10 +27,10 @@ public partial class MainWindow
             if (Issues(usb2).Any(i => i.Text == "Running at USB 2"))
                 throw new Exception("Native-speed USB 2 hub sections must not warn about their USB 3 counterpart.");
             usb2.Usb3SideMissing = true;
-            if (!Issues(usb2).Contains((NodeVisuals.Severity.Note, "Running at USB 2")))
+            if (!Issues(usb2).Contains((Severity.Note, "Running at USB 2")))
                 throw new Exception("A USB 2 hub section whose USB 3 side didn't connect must say so, calmly while it slows nothing.");
             usb2.Usb3SideMissing = false; usb2.Kind = "Device";
-            if (!Issues(usb2).Contains((NodeVisuals.Severity.Warning, "Running at USB 2")))
+            if (!Issues(usb2).Contains((Severity.Warning, "Running at USB 2")))
                 throw new Exception("A device slower than it supports must warn.");
             SelectNode(hub); editSelectedLabel!();
             TextBox Input() => ((StackPanel)inlineLabelHost!.Content).Children.OfType<TextBox>().Single();
