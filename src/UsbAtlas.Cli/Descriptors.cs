@@ -27,6 +27,8 @@ internal static class Descriptors
                 ("operatingAtSuperSpeedPlus", (flags & 4) != 0), ("superSpeedPlusCapable", (flags & 8) != 0),
                 ("portProtocols", raw.Protocols is int p ? string.Join(", ", new[] { (p & 1) != 0 ? "USB 1.1" : null, (p & 2) != 0 ? "USB 2.0" : null, (p & 4) != 0 ? "USB 3" : null }.Where(x => x != null)) : null),
                 ("speedCode", raw.SpeedCode is int sc ? $"{sc} ({sc switch { 0 => "low", 1 => "full", 2 => "high", 3 => "SuperSpeed or faster", _ => "unknown" }}){((flags & 5) != 0 && sc < 3 ? "; a legacy field, the flags above say SuperSpeed" : "")}" : null));
+        if (Bytes(raw.SuperSpeedPlus) is { Length: >= 16 } plus)
+            report["superSpeedPlusLink"] = J.Obj(("rx", Sublink(plus, 0)), ("tx", Sublink(plus, 8)), ("hex", raw.SuperSpeedPlus));
         if (raw.ConnectorProperties is uint c)
             report["connector"] = J.Obj(("flags", $"0x{c:X}"), ("userConnectable", (c & 1) != 0), ("debugCapable", (c & 2) != 0), ("multipleCompanions", (c & 4) != 0), ("typeC", (c & 8) != 0));
         if (deviceBytes != null) report["device"] = J.Arr(Walk(deviceBytes, speed, bcd).Select(d => (JsonNode)d));
@@ -38,6 +40,13 @@ internal static class Descriptors
             report["hub"] = J.Arr(Walk(hub, speed, bcd).Select(d => (JsonNode)d));
         }
         return report;
+    }
+    // A sublink speed and its lane count, as USB_NODE_CONNECTION_SUPERSPEEDPLUS_INFORMATION holds them.
+    private static string Sublink(byte[] b, int at)
+    {
+        uint s = BitConverter.ToUInt32(b, at); uint lanes = BitConverter.ToUInt32(b, at + 4) + 1;
+        double bps = (s >> 16) * Math.Pow(1000, (s >> 4) & 3);
+        return $"{(bps >= 1e9 ? $"{bps / 1e9:0.##} Gb/s" : $"{bps / 1e6:0.##} Mb/s")} per lane × {lanes} lane{(lanes == 1 ? "" : "s")}, {((s >> 14) & 3) switch { 0 => "SuperSpeed", 1 => "SuperSpeedPlus", _ => "reserved" }} protocol";
     }
     private static byte[]? Bytes(string hex) { try { return hex.Length >= 4 ? Convert.FromHexString(hex) : null; } catch (FormatException) { return null; } }
 

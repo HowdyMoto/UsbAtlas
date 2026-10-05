@@ -27,6 +27,8 @@ internal static class CliTests
         DescriptorTests();
         DriverProblemTests();
         FileTests();
+        PortMapTests();
+        WakeTests();
         McpTests();
         CommandTests();
     }
@@ -230,6 +232,121 @@ internal static class CliTests
             Check(Run("issues", "--input", camel, "--json").Code == 2, "issues reads --input.");
         }
         finally { Directory.Delete(folder, true); }
+    }
+
+    // The sample host with its hub wired in, which leaves its port map without findings.
+    private static Snapshot Board()
+    {
+        var snapshot = DemoData.Create();
+        var hub = snapshot.Nodes.First(n => n.Name == "Studio desktop hub");
+        hub.PortIsUserConnectable = false; hub.Notes.RemoveAll(n => n.StartsWith("Port map evidence"));
+        PortMap.Analyze(snapshot);
+        return snapshot;
+    }
+
+    private static void PortMapTests()
+    {
+        var demo = Demo();
+        var ports = PortMapFile.Export(demo, false)["controllers"]![0]!["ports"]!.AsArray();
+        Check(ports.Count == 9 && ports[5]!["sharesSocketWith"]!.ToString() == "H01/08" && ports[7]!["sharesSocketWith"]!.ToString() == "H01/06" && ports[0]!["sharesSocketWith"]!.ToString() == "none"
+            && ports[5]!["usbC"]!.GetValue<bool>() && ports[5]!["supports"]!.ToString() == "USB 3" && ports[1]!["supports"]!.ToString() == "USB 2" && ports.All(p => p!["expect"] == null),
+            "The map lists each root port with what it speaks and its other half, and expects nothing that is only plugged in.");
+        var fixture = PortMapFile.Export(demo, true);
+        Check(PortMapFile.PortCount(fixture) == 17 && fixture["controllers"]![0]!["ports"]![0]!["expect"]!["ports"]!.AsArray().Count == 4 && fixture["controllers"]![0]!["ports"]![1]!["expect"]!["minLinkMbps"]!.GetValue<double>() == 480,
+            "--devices expects what is plugged in, with hubs' ports and each link rate.");
+        var noted = PortMapFile.Check(demo, null, null);
+        Check(noted["result"]!.ToString() == "fail" && noted["mismatches"]!.AsArray().Count == 0 && noted["findings"]!.AsArray().Single()!["path"]!.ToString() == "H01/01" && noted["findings"]![0]!["evidence"]!.AsArray().Count == 1
+            && PortMapFile.Text(noted).Contains("FAIL · 1 port map finding · 1 controller, 9 ports checked") && PortMapFile.Text(noted).Contains("! H01/01 Studio desktop hub: No USB 2 half reported"),
+            "Without a map, check fails on the port map's own findings and shows their evidence.");
+
+        // A board with nothing to find passes against its own map, wired-in hub and all.
+        var board = new Session(Board(), "demo");
+        var map = PortMapFile.Export(board, false);
+        Check(map["controllers"]![0]!["ports"]![0]!["expect"]!["kind"]!.ToString() == "hub" && PortMapFile.PortCount(map) == 13, "What is wired in is part of the map, with a built-in hub's ports.");
+        var pass = PortMapFile.Check(board, map, "board.json");
+        Check(pass["result"]!.ToString() == "pass" && PortMapFile.Text(pass).Contains("PASS · matches board.json and the port map is consistent · 1 controller, 13 ports and 1 expected device checked"), "A machine matches its own map.");
+        Check(PortMapFile.Text(PortMapFile.Check(board, null, null)).Contains("PASS · the port map is consistent · 1 controller, 9 ports checked"), "Without a map, a consistent port map passes.");
+
+        // Another unit: its hub links slower, a socket's halves are unpaired and one isn't USB-C, a port is gone and another added.
+        var other = Board();
+        var root = other.Controllers[0].Children[0];
+        var hub = root.Children.First(n => n.Port == 1);
+        hub.LinkMbps = 480; hub.Speed = "High speed · 480 Mb/s"; hub.Children.RemoveAll(n => n.Port == 4);
+        root.Children.First(n => n.Port == 6).CompanionId = ""; root.Children.First(n => n.Port == 8).CompanionId = "";
+        root.Children.First(n => n.Port == 6).PortConnectorIsTypeC = false;
+        root.Children.RemoveAll(n => n.Port == 9);
+        root.Children.Add(new UsbNode { Id = "demo/root/10", Port = 10, Kind = "Empty port", Protocols = "USB 2.0", PortIsUserConnectable = true });
+        root.Children.First(n => n.Port == 5).ScanIncomplete = true;
+        var fail = PortMapFile.Check(new Session(other, "demo"), map, "board.json");
+        string text = PortMapFile.Text(fail);
+        Check(fail["result"]!.ToString() == "fail" && fail["mismatches"]!.AsArray().Count == 8, $"Every difference from the map is a mismatch (got {fail["mismatches"]!.AsArray().Count}):\n{text}");
+        Check(text.Contains("✗ H01/01: link rate — expected at least 5 Gb/s, found 480 Mb/s") && text.Contains("✗ H01/01/04: port is missing") && text.Contains("✗ H01/06: USB-C — expected yes, found no")
+            && text.Contains("✗ H01/06: shares its socket with — expected H01/08, found none") && text.Contains("✗ H01/08: shares its socket with — expected H01/06, found none")
+            && text.Contains("✗ H01/09: port is missing") && text.Contains("✗ H01/10: port isn't in the map") && text.Contains("✗ H01/05 “Travel hub”: scan — expected complete, found incomplete"), "Each mismatch names the port, what differs, and both values:\n" + text);
+        // Deleting a field from the map stops checking it, and a wired-in device that is gone is a mismatch.
+        var edited = (JsonObject)map.DeepClone();
+        var first = edited["controllers"]![0]!["ports"]![0]!.AsObject();
+        first["expect"]!.AsObject().Remove("minLinkMbps"); first["expect"]!.AsObject().Remove("ports");
+        edited["controllers"]![0]!["ports"]![5]!.AsObject().Remove("usbC");
+        var fewer = PortMapFile.Text(PortMapFile.Check(new Session(other, "demo"), edited, "board.json"));
+        Check(!fewer.Contains("link rate") && !fewer.Contains("H01/01/04") && !fewer.Contains("USB-C") && fewer.Contains("H01/06"), "A field left out of the map isn't checked.");
+        // A controller whose root hub isn't drawn as part of it still matches: the map names ports by number.
+        var apart = Board(); apart.Controllers[0].Children.Add(new UsbNode { Id = "demo/second", Kind = "Root hub" });
+        Check(PortMapFile.Check(new Session(apart, "demo"), map, "board.json")["result"]!.ToString() == "pass", "The map doesn't depend on how a host is drawn.");
+        hub.Kind = "Empty port";
+        Check(PortMapFile.Text(PortMapFile.Check(new Session(other, "demo"), map, "board.json")).Contains("✗ H01/01: hub — expected Studio desktop hub 2109:0817, found nothing connected"), "A wired-in hub that is gone is a mismatch.");
+
+        // Controllers are matched by PCI identity, and one that only moved is a note.
+        var pci = Board(); pci.Controllers[0].PciId = "8086:A36D"; pci.Controllers[0].PciSubsystem = "17AA:1234"; pci.Controllers[0].PciAddress = "00:14.0";
+        var pciMap = PortMapFile.Export(new Session(pci, "demo"), false);
+        pci.Controllers[0].PciAddress = "00:15.0";
+        var moved = PortMapFile.Check(new Session(pci, "demo"), pciMap, "board.json");
+        Check(moved["result"]!.ToString() == "pass" && moved["notes"]!.AsArray().Single()!.ToString().Contains("00:15.0 here and 00:14.0 in the map"), "A controller at another PCI address still matches, with a note.");
+        pci.Controllers[0].PciId = "1B21:2142";
+        string swapped = PortMapFile.Text(PortMapFile.Check(new Session(pci, "demo"), pciMap, "board.json"));
+        Check(swapped.Contains("controller is missing — expected PCI 8086:A36D at 00:14.0") && swapped.Contains("controller isn't in the map — found PCI 1B21:2142 at 00:15.0"), "A different controller chip is a missing controller and an unlisted one.");
+        Check(Reports.Figures(pci.Controllers[0]) == "PCI 1B21:2142 at 00:15.0" && Reports.Show(new Session(pci, "demo"), pci.Controllers[0])["node"]!["controller"]!["vendor"]!.ToString() == "ASMedia", "A host controller shows its PCI identity.");
+
+        string folder = Path.Combine(Path.GetTempPath(), "usbatlas-cli-map-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string snapshot = Path.Combine(folder, "unit.json"), file = Path.Combine(folder, "board.json");
+            File.WriteAllText(snapshot, JsonSerializer.Serialize(Board(), Json.Options));
+            Check(Run("map", "--input", snapshot, "--out", file).Out.Contains("1 controllers and 13 ports") && Run("check", file, "--input", snapshot).Code == 0, "map saves a file that check passes against.");
+            Check(Run("check", file, "--demo").Code == 1 && Run("check", "--demo", "--json").Out.Contains("\"result\": \"fail\"") && Run("check", "--input", snapshot).Code == 0, "check exits 1 on a mismatch or a finding, and 0 when there are none.");
+            Check(Run("check", snapshot).Code == 3 && Run("check", snapshot).Err.Contains("is a snapshot, not a port map") && Run("check", Path.Combine(folder, "none.json")).Code == 3 && Run("check", file, file).Code == 3, "check refuses a snapshot, a missing file and two files.");
+            Check(JsonNode.Parse(Run("map", "--demo").Out)!["kind"]!.ToString() == PortMapFile.Kind, "map prints the map as JSON.");
+            // A snapshot saved without findings is still checked by today's rules when it is loaded.
+            var stale = DemoData.Create(); foreach (var n in stale.Nodes) n.PortMapWarnings.Clear();
+            File.WriteAllText(snapshot, JsonSerializer.Serialize(stale, Json.Options));
+            Check(Run("check", "--input", snapshot).Code == 1 && Run("issues", "--input", snapshot).Out.Contains("NOTE: No USB 2 half reported — H01/01"), "A loaded snapshot's port map is checked again.");
+        }
+        finally { Directory.Delete(folder, true); }
+
+        var plus = Demo();
+        var enclosure = plus.Snapshot.Nodes.First(n => n.Name == "NVMe SSD enclosure");
+        enclosure.Raw = new() { SuperSpeedPlus = "30400A0001000000" + "30400A0001000000" }; enclosure.PortIsDebugCapable = true;
+        Check(Descriptors.Report(plus, enclosure)["superSpeedPlusLink"]!["rx"]!.ToString() == "10 Gb/s per lane × 2 lanes, SuperSpeedPlus protocol", "raw decodes the lane speed and lane count Windows reports for a SuperSpeedPlus link.");
+        Check(Reports.Show(plus, enclosure)["node"]!["socket"]!["debugCapable"]!.GetValue<bool>(), "show says whether a port is debug capable.");
+    }
+
+    private static void WakeTests()
+    {
+        var before = Demo();
+        var next = DemoData.Create();
+        var root = next.Controllers[0].Children[0];
+        root.Children.RemoveAll(n => n.Name == "Mechanical keyboard");
+        var ssd = next.Nodes.First(n => n.Name == "Portable SSD");
+        ssd.LinkMbps = 480; ssd.Speed = "High speed · 480 Mb/s";
+        var woke = Watch.AfterWaking(before, new Session(next, "demo"), new DateTime(2026, 1, 1, 8, 0, 0));
+        string text = Watch.Text(woke);
+        Check(woke["notBack"]!.AsArray().Single()!["name"]!.ToString() == "Mechanical keyboard" && woke["slower"]!.AsArray().Single()!["before"]!.ToString() == "5 Gb/s" && woke["back"]!.GetValue<int>() == 10, "After a wake, what didn't return and what returned slower are listed.");
+        Check(text.Contains("08:00:00.000 ! not back after waking: H01/03 Mechanical keyboard") && text.Contains("! slower after waking: H01/01/01 Portable SSD 5 Gb/s → 480 Mb/s"), "Each is one line.");
+        Check(Watch.Text(Watch.AfterWaking(before, Demo(), DateTime.Now)).Contains("✓ after waking, all 11 devices and hubs are back at the link rates they had"), "A clean wake says so.");
+        Check(Watch.Text(J.Obj(("time", "08:01:00.000"), ("event", "summary"), ("watchedSeconds", 60), ("rescans", 1), ("changes", 1), ("sleeps", 1), ("notBackAfterWaking", 1), ("slowerAfterWaking", 0), ("unstable", new JsonArray()),
+            ("issues", J.Obj(("errors", 0), ("warnings", 0), ("notes", 0))))).Contains("slept once: 1 not back after waking, 0 back slower"), "The summary totals what sleeping cost.");
+        Check(Watch.Text(J.Obj(("time", "08:00:00.000"), ("event", "sleep"))).Contains("going to sleep") && Watch.Text(J.Obj(("time", "08:00:09.000"), ("event", "wake"), ("checkingIn", "8 s"))).Contains("checking what came back in 8 s"), "Sleep and wake are reported as they happen.");
     }
 
     private static void McpTests()

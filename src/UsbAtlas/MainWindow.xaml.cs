@@ -273,6 +273,10 @@ public partial class MainWindow : Window
             var roots = node.Kind == "Controller" ? node.Children.Where(c => c.Kind == "Root hub").ToList() : [node];
             Section("Host");
             Field("Path", pathLabels.GetValueOrDefault(node.Id, NotApplicable), PathHelp);
+            // Several controllers often share one name; the chip's PCI IDs and address tell them apart.
+            var controller = node.Kind == "Controller" ? node : snapshot.Controllers.FirstOrDefault(c => c.Children.Contains(node)) ?? node;
+            Field("PCI device", controller.PciId.Length > 0 ? string.Join(" · ", new[] { Topology.PciVendor(controller.PciId), controller.PciId, controller.PciAddress }.Where(x => x.Length > 0)) : "Not reported",
+                "The host controller chip's PCI vendor:device IDs and its bus:device.function address, which tell apart controllers that share a name.");
             Field("Port support", ProtocolSummary(node));
             Field("Ports", roots.Sum(r => r.PortCount).ToString(), PortsHelp);
             Field("In use", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString());
@@ -336,6 +340,10 @@ public partial class MainWindow : Window
         }
         if (node.OpenPipes.Count > 0) notes.Add("Open pipes: " + string.Join("; ", node.OpenPipes) + ".");
         notes.Add("Port protocols: " + node.Protocols);
+        if (host && (node.Kind == "Controller" ? node : snapshot.Controllers.FirstOrDefault(c => c.Children.Contains(node))) is { PciId.Length: > 0 } chip)
+            notes.Add($"PCI identity: {chip.PciId}{(chip.PciSubsystem.Length > 0 ? ", subsystem " + chip.PciSubsystem : "")}{(chip.PciRevision.Length > 0 ? ", revision " + chip.PciRevision : "")}{(chip.PciAddress.Length > 0 ? ", at bus:device.function " + chip.PciAddress : "")}.");
+        if (node.PortIsDebugCapable == true) notes.Add("Windows reports this port as debug capable: it can serve as the host's USB debug port.");
+        if (node.PortHasMultipleCompanions == true) notes.Add("Windows reports that this port's socket has more than one other port.");
         if (host) notes.Add("Connector graphics identify the upstream socket. The cable and device-end plug are unknown.");
         else
         {

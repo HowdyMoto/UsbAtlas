@@ -22,6 +22,8 @@ public sealed class UsbNode
     public string UsbVersion { get; set; } = "Not reported";
     public string Speed { get; set; } = "Not reported";
     public double? LinkMbps { get; set; }
+    // A SuperSpeedPlus link's lanes, when Windows reports them: 2 for USB 3.2's two-lane modes.
+    public int? LinkLanes { get; set; }
     public string Protocols { get; set; } = "Not reported";
     public string DownstreamProtocols { get; set; } = "Not reported";
     public bool ProtocolSummaryPartial { get; set; }
@@ -45,6 +47,8 @@ public sealed class UsbNode
     public string HubSymbolicLink { get; set; } = "";
     public string CompanionHubSymbolicLink { get; set; } = "";
     public int CompanionPortNumber { get; set; }
+    // A port Windows says has several companions lists the rest here; the first is the one above.
+    public List<PortCompanion> MoreCompanions { get; set; } = [];
     public string CompanionHubId { get; set; } = "";
     public bool IsUsb2Companion { get; set; }
     // A USB 3 hub's USB 2 side whose USB 3 side didn't connect: the USB 3 half of its socket is empty, or
@@ -59,6 +63,12 @@ public sealed class UsbNode
     public string Serial { get; set; } = "";
     public string DeviceClass { get; set; } = "";
     public string DriverKey { get; set; } = "";
+    // A host controller's PCI identity: vendor:device and subsystem vendor:device from its instance ID,
+    // its revision, and where it sits as bus:device.function. Empty for a controller that isn't on PCI.
+    public string PciId { get; set; } = "";
+    public string PciSubsystem { get; set; } = "";
+    public string PciRevision { get; set; } = "";
+    public string PciAddress { get; set; } = "";
     // The driver Windows loaded for the device itself, from its driver key: service, package version and
     // date, provider and INF. Empty when Windows has none recorded.
     public string DriverService { get; set; } = "";
@@ -78,6 +88,11 @@ public sealed class UsbNode
     public bool ScanIncomplete { get; set; }
     public bool? PortIsUserConnectable { get; set; }
     public bool? PortConnectorIsTypeC { get; set; }
+    // The port can serve as the host's debug port, as most xHCI USB 3 ports can.
+    public bool? PortIsDebugCapable { get; set; }
+    public bool? PortHasMultipleCompanions { get; set; }
+    // Where the firmware's description of this port contradicts itself (PortMap). The port still works.
+    public List<string> PortMapWarnings { get; set; } = [];
     // The other logical port of the same physical socket (USB 2 and USB 3 halves), when Windows names it.
     public string CompanionId { get; set; } = "";
     // The upstream socket as drawn: USB-A, USB-C, Internal or Not reported, and the fastest rate it is
@@ -95,6 +110,14 @@ public sealed class UsbNode
     public List<UsbNode> Children { get; set; } = [];
     public IEnumerable<UsbNode> Walk() { yield return this; foreach (var c in Children) foreach (var n in c.Walk()) yield return n; }
 }
+// Another logical port of the same physical socket, named by its hub's link and port number; Id is the
+// port when it is in the scan.
+public sealed class PortCompanion
+{
+    public string HubSymbolicLink { get; set; } = "";
+    public int PortNumber { get; set; }
+    public string Id { get; set; } = "";
+}
 // A devnode Windows reports a problem on: Device Manager's "Code N" on its General tab.
 public sealed class DeviceProblem
 {
@@ -111,6 +134,9 @@ public sealed class RawDescriptors
     public string Configuration { get; set; } = "";
     public string Bos { get; set; } = "";
     public string Hub { get; set; } = "";
+    // USB_NODE_CONNECTION_SUPERSPEEDPLUS_INFORMATION after its port index and length: the RX speed and
+    // lane count, then the TX speed and lane count, for a port linked at SuperSpeed or faster.
+    public string SuperSpeedPlus { get; set; } = "";
     public int? ConnectionFlags { get; set; }
     public int? Protocols { get; set; }
     public uint? ConnectorProperties { get; set; }

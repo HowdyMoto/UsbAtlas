@@ -13,6 +13,9 @@ internal static class HubRelationships
         foreach (var port in snapshot.Nodes.Where(n => n.CompanionPortNumber > 0 && n.CompanionHubSymbolicLink.Length > 0))
             if (hubs.TryGetValue(Normalize(port.CompanionHubSymbolicLink), out var hub) && hub.Children.FirstOrDefault(c => c.Port == port.CompanionPortNumber) is UsbNode companion && companion.Id != port.Id)
                 port.CompanionId = companion.Id;
+        foreach (var port in snapshot.Nodes)
+        foreach (var more in port.MoreCompanions.Where(m => m.PortNumber > 0 && m.HubSymbolicLink.Length > 0))
+            more.Id = hubs.TryGetValue(Normalize(more.HubSymbolicLink), out var hub) && hub.Children.FirstOrDefault(c => c.Port == more.PortNumber) is UsbNode companion && companion.Id != port.Id ? companion.Id : "";
     }
     internal static void Analyze(Snapshot snapshot)
     {

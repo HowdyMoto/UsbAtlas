@@ -11,7 +11,7 @@ internal static class Diff
     // is and where. Port errors are known by their port.
     private static string Identity(UsbNode n, Snapshot s) => n.Kind != "Unavailable" && DeviceLabels.FollowsDevice(n, s)
         ? $"{n.Kind}|{n.VendorId}:{n.ProductId}|{n.Serial}" : $"{n.Kind}|{n.VendorId}:{n.ProductId}|@{n.Id}";
-    private static Dictionary<string, UsbNode> Occupants(Session s) => s.Snapshot.Nodes.Where(n => n.Kind is "Device" or "Hub" or "Unavailable")
+    internal static Dictionary<string, UsbNode> Occupants(Session s) => s.Snapshot.Nodes.Where(n => n.Kind is "Device" or "Hub" or "Unavailable")
         .GroupBy(n => Identity(n, s.Snapshot)).ToDictionary(g => g.Key, g => g.First());
 
     private static readonly (string Field, Func<UsbNode, Session, string> Value)[] Fields =

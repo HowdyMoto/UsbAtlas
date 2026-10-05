@@ -131,6 +131,8 @@ internal static class Explanations
             }
             case DriverProblem:
                 return DriverExplanation(n, noun);
+            case string finding when PortMap.IsFinding(finding):
+                return PortMapExplanation(finding);
             case PowerSaving.Warning:
                 return new("Windows may turn this game controller off to save power when it looks idle.",
                     "Maybe: a wheel, pedals or button box turned off mid-session can be slow to wake or drop out.", "",
@@ -139,6 +141,23 @@ internal static class Explanations
             default:
                 return new($"{issue}. See Detection details.");
         }
+    }
+    // The computer's firmware describes each built-in port to Windows; these are its contradictions. They
+    // can't be fixed at the port, and Detection details says which ports are involved.
+    private static Explanation PortMapExplanation(string finding)
+    {
+        string what = finding switch
+        {
+            PortMap.NoUsb2Half => "Windows lists this USB 3 port without a USB 2 half. Every USB 3 socket carries both, as two ports that Windows pairs.",
+            PortMap.CompanionMissing => "Windows says this port shares its socket with another port, but no such port is in this scan.",
+            PortMap.CompanionOneWay => "This port names another port as the other half of its socket, but that port doesn't name this one back.",
+            PortMap.SameVersionHalves => "Windows pairs this port with another of the same USB version as the two halves of one socket. A socket's halves are one USB 2 port and one USB 3 port.",
+            _ => "The two ports Windows pairs as one socket are described differently: one as USB-C, or as a port you can plug into, and the other not."
+        };
+        return new(what, "No: whatever is plugged in here works as usual. USB Atlas can't be sure which ports share this socket, so it may draw one socket as two, or two as one.",
+            "The computer's firmware (BIOS/UEFI) describes its USB ports to Windows, and this part of the description is wrong or missing.",
+            ["There's nothing to fix by replugging. A firmware (BIOS/UEFI) update from the computer's or motherboard's maker may correct it.",
+             "If you make or test this board, compare this port's ACPI _UPC and _PLD with its other half's. Detection details names the ports."]);
     }
     // The worst problem leads; Device Manager shows the same code on the device's General tab.
     private static Explanation DriverExplanation(UsbNode n, string noun)

@@ -52,6 +52,8 @@ internal static class DeviceIdentity
     internal static void ApplyPortProperties(UsbNode node, uint flags)
     {
         node.PortIsUserConnectable = (flags & 1) != 0;
+        node.PortIsDebugCapable = (flags & 2) != 0;
+        node.PortHasMultipleCompanions = (flags & 4) != 0;
         node.PortConnectorIsTypeC = (flags & 8) != 0;
     }
 

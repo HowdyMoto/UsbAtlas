@@ -9,10 +9,16 @@ internal sealed class ReconnectTracker
     private readonly Dictionary<string, DateTime> removed = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<DateTime>> returns = new(StringComparer.OrdinalIgnoreCase);
 
+    // Waking powers devices back up, which looks like a drop and a quick return, so returns just after a
+    // wake aren't counted.
+    internal static readonly TimeSpan WakeSettle = TimeSpan.FromSeconds(20);
+    private DateTime wokeAt = DateTime.MinValue;
+
     internal void Removed(string id, DateTime at) => removed[id] = at;
+    internal void Woke(DateTime at) { wokeAt = at; removed.Clear(); }
     internal void Arrived(string id, DateTime at)
     {
-        if (!removed.Remove(id, out var gone) || at - gone > QuickReturn) return;
+        if (!removed.Remove(id, out var gone) || at - gone > QuickReturn || at >= wokeAt && at - wokeAt <= WakeSettle) return;
         if (!returns.TryGetValue(id, out var times)) returns[id] = times = [];
         times.Add(at);
     }

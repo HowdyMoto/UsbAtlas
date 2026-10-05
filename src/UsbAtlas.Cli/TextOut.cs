@@ -14,6 +14,7 @@ internal static class TextOut
         "tree" => Tree(report),
         "find" => Find(report),
         "events" => Events(report),
+        "check" => PortMapFile.Text(report),
         _ => Generic(report)
     };
 
