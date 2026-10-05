@@ -44,7 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link/power figures, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link/power figures, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -221,6 +221,7 @@ public partial class MainWindow : Window
         foreach (var (severity, text) in Issues(node)) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 0, 4, 0);  status.Children.Add(badge); }
         if (status.Children.Count == 0) status.Children.Add(new TextBlock { Text = "No issues", FontSize = 12, Foreground = Brush("TextMuted"), VerticalAlignment = VerticalAlignment.Center });
         Details.Children.Add(status);
+        AddHubSnapControls(node);
 
 
         if (!host)
@@ -242,8 +243,8 @@ public partial class MainWindow : Window
                 "The signaling rate negotiated when the device connected. Everything upstream on the same path shares it; it is not a measured speed.");
             Metric(NodeVisuals.Metric.Reserved, attached ? (node.ReservedMbps is double reserved ? UsbBudgets.Rate(reserved) : "Unknown") : unread, "Reserved", 1,
                 "Bus time held for this device's open interrupt and isochronous pipes, such as audio, video and input. Bulk transfers, such as storage, reserve nothing and share what is left.");
-            Metric(NodeVisuals.Metric.Power, node.MaxPowerMa is int ma && node.Kind != "Empty port" ? $"{ma} mA" : attached ? "Unknown" : unread, "Power request", 2,
-                "The most current the device's active configuration says it will draw. A declared maximum, not a measurement.");
+            Metric(NodeVisuals.Metric.Power, node.Kind == "Empty port" ? unread : UsesExternalPower(node) || node.MaxPowerMa != null ? PowerFigure(node).Text : attached ? "Unknown" : unread, UsesExternalPower(node) ? "Power" : "Power request", 2,
+                UsesExternalPower(node) ? "Runs on its own supply, so it requests little or nothing from the bus." : "The most current the device's active configuration says it will draw. A declared maximum, not a measurement.");
             Details.Children.Add(metrics);
             Section("Device identity & connection");
             Field("VID / PID", attached && node.VendorId.Length > 0 ? $"{node.VendorId} : {node.ProductId}" : Reported(""));
@@ -324,7 +325,6 @@ public partial class MainWindow : Window
                 Details.Children.Add(pair);
             }
         }
-        AddHubSnapControls(node);
         var evidence = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
         var notes = new List<string> { node.LocationEvidence };
         notes.Add("Name source: " + node.NameSource + ".");

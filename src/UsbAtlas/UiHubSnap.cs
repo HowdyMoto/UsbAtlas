@@ -38,12 +38,20 @@ public partial class MainWindow
         var parent = snapshot.Nodes.FirstOrDefault(n => n.Children.Any(c => c.Id == node.Id));
         if (parent?.Kind != "Hub")
         {
-            if (node.Children.Any(n => n.SnapToParentHub)) Text("User-linked hub stages: select a downstream stage to unlink it.", 12, "TextSecondary");
+            var stages = node.Children.Where(n => n.Kind == "Hub").ToList();
+            if (stages.Count == 0) return;
+            Text("Arrange hub stages", 14);
+            Text("Select a downstream hub stage to snap it beside this hub or unlink it.", 12, "TextSecondary");
+            foreach (var stage in stages)
+            {
+                var select = new Button { Content = "Arrange: " + NodeVisuals.ShortName(stage), Tag = "select-hub-stage", HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(8, 4, 8, 4), Margin = new Thickness(0, 0, 0, 6), ToolTip = stage.DisplayName };
+                select.Click += (_, _) => ShowOnCanvas(stage);
+                Details.Children.Add(select);
+            }
             return;
         }
         Text("Arrange hub stages", 14);
-        Text("Snap this hub beside its actual upstream hub. This is your enclosure grouping; the real port connections remain visible. Side-by-side snapping uses the vertical layout.", 12, "TextSecondary");
-        var action = new Button { Content = node.SnapToParentHub ? "Unlink from upstream hub" : "Snap to upstream hub", Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Left, ToolTip = parent.DisplayName };
+        var action = new Button { Content = node.SnapToParentHub ? "Unlink from upstream hub" : "Snap to upstream hub", Tag = "snap-upstream-hub", Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Left, ToolTip = parent.DisplayName };
         action.Click += (_, _) =>
         {
             bool enabled = !node.SnapToParentHub;
@@ -55,5 +63,6 @@ public partial class MainWindow
             StatusText.Text = enabled ? "Hub stages snapped side by side; actual connections retained." : "Hub stage unlinked.";
         };
         Details.Children.Add(action);
+        Text("User-defined grouping beside " + NodeVisuals.ShortName(parent) + ". Real port connections stay visible; uses vertical layout.", 12, "TextSecondary");
     }
 }
