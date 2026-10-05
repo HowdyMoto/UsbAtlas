@@ -11,7 +11,6 @@ public partial class MainWindow
         var current = first;
         while (Children(current).FirstOrDefault(n => n.Kind == "Hub" && n.SnapToParentHub) is UsbNode next && !members.Contains(next))
         { members.Add(next); current = next; }
-        if (members.Count > 1) foreach (var member in members) stackedHubs.Remove(member.Id);
         return members;
     }
     private void PlaceSnapped(TopologyLayout.Item layout, double left, double top)

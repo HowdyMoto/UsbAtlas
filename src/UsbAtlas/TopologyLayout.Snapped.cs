@@ -4,14 +4,14 @@ namespace UsbAtlas;
 internal static partial class TopologyLayout
 {
     private static Item MeasureSnapped(List<UsbNode> members, Func<UsbNode, List<UsbNode>> children,
-        Func<UsbNode, double> width, Func<UsbNode, double> height, Func<UsbNode, UsbNode, double?> portOffset, IReadOnlySet<string> stacked, Func<UsbNode, List<UsbNode>>? groups)
+        Func<UsbNode, double> width, Func<UsbNode, double> height, Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups)
     {
         var ids = members.Select(n => n.Id).ToHashSet();
         List<UsbNode> ExternalChildren(UsbNode node) => children(node).Where(n => !ids.Contains(n.Id)).ToList();
         var stages = new List<Item>(); double x = 0, maxHeight = members.Max(height);
         foreach (var member in members)
         {
-            var childItems = ExternalChildren(member).Select(n => MeasureCore(n, children, width, height, portOffset, stacked, groups)).ToList();
+            var childItems = ExternalChildren(member).Select(n => MeasureCore(n, children, width, height, portOffset, groups, Gap, false)).ToList();
             double column = Math.Max(width(member), childItems.Select(c => c.Width).DefaultIfEmpty(0).Max());
             double y = maxHeight + 52 + childItems.Count * 8;
             var placed = new List<Item>();

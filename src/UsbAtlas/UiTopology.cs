@@ -17,7 +17,7 @@ public partial class MainWindow
     internal enum CardDetail { Full, Compact, Far }
     private CardDetail detail = CardDetail.Full;
     private bool DrawsSockets => detail != CardDetail.Far;
-    private const double CompactWidth = 230, FarWidth = 210, FarHeight = 22;
+    private const double CompactWidth = 230, FarWidth = 190, FarHeight = 22;
     private double SiblingGap => detail switch { CardDetail.Far => 4, CardDetail.Compact => 10, _ => TopologyLayout.Gap };
     private double layoutWidth = 1100, inspectorWidth = 330;
     private double ReadingScale => 1;
@@ -32,7 +32,7 @@ public partial class MainWindow
     private readonly Dictionary<string, List<UsbNode>> edgePortCache = [];
     private readonly Dictionary<string, UsbNode> nodeParents = [];
     private readonly Dictionary<string, NodeVisuals.SocketPart> socketParts = [];
-    private readonly HashSet<string> stackedHubs = [], stackableHubs = [];
+    private readonly HashSet<string> packedHubs = [];
     private List<UsbNode> matches = [];
     private readonly DispatcherTimer searchTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private string appliedQuery = "";
@@ -129,8 +129,7 @@ public partial class MainWindow
     }
     // Every logical port is drawn on its hub, occupied or not, so the sockets themselves show occupancy.
     // A USB 3 socket's two halves on the same hub sit together as one socket, at the place of its
-    // lower-numbered half. Cached per drawing pass; layout queries each hub's ports many times while
-    // choosing staircases.
+    // lower-numbered half. Cached per drawing pass; layout queries each hub's ports many times.
     private List<UsbNode> EdgePorts(UsbNode n)
     {
         if (edgePortCache.TryGetValue(n.Id, out var ports)) return ports;
@@ -156,8 +155,7 @@ public partial class MainWindow
     // horizontal card's right edge. A socket's two halves touch.
     private const double SocketWidth = NodeVisuals.SocketWidth, SocketHeight = NodeVisuals.SocketHeight, SocketPitch = 34, SocketStep = 28;
     // Each logical port gets an equal slice of the edge, and a socket's two halves meet on the line
-    // between their slices. A staircase gathers the ports at the card's right end so its column of
-    // devices can tuck under the card.
+    // between their slices.
     private double? PortOffset(UsbNode parent, UsbNode child)
     {
         if (!DrawsSockets) return null;
@@ -165,12 +163,6 @@ public partial class MainWindow
         int i = ports.FindIndex(p => p.Id == child.Id);
         if (i < 0) return null;
         double edge = horizontalTree ? HeightFor(parent) : WidthFor(parent), half = (horizontalTree ? SocketHeight : SocketWidth) / 2;
-        if (stackedHubs.Contains(parent.Id))
-        {
-            double offset = edge - 22;
-            for (int k = ports.Count - 1; k > i; k--) offset -= socketParts.GetValueOrDefault(ports[k].Id) == NodeVisuals.SocketPart.Second ? 2 * half : SocketPitch;
-            return offset;
-        }
         return socketParts.GetValueOrDefault(child.Id) switch
         {
             NodeVisuals.SocketPart.First => edge * (i + 1) / ports.Count - half,
@@ -252,7 +244,7 @@ public partial class MainWindow
         Graph.Children.Clear(); cards.Clear(); wires.Clear(); wireRoutes.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear();
         var roots = snapshot.Controllers.Where(n => Visible(n) && (focusedIds == null || focusedIds.Contains(n.Id))).ToList();
         const double margin = 16, controllerGap = 24;
-        var layouts = ArrangeLayouts(roots, layoutWidth - margin * 2, controllerGap);
+        var layouts = ArrangeLayouts(roots);
         // Controllers are siblings like any other row, so they sit side by side and never wrap;
         // horizontal trees stack them instead.
         double top = 12, left = margin, rowHeight = 0, maxRight = 0;
@@ -280,34 +272,15 @@ public partial class MainWindow
             else if (selected != null && cards.TryGetValue(selected.Id, out item)) item.Card.Focus();
         }
     }
-    // Readable layouts never wrap a hub's children. While the graph is wider than the view,
-    // groups of end devices become staircases, each time picking the one that saves the most.
-    private List<TopologyLayout.Item> ArrangeLayouts(List<UsbNode> roots, double available, double gap)
+    // A hub's children never wrap: a graph wider than the view scrolls, or Fit all picks simpler cards.
+    private List<TopologyLayout.Item> ArrangeLayouts(List<UsbNode> roots)
     {
-        stackedHubs.Clear(); stackableHubs.Clear();
+        packedHubs.Clear();
         // Linked hub stages are arranged around their sockets, so a far view, which draws none, shows the real
         // hierarchy instead, as the horizontal layout does.
-        List<TopologyLayout.Item> Measure() => roots.Select(r => TopologyLayout.Measure(r, Children, horizontalTree, WidthFor, HeightFor, PortOffset, stackedHubs, DrawsSockets ? SnappedStages : null, SiblingGap)).ToList();
-        var layouts = Measure();
-        if (horizontalTree) return layouts;
+        var layouts = roots.Select(r => TopologyLayout.Measure(r, Children, horizontalTree, WidthFor, HeightFor, PortOffset, DrawsSockets ? SnappedStages : null, SiblingGap, horizontalTree && detail == CardDetail.Far)).ToList();
         static IEnumerable<TopologyLayout.Item> Flatten(TopologyLayout.Item item) => item.Children.SelectMany(Flatten).Prepend(item);
-        stackableHubs.UnionWith(layouts.SelectMany(Flatten).Where(i => TopologyLayout.CanStack(i.Node, Children, PortOffset)).Select(i => i.Node.Id));
-        void Shrink(Func<List<TopologyLayout.Item>, double> extent)
-        {
-            while (extent(layouts) > available)
-            {
-                var options = stackableHubs.Where(id => !stackedHubs.Contains(id)).ToList();
-                if (options.Count == 0) return;
-                var best = options.Select(id =>
-                {
-                    stackedHubs.Add(id); var trial = Measure(); stackedHubs.Remove(id);
-                    return (Id: id, Layouts: trial, Extent: extent(trial));
-                }).ToList().MinBy(t => t.Extent);
-                if (best.Extent >= extent(layouts) - 0.5) return;
-                stackedHubs.Add(best.Id); layouts = best.Layouts;
-            }
-        }
-        Shrink(all => all.Sum(t => t.Width) + gap * (all.Count - 1));
+        packedHubs.UnionWith(layouts.SelectMany(Flatten).Where(i => i.Packed).Select(i => i.Node.Id));
         return layouts;
     }
     private void Place(TopologyLayout.Item layout, double left, double top)
@@ -338,7 +311,7 @@ public partial class MainWindow
             var glyph = NodeVisuals.StatusGlyph(worst.Max(i => i.Severity)); glyph.Margin = new Thickness(6, 0, 0, 0); glyph.VerticalAlignment = VerticalAlignment.Center;
             glyph.ToolTip = string.Join(" · ", worst.Select(i => i.Text)); DockPanel.SetDock(glyph, Dock.Right); title.Children.Add(glyph);
         }
-        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = far ? 13 : 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName + (CanNameDevice(node) ? "\nDouble-click to rename" : "") };
+        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName + (CanNameDevice(node) ? "\nDouble-click to rename" : "") };
         // Double-clicking the name renames; double-clicking elsewhere on the card still folds its branch.
         name.MouseLeftButtonDown += (_, e) => { if (e.ClickCount == 2 && CanNameDevice(node)) { EditDeviceName(node, name); e.Handled = true; } };
         title.Children.Add(name);
@@ -423,7 +396,7 @@ public partial class MainWindow
             double laneX = left + layout.Width - 8 - (children.Count - 1 - i) * 8;
             double entryY = child.Y + child.Height / 2;
             return new List<Point> { start, new(start.X, laneY), new(laneX, laneY), new(laneX, entryY), new(child.Right, entryY) };
-        }).ToList() : TopologyLayout.Route(bounds, anchors, childCards, layout.Stacked, horizontalTree);
+        }).ToList() : TopologyLayout.Route(bounds, anchors, childCards, horizontalTree);
         for (int i = 0; i < children.Count; i++)
         {
             if (layout.SnappedColumn) snappedWires.Add(children[i].Node.Id);
