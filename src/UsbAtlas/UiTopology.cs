@@ -9,7 +9,16 @@ namespace UsbAtlas;
 public partial class MainWindow
 {
     private const double CardWidth = TopologyLayout.CardWidth, CardHeight = TopologyLayout.CardHeight;
-    private bool readableView = true, arranging, horizontalTree;
+    private bool readableView = true, overviewView, arranging, horizontalTree;
+    // Semantic zoom: how much a card shows depends on how far out the view is, and each level is laid out
+    // on its own rather than scaled. Full is the whole card. Compact keeps the name, the figures and the
+    // sockets. Far is one row with the name and the worst status; it draws no sockets, so its connections
+    // leave the card's edge evenly spaced.
+    internal enum CardDetail { Full, Compact, Far }
+    private CardDetail detail = CardDetail.Full;
+    private bool DrawsSockets => detail != CardDetail.Far;
+    private const double CompactWidth = 230, FarWidth = 210, FarHeight = 22;
+    private double SiblingGap => detail switch { CardDetail.Far => 4, CardDetail.Compact => 10, _ => TopologyLayout.Gap };
     private double layoutWidth = 1100, inspectorWidth = 330;
     private double ReadingScale => 1;
     private readonly HashSet<string> visibleIds = [];
@@ -151,6 +160,7 @@ public partial class MainWindow
     // devices can tuck under the card.
     private double? PortOffset(UsbNode parent, UsbNode child)
     {
+        if (!DrawsSockets) return null;
         var ports = EdgePorts(parent);
         int i = ports.FindIndex(p => p.Id == child.Id);
         if (i < 0) return null;
@@ -168,12 +178,25 @@ public partial class MainWindow
             _ => edge * (i + 0.5) / ports.Count
         };
     }
-    private double WidthFor(UsbNode n) => horizontalTree ? CardWidth + (EdgePorts(n).Count > 0 ? SocketWidth + 6 : 0) : Math.Max(CardWidth, EdgePorts(n).Count * SocketPitch + 20);
+    private double WidthFor(UsbNode n)
+    {
+        // A far row's connections leave its edge 10 apart, so a vertical one widens for many children.
+        if (detail == CardDetail.Far) return horizontalTree ? FarWidth : Math.Max(FarWidth, Children(n).Count * 10 + 20);
+        double card = detail == CardDetail.Compact ? CompactWidth : CardWidth;
+        return horizontalTree ? card + (EdgePorts(n).Count > 0 ? SocketWidth + 6 : 0) : Math.Max(card, EdgePorts(n).Count * SocketPitch + 20);
+    }
     // Card height from its rows: the name, a custom label's detected name, the figures line (taller when
     // its warnings wrap) or a host's summary, the bandwidth meter, other warnings, the card sharing its
     // sockets, and the socket strip.
     private double HeightFor(UsbNode n)
     {
+        if (detail == CardDetail.Far) return horizontalTree ? Math.Max(FarHeight, Children(n).Count * 10 + 2) : FarHeight;
+        if (detail == CardDetail.Compact)
+        {
+            double compact = 2 + 8 + 22 + 8 + (n.Kind is "Controller" or "Root hub" ? 20 : CardFigures(n).Parts.Count > 0 ? 17 : 0);
+            int sockets = EdgePorts(n).Count;
+            return sockets == 0 ? compact : horizontalTree ? Math.Max(compact, sockets * SocketStep + 12) : compact + 6 + SocketHeight;
+        }
         double height = 2 + 8 + 22 + 8;
         if (n.UserLabel.Length > 0) height += 16;
         if (HubRelationships.CardLabel(n).Length > 0) height += 19;
@@ -262,7 +285,9 @@ public partial class MainWindow
     private List<TopologyLayout.Item> ArrangeLayouts(List<UsbNode> roots, double available, double gap)
     {
         stackedHubs.Clear(); stackableHubs.Clear();
-        List<TopologyLayout.Item> Measure() => roots.Select(r => TopologyLayout.Measure(r, Children, horizontalTree, WidthFor, HeightFor, PortOffset, stackedHubs, SnappedStages)).ToList();
+        // Linked hub stages are arranged around their sockets, so a far view, which draws none, shows the real
+        // hierarchy instead, as the horizontal layout does.
+        List<TopologyLayout.Item> Measure() => roots.Select(r => TopologyLayout.Measure(r, Children, horizontalTree, WidthFor, HeightFor, PortOffset, stackedHubs, DrawsSockets ? SnappedStages : null, SiblingGap)).ToList();
         var layouts = Measure();
         if (horizontalTree) return layouts;
         static IEnumerable<TopologyLayout.Item> Flatten(TopologyLayout.Item item) => item.Children.SelectMany(Flatten).Prepend(item);
@@ -296,61 +321,43 @@ public partial class MainWindow
         var panel = new StackPanel();
         // The name leads: icon, shortened name and fold button on one line. Type and location are in
         // the tooltip, tree and inspector; the color already says what a device does.
-        var title = new DockPanel { Height = 22 };
-        var icon = NodeVisuals.Icon(node, 20); icon.Margin = new Thickness(0, 0, 7, 0);
+        bool far = detail == CardDetail.Far;
+        var title = new DockPanel { Height = far ? 20 : 22 };
+        var icon = NodeVisuals.Icon(node, far ? 16 : 20); icon.Margin = new Thickness(0, 0, far ? 6 : 7, 0);
         DockPanel.SetDock(icon, Dock.Left); title.Children.Add(icon);
-        if ((MergedRoot(node) ?? node).Children.Any(c => c.Kind != "Empty port"))
+        // A far row has no room for a fold button; double-clicking it still folds the branch.
+        if (!far && (MergedRoot(node) ?? node).Children.Any(c => c.Kind != "Empty port"))
         {
             var fold = new Button { Content = folded.Contains(node.Id) && appliedQuery.Length == 0 ? "+" : "−", Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, ToolTip = "Expand / collapse branch", IsEnabled = appliedQuery.Length == 0 };
             fold.Click += (_, e) => { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); e.Handled = true; };
             DockPanel.SetDock(fold, Dock.Right); title.Children.Add(fold);
         }
-        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName + (CanNameDevice(node) ? "\nDouble-click to rename" : "") };
+        // Below full detail, the worst issue's glyph stands in for the badges.
+        if (detail != CardDetail.Full && (host ? OtherIssues(node) : Issues(node)) is { Count: > 0 } worst)
+        {
+            var glyph = NodeVisuals.StatusGlyph(worst.Max(i => i.Severity)); glyph.Margin = new Thickness(6, 0, 0, 0); glyph.VerticalAlignment = VerticalAlignment.Center;
+            glyph.ToolTip = string.Join(" · ", worst.Select(i => i.Text)); DockPanel.SetDock(glyph, Dock.Right); title.Children.Add(glyph);
+        }
+        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = far ? 13 : 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName + (CanNameDevice(node) ? "\nDouble-click to rename" : "") };
         // Double-clicking the name renames; double-clicking elsewhere on the card still folds its branch.
         name.MouseLeftButtonDown += (_, e) => { if (e.ClickCount == 2 && CanNameDevice(node)) { EditDeviceName(node, name); e.Handled = true; } };
         title.Children.Add(name);
         panel.Children.Add(title);
-        var relationship = HubRelationships.CardLabel(node);
-        if (relationship.Length > 0)
-            panel.Children.Add(new TextBlock { Text = relationship, FontSize = 12, Foreground = Brush("TextSecondary"), Height = 19, ToolTip = HubRelationships.Description(node, snapshot) });
-        // Under a custom label, keep the detected name visible; where a name came from is in Detection details.
-        if (node.UserLabel.Length > 0)
-            panel.Children.Add(new TextBlock { Text = "Detected: " + node.Name, FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
         var figures = CardFigures(node);
         string metric = string.Join(" · ", figures.Parts.Select(p => p.Words));
-        if (host)
-            panel.Children.Add(new TextBlock { Text = pathLabels[node.Id] + " · " + ProtocolSummary(node), FontSize = 12, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0), ToolTip = "Ports: " + ProtocolSummary(node) + "\nSupply capacity: unknown; charging limits are not queried." });
-        else if (figures.Parts.Count > 0 || figures.Issues.Count > 0)
+        if (detail == CardDetail.Full) AddCardRows(node, panel, figures, host);
+        else if (detail == CardDetail.Compact)
         {
-            // One line of figures; the warnings that qualify them follow on the same row and wrap below.
-            var row = new WrapPanel { Margin = new Thickness(0, 3, 0, 0) };
-            if (figures.Parts.Count > 0)
+            if (host) panel.Children.Add(new TextBlock { Text = pathLabels[node.Id] + " · " + ProtocolSummary(node), FontSize = 12, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0) });
+            else if (figures.Parts.Count > 0)
             {
-                var line = NodeVisuals.MetricLine(figures.Parts.Select(p => (p.Glyph, p.Text)));
-                line.ToolTip = MetricHelp(node); line.VerticalAlignment = VerticalAlignment.Center; line.Margin = new Thickness(0, 0, 8, 0);
-                row.Children.Add(line);
+                var line = NodeVisuals.MetricLine(figures.Parts.Select(p => (p.Glyph, p.Text))); line.Margin = new Thickness(0, 3, 0, 0); line.ToolTip = MetricHelp(node);
+                panel.Children.Add(line);
             }
-            foreach (var (severity, text) in figures.Issues) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 1, 4, 1);  row.Children.Add(badge); }
-            panel.Children.Add(row);
         }
-        if (MeterFor(node) is var (now, peak, capacity, label))
-        {
-            var meter = NodeVisuals.Meter(now, peak, capacity, label, NodeVisuals.Edge(node));
-            meter.Margin = new Thickness(0, 4, 0, 0); meter.ToolTip = MetricHelp(node);
-            panel.Children.Add(meter);
-        }
-        var issues = OtherIssues(node);
-        if (issues.Count > 0)
-        {
-            var badges = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
-            foreach (var (severity, text) in issues) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 0, 4, 0);  badges.Children.Add(badge); }
-            panel.Children.Add(badges);
-        }
-        // The other half of a USB 3 hub, drawn as its own card, holds the other halves of these sockets.
-        if (SharedSockets(node) is { Count: > 0 } shared)
-            panel.Children.Add(new TextBlock { Text = "Shares its sockets with " + string.Join(", ", shared), FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0), Tag = SharedSocketsTag, ToolTip = SharedSocketsHelp(shared) });
-        var edgePorts = EdgePorts(node);
-        var padding = edgePorts.Count == 0 ? new Thickness(10, 8, 10, 8) : horizontalTree ? new Thickness(10, 8, 10 + SocketWidth + 6, 8) : new Thickness(10, 8, 10, 8 + 6 + SocketHeight);
+        var edgePorts = DrawsSockets ? EdgePorts(node) : [];
+        var padding = far ? new Thickness(7, 0, 7, 0) : edgePorts.Count == 0 ? new Thickness(10, 8, 10, 8) : horizontalTree ? new Thickness(10, 8, 10 + SocketWidth + 6, 8) : new Thickness(10, 8, 10, 8 + 6 + SocketHeight);
+        if (far) panel.VerticalAlignment = VerticalAlignment.Center;
         var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush(NodeVisuals.Fill(node)), BorderBrush = Brush(NodeVisuals.Edge(node)), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.DisplayName + "\n" + NodeVisuals.Label(node) + (metric.Length > 0 ? " · " + metric : "") + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
         System.Windows.Automation.AutomationProperties.SetName(card, node.DisplayName + ", " + NodeVisuals.Label(node) + ", " + metric + ", " + Issue(node));
         card.MouseLeftButtonDown += (_, e) => { card.Focus(); SelectNode(node); if (e.ClickCount == 2 && node.Children.Count > 0 && appliedQuery.Length == 0) { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); } e.Handled = true; };
@@ -370,7 +377,8 @@ public partial class MainWindow
         card.GotKeyboardFocus += (_, _) => card.BorderBrush = Brush("Accent");
         card.LostKeyboardFocus += (_, _) => UpdateSelection();
         Canvas.SetLeft(card, x); Canvas.SetTop(card, y); Panel.SetZIndex(card, 1); Graph.Children.Add(card); cards[node.Id] = (card, bounds.TopLeft);
-        if (node.PortLabel.Length > 0 && !host)
+        // Far rows sit 4 apart, so a port name tag above one would cover the row before it.
+        if (node.PortLabel.Length > 0 && !host && !far)
         {
             var tag = PortTag(node, Math.Max(36, width / 2 - 14));
             Canvas.SetLeft(tag, x + 8); Canvas.SetTop(tag, y - 8); Graph.Children.Add(tag);
@@ -419,16 +427,59 @@ public partial class MainWindow
         for (int i = 0; i < children.Count; i++)
         {
             if (layout.SnappedColumn) snappedWires.Add(children[i].Node.Id);
-            AddWire(children[i].Node.Id, routes[i]);
+            AddWire(children[i].Node, routes[i]);
             Place(children[i], left + children[i].X, top + children[i].Y);
         }
     }
+    // A full card's rows under its name: the paired-hub label, the detected name under a custom label, the
+    // figures with the warnings that qualify them (or a host's summary), the meter, other warnings and the
+    // card that holds the other halves of its sockets.
+    private void AddCardRows(UsbNode node, StackPanel panel, MetricRow figures, bool host)
+    {
+        var relationship = HubRelationships.CardLabel(node);
+        if (relationship.Length > 0)
+            panel.Children.Add(new TextBlock { Text = relationship, FontSize = 12, Foreground = Brush("TextSecondary"), Height = 19, ToolTip = HubRelationships.Description(node, snapshot) });
+        // Under a custom label, keep the detected name visible; where a name came from is in Detection details.
+        if (node.UserLabel.Length > 0)
+            panel.Children.Add(new TextBlock { Text = "Detected: " + node.Name, FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
+        if (host)
+            panel.Children.Add(new TextBlock { Text = pathLabels[node.Id] + " · " + ProtocolSummary(node), FontSize = 12, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0), ToolTip = "Ports: " + ProtocolSummary(node) + "\nSupply capacity: unknown; charging limits are not queried." });
+        else if (figures.Parts.Count > 0 || figures.Issues.Count > 0)
+        {
+            // One line of figures; the warnings that qualify them follow on the same row and wrap below.
+            var row = new WrapPanel { Margin = new Thickness(0, 3, 0, 0) };
+            if (figures.Parts.Count > 0)
+            {
+                var line = NodeVisuals.MetricLine(figures.Parts.Select(p => (p.Glyph, p.Text)));
+                line.ToolTip = MetricHelp(node); line.VerticalAlignment = VerticalAlignment.Center; line.Margin = new Thickness(0, 0, 8, 0);
+                row.Children.Add(line);
+            }
+            foreach (var (severity, text) in figures.Issues) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 1, 4, 1);  row.Children.Add(badge); }
+            panel.Children.Add(row);
+        }
+        if (MeterFor(node) is var (now, peak, capacity, label))
+        {
+            var meter = NodeVisuals.Meter(now, peak, capacity, label, NodeVisuals.Edge(node));
+            meter.Margin = new Thickness(0, 4, 0, 0); meter.ToolTip = MetricHelp(node);
+            panel.Children.Add(meter);
+        }
+        var issues = OtherIssues(node);
+        if (issues.Count > 0)
+        {
+            var badges = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+            foreach (var (severity, text) in issues) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 0, 4, 0);  badges.Children.Add(badge); }
+            panel.Children.Add(badges);
+        }
+        // The other half of a USB 3 hub, drawn as its own card, holds the other halves of these sockets.
+        if (SharedSockets(node) is { Count: > 0 } shared)
+            panel.Children.Add(new TextBlock { Text = "Shares its sockets with " + string.Join(", ", shared), FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0), Tag = SharedSocketsTag, ToolTip = SharedSocketsHelp(shared) });
+    }
     private const string SharedSocketsTag = "shared-sockets";
     private static string SharedSocketsHelp(List<string> shared) => $"Windows sees each USB 3 socket as two logical ports, one USB 2 and one USB 3, and sees a USB 3 hub as two hubs, one for each. This card's ports and those on {string.Join(", ", shared)} are the two halves of the same sockets; each socket's tooltip names its other half.";
-    private void AddWire(string id, List<Point> route)
+    private void AddWire(UsbNode node, List<Point> route)
     {
-        var wire = new System.Windows.Shapes.Path { Data = RoundedRoute(route, 6), Stroke = Brush("Wire"), StrokeThickness = 1.5, IsHitTestVisible = false };
-        Graph.Children.Add(wire); wires[id] = wire; wireRoutes[id] = route;
+        var wire = new System.Windows.Shapes.Path { Data = RoundedRoute(route, 6), Stroke = Brush(NodeVisuals.WireInk(node)), StrokeThickness = NodeVisuals.WireWidth(node), StrokeDashArray = NodeVisuals.WireDashes(node), Tag = node, IsHitTestVisible = false };
+        Graph.Children.Add(wire); wires[node.Id] = wire; wireRoutes[node.Id] = route;
     }
     // Softened corners make orthogonal routes read as cables.
     private static PathGeometry RoundedRoute(List<Point> route, double radius)
@@ -449,8 +500,10 @@ public partial class MainWindow
     }
     private void SelectNode(UsbNode node)
     {
-        // A merged root hub is selected as its host card.
+        // A merged root hub is selected as its host card. A port is drawn only as a socket, so selecting one
+        // brings back a level that draws sockets.
         node = CardNode(node);
+        if (node.Kind == "Empty port" && !DrawsSockets) { detail = CardDetail.Compact; Draw(); SetZoom(Math.Max(GraphScale.ScaleX, ReadableScale)); }
         bool changed = selected?.Id != node.Id;
         selected = snapshot.Nodes.FirstOrDefault(n => n.Id == node.Id) ?? node;
         UpdateSelection(revealInTree: true); ShowDetails();
@@ -506,18 +559,15 @@ public partial class MainWindow
             item.Card.BorderThickness = new Thickness(chosen || match ? 2 : 1);
             item.Card.Effect = chosen ? new System.Windows.Media.Effects.DropShadowEffect { Color = ((SolidColorBrush)Brush("Accent")).Color, BlurRadius = 14, ShadowDepth = 0, Opacity = 0.75 } : null;
         }
-        foreach (var (id, wire) in wires)
-        {
-            bool upstream = chain.Contains(id);
-            wire.Stroke = Brush(upstream ? "Accent" : "Wire"); wire.StrokeThickness = upstream ? 2.25 : 1.5;
-        }
+        // The selected path recolors its connections; their widths and dashes keep saying what each link is.
+        foreach (var (id, wire) in wires) wire.Stroke = Brush(chain.Contains(id) ? "Accent" : NodeVisuals.WireInk((UsbNode)wire.Tag));
         // An occupied socket's cavity fills in the color of its wire, as a plug would, accent on the selected
         // path; an empty one stays hollow, so occupancy reads even on folded hubs. Tongues keep their color.
         foreach (var (id, slot) in connectedPorts)
         {
-            string ink = chain.Contains(id) ? "Accent" : "Wire";
+            string ink = chain.Contains(id) ? "Accent" : NodeVisuals.WireInk((UsbNode)slot.Tag);
             slot.Background = slot.BorderBrush = Brush(ink);
-            if (!NodeVisuals.HasTongue((UsbNode)slot.Tag)) ((TextBlock)slot.Content).Foreground = Brush(ink == "Accent" ? "OnAccent" : "TextPrimary");
+            if (!NodeVisuals.HasTongue((UsbNode)slot.Tag)) ((TextBlock)slot.Content).Foreground = Brush(ink is "Accent" or "Warning" ? "OnAccent" : "TextPrimary");
             slot.BorderThickness = NodeVisuals.SocketBorder(socketParts.GetValueOrDefault(id), horizontalTree, 1);
         }
         foreach (var (id, slot) in portSlots)

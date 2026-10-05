@@ -27,7 +27,7 @@ public partial class MainWindow : Window
     private Point panStart, panOrigin;
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(10) };
     private static Brush Brush(string hex) => Theme.Brush(hex);
-    public MainWindow(bool demo, bool render, bool verifyUi = false, bool horizontal = false)
+    public MainWindow(bool demo, bool render, bool verifyUi = false, bool? horizontal = null)
     {
         InitializeComponent(); this.demo = demo; this.render = render;
         var searchGlyph = NodeVisuals.Symbol("search", Theme.Brush("TextMuted"), 16);
@@ -36,7 +36,7 @@ public partial class MainWindow : Window
         var copyGlyph = NodeVisuals.Symbol("content_copy", Brush("TextPrimary"), 14);
         ((System.Windows.Shapes.Path)((Canvas)copyGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextPrimary");
         CopyDetailsIcon.Content = copyGlyph;
-        horizontalTree = horizontal;
+        horizontalTree = horizontal ?? SavedLayoutIsHorizontal();
         OrientationButton.Content = horizontalTree ? "Layout: horizontal" : "Layout: vertical";
         ThemeButton.Content = Theme.IsDark ? "Light mode" : "Dark mode";
         Loaded += async (_, _) =>
@@ -44,7 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifySemanticZoom(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -137,6 +137,8 @@ public partial class MainWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(badge, "Explain " + issue);
         void Explain()
         {
+            // A badge asks what the issue means, so its explanation opens whole.
+            openExplanations.Add(issue);
             SelectNode(node);
             if (InspectorPanel.Visibility != Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
             UpdateLayout();
@@ -197,7 +199,7 @@ public partial class MainWindow : Window
         if (status.Children.Count == 0) status.Children.Add(new TextBlock { Text = "No issues", FontSize = 12, Foreground = Brush("TextMuted"), VerticalAlignment = VerticalAlignment.Center });
         Details.Children.Add(status);
         var issues = Issues(node);
-        foreach (var (_, issue) in issues) AddExplanation(node, issue, issues.Count > 1);
+        foreach (var (severity, issue) in issues) AddExplanation(node, severity, issue, issues.Count > 1);
         AddHubSnapControls(node);
 
 
@@ -220,7 +222,12 @@ public partial class MainWindow : Window
                 "The signaling rate negotiated when the device connected. Everything upstream on the same path shares it; it is not a measured speed.");
             Metric(NodeVisuals.Metric.Reserved, attached ? (node.ReservedMbps is double reserved ? UsbBudgets.Rate(reserved) : "Unknown") : unread, "Reserved", 1,
                 "Bus time held for this device's open interrupt and isochronous pipes, such as audio, video and input. Bulk transfers, such as storage, reserve nothing and share what is left.");
-            Metric(NodeVisuals.Metric.Power, node.Kind == "Empty port" ? unread : UsesExternalPower(node) || node.MaxPowerMa != null ? PowerFigure(node).Text : attached ? "Unknown" : unread, UsesExternalPower(node) ? "Power" : "Power request", 2,
+            // A third of the panel is too narrow for the card's "External + 100 mA", so its parts are split
+            // between the figure and its label.
+            var (power, powerLabel) = node.Kind == "Empty port" ? (unread, "Power request")
+                : UsesExternalPower(node) ? (node.MaxPowerMa is > 0 and var bus ? ($"{bus} mA", "External + bus") : ("External", "Power"))
+                : (node.MaxPowerMa != null ? PowerFigure(node).Text : attached ? "Unknown" : unread, "Power request");
+            Metric(NodeVisuals.Metric.Power, power, powerLabel, 2,
                 UsesExternalPower(node) ? "Runs on its own supply, so it requests little or nothing from the bus." : "The most current the device's active configuration says it will draw. A declared maximum, not a measurement.");
             Details.Children.Add(metrics);
             Section("Device identity & connection");
@@ -362,31 +369,59 @@ public partial class MainWindow : Window
     private string PowerSavingText(UsbNode n) => Topology.PowerSavingText(n, snapshot);
     private List<UsbNode> FindPath(string id) => Topology.FindPath(snapshot, id);
     private void Text(string value, double size = 13, string color = "TextPrimary") => Details.Children.Add(new TextBlock { Text = value, FontSize = size, Foreground = Brush(color), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 9) });
+    // Issue types whose explanations have been opened. They stay open as the selection changes, so clicking
+    // from port to port keeps the rows below them in place.
+    private readonly HashSet<string> openExplanations = [];
+    private const string ExplanationMoreTag = "explanation-more", ExplanationToggleTag = "explanation-toggle";
     // What an issue means, in a panel under the status badges: what is happening, whether it affects
-    // anything now, and what to do. With several issues each panel names its own.
-    private void AddExplanation(UsbNode node, string issue, bool named)
+    // anything now, and what to do. Severity sets how much shows before the rows: a note affects nothing
+    // now, so it is one line until opened; a warning says what is happening and whether it affects you,
+    // with what to do a click away; an error is shown whole. With several issues each panel names its own.
+    private void AddExplanation(UsbNode node, Severity severity, string issue, bool named)
     {
         var e = Explain(node, issue);
+        bool open = severity == Severity.Error || openExplanations.Contains(issue);
         var body = new StackPanel();
+        var more = new StackPanel { Tag = ExplanationMoreTag };
         TextBlock Line(string text, string color = "TextPrimary", bool heading = false) => new()
         {
             Text = text, FontSize = heading ? 12 : 13, FontWeight = heading ? FontWeights.SemiBold : FontWeights.Normal, Foreground = Brush(color),
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, heading ? 4 : 0, 0, heading ? 2 : 6)
         };
         if (named) body.Children.Add(Line(issue, heading: true));
-        body.Children.Add(Line(e.What));
-        if (e.Affects.Length > 0) { body.Children.Add(Line("Does it affect you?", "TextSecondary", true)); body.Children.Add(Line(e.Affects)); }
+        var what = Line(e.What);
+        bool hasMore = e.Affects.Length > 0 || e.Cause.Length > 0 || e.Steps is { Count: > 0 };
+        if (severity == Severity.Note && !open && hasMore) { what.TextWrapping = TextWrapping.NoWrap; what.TextTrimming = TextTrimming.CharacterEllipsis; what.ToolTip = e.What; }
+        body.Children.Add(what);
+        var affects = severity == Severity.Note ? more : body;
+        if (e.Affects.Length > 0) { affects.Children.Add(Line("Does it affect you?", "TextSecondary", true)); affects.Children.Add(Line(e.Affects)); }
         if (e.Cause.Length > 0 || e.Steps is { Count: > 0 })
         {
-            body.Children.Add(Line(e.Steps is { Count: > 0 } ? "What to do" : "Why", "TextSecondary", true));
-            if (e.Cause.Length > 0) body.Children.Add(Line(e.Cause));
+            more.Children.Add(Line(e.Steps is { Count: > 0 } ? "What to do" : "Why", "TextSecondary", true));
+            if (e.Cause.Length > 0) more.Children.Add(Line(e.Cause));
             foreach (var step in e.Steps ?? [])
             {
                 var row = new DockPanel { Margin = new Thickness(2, 0, 0, 0) };
                 var bullet = Line("•", "TextSecondary"); bullet.Margin = new Thickness(0, 0, 7, 6); DockPanel.SetDock(bullet, Dock.Left);
                 row.Children.Add(bullet); row.Children.Add(Line(step));
-                body.Children.Add(row);
+                more.Children.Add(row);
             }
+        }
+        // The rest stays in the panel while closed, so it is still read aloud once opened.
+        more.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        body.Children.Add(more);
+        if (severity != Severity.Error && more.Children.Count > 0)
+        {
+            string label = open ? "Show less" : severity == Severity.Note ? "Details" : e.Steps is { Count: > 0 } ? "What to do" : "Why";
+            var toggle = new Button
+            {
+                Content = new TextBlock { Text = label + (open ? " ▴" : " ▾"), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brush("Accent") },
+                Style = (Style)FindResource("EditableNameButton"), Padding = new Thickness(2, 1, 2, 1), Margin = new Thickness(-3, 0, 0, 6),
+                HorizontalAlignment = HorizontalAlignment.Left, Cursor = Cursors.Hand, Tag = ExplanationToggleTag
+            };
+            System.Windows.Automation.AutomationProperties.SetName(toggle, (open ? "Show less about " : "Show more about ") + issue);
+            toggle.Click += (_, _) => { if (!openExplanations.Remove(issue)) openExplanations.Add(issue); ShowDetails(); };
+            body.Children.Add(toggle);
         }
         Details.Children.Add(new Border
         {
@@ -417,7 +452,12 @@ public partial class MainWindow : Window
         value.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(value, 1); row.Children.Add(value);
         Details.Children.Add(row);
     }
-    private void ActualSizeClick(object sender, RoutedEventArgs e) => ZoomAt(1, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
+    // 100% always means full cards at actual size, like 100% view, without reflowing.
+    private void ActualSizeClick(object sender, RoutedEventArgs e)
+    {
+        if (detail == CardDetail.Full) { ZoomAt(1, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2)); return; }
+        ResetPan(); detail = CardDetail.Full; Draw(); SetZoom(1); RevealSelection();
+    }
     private void ThemeClick(object sender, RoutedEventArgs e)
     {
         ApplyAppearance(!Theme.IsDark);
@@ -434,6 +474,8 @@ public partial class MainWindow : Window
     private void LocateClick(object sender, RoutedEventArgs e)
     {
         if (selected == null) return;
+        // Locating shows the selection at full size, sockets and all.
+        if (detail != CardDetail.Full) { detail = CardDetail.Full; Draw(); }
         var targetId = selected.Kind == "Empty port" ? FindPath(selected.Id).SkipLast(1).Select(CardNode).LastOrDefault()?.Id : selected.Id;
         if (targetId == null || !cards.TryGetValue(targetId, out var item)) return;
         ResetPan();
@@ -446,7 +488,7 @@ public partial class MainWindow : Window
     }
     private async void RefreshClick(object sender, RoutedEventArgs e) => await Refresh();
     private void SearchChanged(object sender, TextChangedEventArgs e) { searchTimer.Stop(); searchTimer.Start(); }
-    private void SetZoom(double value) { readableView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; ZoomLabel.Text = $"{value:P0}"; }
+    private void SetZoom(double value) { readableView = overviewView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; ZoomLabel.Text = $"{value:P0}"; }
     private void ZoomIn(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX * 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
     private void ZoomOut(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX / 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
     private void FitClick(object sender, RoutedEventArgs e)
@@ -455,7 +497,7 @@ public partial class MainWindow : Window
         arranging = true;
         try
         {
-            ResetPan();
+            ResetPan(); detail = CardDetail.Full;
             double scale = ReadingScale;
             layoutWidth = Math.Max(CardWidth + 48, (GraphScroll.ActualWidth - 32) / scale);
             Draw(); SetZoom(scale); readableView = true;
@@ -469,19 +511,29 @@ public partial class MainWindow : Window
         }
         finally { arranging = false; }
     }
+    // Fit all shows the whole graph at the most detailed level that fits at a readable scale, or at the
+    // farthest level, scaled to fit, when none does.
     private void OverviewClick(object sender, RoutedEventArgs e)
     {
-        ResetPan();
-        SetZoom(Math.Min(1, Math.Min((GraphScroll.ViewportWidth - 32) / Graph.Width, (GraphScroll.ViewportHeight - 32) / Graph.Height)));
-        GraphScroll.ScrollToHorizontalOffset(0); GraphScroll.ScrollToVerticalOffset(0);
+        if (arranging) return;
+        arranging = true;
+        try
+        {
+            ResetPan();
+            foreach (var level in Enum.GetValues<CardDetail>()) { detail = level; Draw(); if (FitScale() >= ReadableScale) break; }
+            SetZoom(Math.Min(1, FitScale())); overviewView = true;
+            GraphScroll.ScrollToHorizontalOffset(0); GraphScroll.ScrollToVerticalOffset(0);
+        }
+        finally { arranging = false; }
     }
+    private double FitScale() => Math.Min((GraphScroll.ViewportWidth - 32) / Graph.Width, (GraphScroll.ViewportHeight - 32) / Graph.Height);
     private void OrientationClick(object sender, RoutedEventArgs e)
     {
         var menu = new ContextMenu();
         foreach (bool horizontal in new[] { false, true })
         {
             var item = new MenuItem { Header = horizontal ? "Horizontal" : "Vertical", IsCheckable = true, IsChecked = horizontalTree == horizontal };
-            item.Click += (_, _) => SetOrientation(horizontal);
+            item.Click += (_, _) => { SetOrientation(horizontal); if (!SaveLayout(horizontal)) StatusText.Text = "Layout changed; preference could not be saved."; };
             menu.Items.Add(item);
         }
         menu.PlacementTarget = OrientationButton; menu.IsOpen = true;
@@ -494,11 +546,15 @@ public partial class MainWindow : Window
     }
     private void GraphSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (readableView && !arranging && snapshot.Controllers.Count > 0 && (Math.Abs(e.NewSize.Width - e.PreviousSize.Width) > 24 || horizontalTree && Math.Abs(e.NewSize.Height - e.PreviousSize.Height) > 24))
-            FitClick(this, new RoutedEventArgs());
+        if (arranging || snapshot.Controllers.Count == 0) return;
+        bool wider = Math.Abs(e.NewSize.Width - e.PreviousSize.Width) > 24, taller = Math.Abs(e.NewSize.Height - e.PreviousSize.Height) > 24;
+        // A readable view reflows to the new width; an overview fits again, choosing its level anew.
+        if (readableView && (wider || horizontalTree && taller)) FitClick(this, new RoutedEventArgs());
+        else if (overviewView && (wider || taller)) OverviewClick(this, new RoutedEventArgs());
     }
     private void ZoomAt(double zoom, Point pointer)
     {
+        if (SwitchDetail(zoom, pointer)) return;
         var anchor = GraphScroll.TranslatePoint(pointer, Graph);
         SetZoom(zoom); GraphScroll.UpdateLayout();
         var after = Graph.TranslatePoint(anchor, GraphScroll);
@@ -522,7 +578,7 @@ public partial class MainWindow : Window
         if (!GraphScroll.CaptureMouse()) return;
         panButton = e.ChangedButton; panStart = e.GetPosition(GraphScroll);
         panOrigin = new Point(PanTransform.X, PanTransform.Y);
-        readableView = false; GraphScroll.Cursor = Cursors.SizeAll; e.Handled = true;
+        readableView = overviewView = false; GraphScroll.Cursor = Cursors.SizeAll; e.Handled = true;
     }
     private void PanMove(object sender, MouseEventArgs e)
     {
@@ -565,14 +621,14 @@ public partial class MainWindow : Window
         var visible = cards.Values.ToList();
         for (int i = 0; i < visible.Count; i++)
         {
-            var rect = new Rect(visible[i].Point, new Size(CardWidth, visible[i].Card.Height));
+            var rect = new Rect(visible[i].Point, new Size(visible[i].Card.Width, visible[i].Card.Height));
             Check(rect.Right <= Graph.Width && rect.Bottom <= Graph.Height, "Card extends outside graph bounds.");
             for (int j = i + 1; j < visible.Count; j++)
-                Check(!rect.IntersectsWith(new Rect(visible[j].Point, new Size(CardWidth, visible[j].Card.Height))), "Hardware cards overlap.");
+                Check(!rect.IntersectsWith(new Rect(visible[j].Point, new Size(visible[j].Card.Width, visible[j].Card.Height))), "Hardware cards overlap.");
         }
         foreach (var node in snapshot.Nodes.Where(n => cards.ContainsKey(n.Id)))
             foreach (var child in Children(node))
-                Check(horizontalTree ? cards[child.Id].Point.X > cards[node.Id].Point.X + CardWidth : cards[child.Id].Point.Y > cards[node.Id].Point.Y + cards[node.Id].Card.Height, "Child must follow its parent's flow direction.");
+                Check(horizontalTree ? cards[child.Id].Point.X > cards[node.Id].Point.X + cards[node.Id].Card.Width : cards[child.Id].Point.Y > cards[node.Id].Point.Y + cards[node.Id].Card.Height, "Child must follow its parent's flow direction.");
         var target = snapshot.Nodes.FirstOrDefault(n => n.Kind == "Device");
         if (target != null)
         {
@@ -595,22 +651,31 @@ public partial class MainWindow : Window
             LocateClick(this, new RoutedEventArgs());
             Check(GraphScale.ScaleX == 1, "Locate should restore readable zoom.");
             var position = cards[selected.Id].Point;
-            Check(position.X + CardWidth > GraphScroll.HorizontalOffset && position.X < GraphScroll.HorizontalOffset + GraphScroll.ViewportWidth, "Selected card is horizontally outside the viewport.");
+            Check(position.X + cards[selected.Id].Card.Width > GraphScroll.HorizontalOffset && position.X < GraphScroll.HorizontalOffset + GraphScroll.ViewportWidth, "Selected card is horizontally outside the viewport.");
             Check(position.Y + cards[selected.Id].Card.Height > GraphScroll.VerticalOffset && position.Y < GraphScroll.VerticalOffset + GraphScroll.ViewportHeight, "Selected card is vertically outside the viewport.");
         }
         OverviewClick(this, new RoutedEventArgs()); GraphScroll.UpdateLayout();
         Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ViewportWidth + 1 && Graph.Height * GraphScale.ScaleY <= GraphScroll.ViewportHeight + 1, "Fit all leaves graph outside viewport.");
         FitClick(this, new RoutedEventArgs()); GraphScroll.UpdateLayout();
         Check(GraphScale.ScaleX >= 1, "Readable view must not shrink device text.");
-        // Rows never wrap, so the graph may overflow only once every group of end devices is a staircase.
-        if (!horizontalTree) Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ActualWidth + 1 || stackableHubs.IsSubsetOf(stackedHubs), "Readable layout overflows while end devices could still stack.");
+        // Rows never wrap, so a vertical graph may overflow only once every group of end devices is a
+        // staircase. Checked in whichever pass is vertical, so the default layout doesn't decide coverage.
+        void CheckStaircases() { if (!horizontalTree) Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ActualWidth + 1 || stackableHubs.IsSubsetOf(stackedHubs), "Readable layout overflows while end devices could still stack."); }
+        CheckStaircases();
         PanTransform.X = 87; PanTransform.Y = 53;
         var pointer = new Point(GraphScroll.ViewportWidth * 0.4, GraphScroll.ViewportHeight * 0.4);
         var anchored = GraphScroll.TranslatePoint(pointer, Graph);
         ZoomAt(GraphScale.ScaleX * 1.15, pointer);
         Check((Graph.TranslatePoint(anchored, GraphScroll) - pointer).Length < 1, "Wheel zoom moved the point under the pointer.");
+        // Zooming out past the readable scale swaps in simpler cards, and the card under the pointer, or the
+        // nearest one, keeps its place on screen.
+        static double Away(Rect r, Point p) => new Vector(Math.Max(0, Math.Max(r.Left - p.X, p.X - r.Right)), Math.Max(0, Math.Max(r.Top - p.Y, p.Y - r.Bottom))).Length;
+        Rect Box(string id) => new(cards[id].Point, new Size(cards[id].Card.Width, cards[id].Card.Height));
+        Point Onscreen(string id) => Graph.TranslatePoint(new Point(Box(id).X + Box(id).Width / 2, Box(id).Y + Box(id).Height / 2), GraphScroll);
+        var near = cards.Keys.MinBy(id => Away(Box(id), GraphScroll.TranslatePoint(pointer, Graph)))!;
+        var held = Onscreen(near);
         ZoomAt(0.25, pointer);
-        Check((Graph.TranslatePoint(anchored, GraphScroll) - pointer).Length < 1, "Zooming out moved the point under the pointer.");
+        Check(detail == CardDetail.Compact && GraphScale.ScaleX >= ReadableScale && (Onscreen(near) - held).Length < 1, "Zooming out must swap in simpler cards and keep the card near the pointer in place.");
         FitClick(this, new RoutedEventArgs());
         Check(PanTransform.X == 0 && PanTransform.Y == 0, "Readable view must reset free panning.");
         var selection = selected?.Id;
@@ -620,10 +685,11 @@ public partial class MainWindow : Window
         var switched = cards.Values.ToList();
         for (int i = 0; i < switched.Count; i++)
             for (int j = i + 1; j < switched.Count; j++)
-                Check(!new Rect(switched[i].Point, new Size(CardWidth, switched[i].Card.Height)).IntersectsWith(new Rect(switched[j].Point, new Size(CardWidth, switched[j].Card.Height))), "Cards overlap after changing direction.");
+                Check(!new Rect(switched[i].Point, new Size(switched[i].Card.Width, switched[i].Card.Height)).IntersectsWith(new Rect(switched[j].Point, new Size(switched[j].Card.Width, switched[j].Card.Height))), "Cards overlap after changing direction.");
         foreach (var node in snapshot.Nodes.Where(n => cards.ContainsKey(n.Id)))
             foreach (var child in Children(node))
-                Check(horizontalTree ? cards[child.Id].Point.X > cards[node.Id].Point.X + CardWidth : cards[child.Id].Point.Y > cards[node.Id].Point.Y + cards[node.Id].Card.Height, "Changed direction has incorrect parent-child placement.");
+                Check(horizontalTree ? cards[child.Id].Point.X > cards[node.Id].Point.X + cards[node.Id].Card.Width : cards[child.Id].Point.Y > cards[node.Id].Point.Y + cards[node.Id].Card.Height, "Changed direction has incorrect parent-child placement.");
+        CheckStaircases();
         SetOrientation(!horizontalTree);
     }
     private void CaptureUi(string filename)

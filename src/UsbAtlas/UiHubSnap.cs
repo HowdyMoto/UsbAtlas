@@ -29,7 +29,7 @@ public partial class MainWindow
             snappedWires.Add(child.Id);
             if (!portAnchors.TryGetValue(child.Id, out var start)) continue;
             var card = cards[child.Id]; double entryX = card.Point.X - 10, entryY = card.Point.Y + card.Card.Height / 2;
-            AddWire(child.Id, [start, new Point(start.X, lane), new Point(entryX, lane), new Point(entryX, entryY), new Point(card.Point.X, entryY)]);
+            AddWire(child, [start, new Point(start.X, lane), new Point(entryX, lane), new Point(entryX, entryY), new Point(card.Point.X, entryY)]);
         }
     }
     private void AddHubSnapControls(UsbNode node)
@@ -56,10 +56,13 @@ public partial class MainWindow
         {
             bool enabled = !node.SnapToParentHub;
             if (!deviceLabels.TrySetSnap(node, snapshot, enabled, out var message)) { StatusText.Text = message; return; }
+            // Stages are drawn only in the vertical layout, so linking one makes it the remembered layout; they
+            // show at full size, framed on this hub, since a far view draws the real hierarchy instead.
             horizontalTree = false; OrientationButton.Content = "Layout: vertical";
+            if (enabled) SaveLayout(false);
             focusedBranch = null; FocusBranchButton.Content = "Focus branch";
             foreach (var ancestor in FindPath(node.Id)) folded.Remove(ancestor.Id);
-            FitClick(this, new RoutedEventArgs()); ShowDetails(); OverviewClick(this, new RoutedEventArgs());
+            FitClick(this, new RoutedEventArgs()); ShowDetails(); FrameSelectionPath();
             StatusText.Text = enabled ? "Hub stages snapped side by side; actual connections retained." : "Hub stage unlinked.";
         };
         Details.Children.Add(action);

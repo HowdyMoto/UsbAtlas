@@ -156,6 +156,17 @@ internal static class NodeVisuals
         return new Border { Height = 18, CornerRadius = new CornerRadius(3), Background = Ink("Surface"), BorderBrush = Ink(outline), BorderThickness = new Thickness(1), Child = layers, Tag = MeterTag, ClipToBounds = true };
     }
 
+    // A connection is drawn as its link: wider for a faster negotiated rate, so the widths step with USB's
+    // generations, and dashed when the link runs slower than its device supports, amber once that holds
+    // something back. Selection recolors a connection and never changes its width or dashes.
+    internal static double WireWidth(UsbNode n) => (n.LinkMbps ?? (n.Speed.StartsWith("SuperSpeedPlus", StringComparison.Ordinal) ? 10000 : 0)) switch
+    {
+        >= 10000 => 4, >= 5000 => 3, >= 480 => 2, _ => 1.25
+    };
+    internal static bool SlowLink(UsbNode n) => HubRelationships.ReducedSpeed(n);
+    internal static string WireInk(UsbNode n) => SlowLink(n) && Explanations.SpeedSeverity(n) == Severity.Warning ? "Warning" : "Wire";
+    internal static DoubleCollection? WireDashes(UsbNode n) => SlowLink(n) ? [2.5, 1.5] : null;
+
     // A second drawing of text that is already read aloud, kept out of the accessibility tree.
     private sealed class UnspokenText : TextBlock
     {
@@ -244,7 +255,7 @@ internal static class NodeVisuals
     }
 
     // The legend beneath the graph: each kind of socket, drawn small with the canvas's own templates.
-    internal const string SocketLegendHelp = "Shape is the connector: USB-A is a rectangle with its tongue along the top, USB-C a pill with its tongue in the middle, and a built-in port with no socket a plain slot. Tongue color is speed: black USB 2, blue USB 3 at 5 Gb/s, red 10 Gb/s or faster. A socket split at a seam is one physical socket that Windows reports as two logical ports, USB 2 and USB 3. A filled socket is in use.";
+    internal const string SocketLegendHelp = "Shape is the connector: USB-A is a rectangle with its tongue along the top, USB-C a pill with its tongue in the middle, and a built-in port with no socket a plain slot. Tongue color is speed: black USB 2, blue USB 3 at 5 Gb/s, red 10 Gb/s or faster. A socket split at a seam is one physical socket that Windows reports as two logical ports, USB 2 and USB 3. A filled socket is in use. A connection's width is its negotiated link rate, widest at 10 Gb/s and faster; a dashed connection runs slower than its device supports, amber when that holds something back.";
     internal static IEnumerable<FrameworkElement> SocketLegend()
     {
         FrameworkElement Glyph(string connector, string speed, SocketPart part = SocketPart.Whole) => new ContentControl
@@ -265,8 +276,19 @@ internal static class NodeVisuals
         yield return Entry("5 Gb/s", Glyph("USB-A", "≥5 Gb/s"));
         yield return Entry("10 Gb/s+", Glyph("USB-A", "≥10 Gb/s"));
         yield return Entry("USB-C", Glyph("USB-C", "≥5 Gb/s"));
-        yield return Entry("2 ports, 1 socket", Glyph("USB-A", "≥5 Gb/s", SocketPart.First), Glyph("USB-A", "≥5 Gb/s", SocketPart.Second));
+        yield return Entry("Split socket", Glyph("USB-A", "≥5 Gb/s", SocketPart.First), Glyph("USB-A", "≥5 Gb/s", SocketPart.Second));
         yield return Entry("Built-in", Glyph("Internal", "USB 2.0"));
+        // Connections are drawn at full size, since their widths are what the entries show.
+        FrameworkElement Link(string label, string ink, bool dashed, params double[] widths)
+        {
+            var entry = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center };
+            foreach (var width in widths)
+                entry.Children.Add(new System.Windows.Shapes.Line { X1 = 0, X2 = 16, Y1 = 7, Y2 = 7, Width = 16, Height = 14, Margin = new Thickness(0, 0, 4, 0), Stroke = Ink(ink), StrokeThickness = width, StrokeDashArray = dashed ? [2.5, 1.5] : null, VerticalAlignment = VerticalAlignment.Center });
+            entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            return entry;
+        }
+        yield return Link("Link rate", "Wire", false, WireWidth(new UsbNode { LinkMbps = 12 }), WireWidth(new UsbNode { LinkMbps = 480 }), WireWidth(new UsbNode { LinkMbps = 5000 }), WireWidth(new UsbNode { LinkMbps = 10000 }));
+        yield return Link("Slower than device", "Warning", true, 2);
     }
 
     // The partner is the socket's other half when both are on the same hub.

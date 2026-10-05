@@ -18,7 +18,7 @@
   <Border Grid.Row="1" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Background="{DynamicResource Surface}" Padding="16,6">
    <DockPanel>
     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-     <Button x:Name="OrientationButton" Content="Layout: vertical" Click="OrientationClick" ToolTip="Choose vertical or horizontal layout" Margin="0,0,8,0" Padding="8,4"/>
+     <Button x:Name="OrientationButton" Content="Layout: horizontal" Click="OrientationClick" ToolTip="Choose vertical or horizontal layout" Margin="0,0,8,0" Padding="8,4"/>
      <Button x:Name="LocateButton" Content="Center selection" Click="LocateClick" Padding="8,4" Margin="0,0,12,0" ToolTip="Center selection at 100%"/>
      <Button Content="−" Click="ZoomOut" Padding="10,3" ToolTip="Zoom out"/>
      <Button Click="ActualSizeClick" Padding="0" BorderBrush="Transparent" Background="Transparent" ToolTip="Reset to 100%"><TextBlock x:Name="ZoomLabel" FontFamily="{StaticResource MonoFont}" Text="100%" Width="52" TextAlignment="Center"/></Button>
