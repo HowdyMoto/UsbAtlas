@@ -52,6 +52,14 @@ public sealed class UsbNode
     public bool ScanIncomplete { get; set; }
     public bool? PortIsUserConnectable { get; set; }
     public bool? PortConnectorIsTypeC { get; set; }
+    // The other logical port of the same physical socket (USB 2 and USB 3 halves), when Windows names it.
+    public string CompanionId { get; set; } = "";
+    // The upstream socket as drawn: USB-A, USB-C, Internal or Not reported, and the fastest rate it is
+    // known to carry: USB 2.0, 5 Gb/s, ≥5 Gb/s, ≥10 Gb/s or Not reported.
+    public string Connector { get; set; } = "Not reported";
+    public string SocketSpeed { get; set; } = "Not reported";
+    public string SocketEvidence { get; set; } = "";
+    public bool? SuperSpeedPlusCapable { get; set; }
     public string Location { get; set; } = "Unknown";
     public string LocationEvidence { get; set; } = "Physical placement is not reported.";
     public string DeviceType { get; set; } = "USB device";

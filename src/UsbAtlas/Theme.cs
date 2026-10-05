@@ -31,6 +31,11 @@ internal static class Theme
         ("Video", "#1D6A91", "#84C3EA"), ("VideoFill", "#D7EDFA", "#15334A"), ("VideoEdge", "#92C6E8", "#255A80"),
         ("Storage", "#367026", "#9BD088"), ("StorageFill", "#E2F2D5", "#233A1D"), ("StorageEdge", "#A9D58F", "#3C6630"),
         ("Connectivity", "#177257", "#7DD3AE"), ("ConnectivityFill", "#D3F2E2", "#143A2B"), ("ConnectivityEdge", "#8DD3B3", "#25684B"),
+        // USB's own socket color code, on the tongue inside each port: black for USB 2, blue for SuperSpeed
+        // USB 3, red for 10 Gb/s and faster, gray when unreported. Port numbers sit on it in OnSocket, at
+        // least 4.5:1. A tongue never carries a glyph or words, so its red can't be mistaken for an error.
+        ("SocketUsb2", "#202428", "#0C0E11"), ("SocketSuperSpeed", "#1A5FC7", "#2D6FD6"),
+        ("SocketSuperSpeedPlus", "#C8283A", "#D23A4B"), ("SocketUnknown", "#6A737D", "#5D6773"), ("OnSocket", "#FFFFFF", "#FFFFFF"),
         // Reserved for warnings and errors, always with a status glyph; no role color comes near them.
         ("Warning", "#9A5B00", "#F5B544"), ("WarningSurface", "#FDF0D5", "#3B2D12"),
         ("Error", "#B42318", "#FF7A6E"), ("ErrorSurface", "#FDE7E5", "#43201F")

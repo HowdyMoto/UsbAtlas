@@ -21,6 +21,8 @@ public partial class MainWindow
     private readonly Dictionary<string, Button> connectedPorts = [];
     private readonly Dictionary<string, Point> portAnchors = [];
     private readonly Dictionary<string, List<UsbNode>> edgePortCache = [];
+    private readonly Dictionary<string, UsbNode> nodeParents = [];
+    private readonly Dictionary<string, NodeVisuals.SocketPart> socketParts = [];
     private readonly HashSet<string> stackedHubs = [], stackableHubs = [];
     private List<UsbNode> matches = [];
     private readonly DispatcherTimer searchTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
@@ -93,7 +95,7 @@ public partial class MainWindow
         return string.Join("\n", lines);
     }
     private static string Issue(UsbNode n) => string.Join(" · ", Issues(n).Select(i => i.Text));
-    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
+    private bool Matches(UsbNode n, string q) => $"{n.DisplayName} {n.PortLabel} {n.Name} {n.ReportedProduct} {n.WindowsName} {n.LookupVendor} {n.LookupProduct} {n.VendorId}:{n.ProductId} {n.Serial} {n.Manufacturer} {n.DeviceClass} {n.DeviceType} {n.Location} {n.Status} {n.Connector} {n.SocketSpeed} {Issue(n)} {pathLabels.GetValueOrDefault(n.Id)} {string.Join(" ", n.InterfaceFunctions)}".Contains(q, StringComparison.OrdinalIgnoreCase);
     private bool Visible(UsbNode n) => visibleIds.Contains(n.Id);
     // On Windows each xHCI controller has one root hub, and to the user they are one thing: a host whose
     // sockets are the root ports. They share one card; a controller with several root hubs, or none
@@ -102,30 +104,67 @@ public partial class MainWindow
     private static UsbNode? MergedRoot(UsbNode n) => n.Kind == "Controller" && n.Children.Count == 1 && n.Children[0].Kind == "Root hub" ? n.Children[0] : null;
     // The node whose card shows this one: a merged root hub is drawn by its controller.
     private UsbNode CardNode(UsbNode n) => mergedHosts.GetValueOrDefault(n.Id) ?? n;
-    private List<UsbNode> Children(UsbNode n) => folded.Contains(n.Id) && appliedQuery.Length == 0 ? [] : (MergedRoot(n) ?? n).Children.Where(c => c.Kind != "Empty port" && Visible(c) && (focusedIds == null || focusedIds.Contains(c.Id))).OrderBy(c => c.Port).ToList();
+    // Devices follow their sockets along the edge, so connections never cross.
+    private List<UsbNode> Children(UsbNode n)
+    {
+        if (folded.Contains(n.Id) && appliedQuery.Length == 0) return [];
+        var order = EdgePorts(n);
+        return (MergedRoot(n) ?? n).Children.Where(c => c.Kind != "Empty port" && Visible(c) && (focusedIds == null || focusedIds.Contains(c.Id))).OrderBy(c => order.Count > 0 ? order.IndexOf(c) : c.Port).ToList();
+    }
     // Every logical port is drawn on its hub, occupied or not, so the sockets themselves show occupancy.
-    // Cached per drawing pass; layout queries each hub's ports many times while choosing staircases.
+    // A USB 3 socket's two halves on the same hub sit together as one socket, at the place of its
+    // lower-numbered half. Cached per drawing pass; layout queries each hub's ports many times while
+    // choosing staircases.
     private List<UsbNode> EdgePorts(UsbNode n)
     {
         if (edgePortCache.TryGetValue(n.Id, out var ports)) return ports;
-        return edgePortCache[n.Id] = n.Kind is "Hub" or "Root hub" ? n.Children.Where(c => focusedIds == null || focusedIds.Contains(c.Id)).OrderBy(c => c.Port).ToList() : MergedRoot(n) is UsbNode root ? EdgePorts(root) : [];
+        if (n.Kind is not ("Hub" or "Root hub")) return edgePortCache[n.Id] = MergedRoot(n) is UsbNode root ? EdgePorts(root) : [];
+        var shown = n.Children.Where(c => focusedIds == null || focusedIds.Contains(c.Id)).ToList();
+        UsbNode? Partner(UsbNode port) => SocketPartner(port) is UsbNode other && shown.Contains(other) ? other : null;
+        ports = shown.OrderBy(c => Math.Min(c.Port, Partner(c)?.Port ?? c.Port)).ThenBy(c => c.Port).ToList();
+        foreach (var port in ports)
+            socketParts[port.Id] = Partner(port) is not UsbNode other ? NodeVisuals.SocketPart.Whole : port.Port < other.Port ? NodeVisuals.SocketPart.First : NodeVisuals.SocketPart.Second;
+        return edgePortCache[n.Id] = ports;
     }
-    // Socket geometry: 24×16 slots, 28 apart along a vertical card's bottom edge and 20 apart down a
-    // horizontal card's right edge.
-    private const double SocketWidth = 42, SocketHeight = 22, SocketPitch = 46, SocketStep = 28;
-    // Ports spread evenly along the edge; a staircase gathers them at the card's right end
-    // so its column of devices can tuck under the card.
+    // The other half of a port's socket, when Windows pairs them on the same hub and each names the other.
+    private UsbNode? SocketPartner(UsbNode port) =>
+        port.CompanionId.Length > 0 && nodeParents.TryGetValue(port.Id, out var hub) && nodeParents.GetValueOrDefault(port.CompanionId) == hub
+            && hub.Children.FirstOrDefault(c => c.Id == port.CompanionId) is UsbNode other && other.CompanionId == port.Id ? other : null;
+    // Paths of the cards holding the other halves of this card's sockets. Windows sees a USB 3 hub as a
+    // USB 2 hub and a USB 3 hub with the same sockets, and each gets its own card. A hub already labeled
+    // as one side of a paired hub doesn't repeat its partner here.
+    private List<string> SharedSockets(UsbNode n) => EdgePorts(n)
+        .Where(p => p.CompanionId.Length > 0 && SocketPartner(p) == null && nodeParents.TryGetValue(p.CompanionId, out var hub) && CardNode(hub).Id != n.CompanionHubId)
+        .Select(p => pathLabels.GetValueOrDefault(CardNode(nodeParents[p.CompanionId]).Id, "")).Where(path => path.Length > 0).Distinct().ToList();
+    // Socket geometry: 30×22 sockets, 34 apart along a vertical card's bottom edge and 28 apart down a
+    // horizontal card's right edge. A socket's two halves touch.
+    private const double SocketWidth = NodeVisuals.SocketWidth, SocketHeight = NodeVisuals.SocketHeight, SocketPitch = 34, SocketStep = 28;
+    // Each logical port gets an equal slice of the edge, and a socket's two halves meet on the line
+    // between their slices. A staircase gathers the ports at the card's right end so its column of
+    // devices can tuck under the card.
     private double? PortOffset(UsbNode parent, UsbNode child)
     {
         var ports = EdgePorts(parent);
         int i = ports.FindIndex(p => p.Id == child.Id);
         if (i < 0) return null;
-        double edge = horizontalTree ? HeightFor(parent) : WidthFor(parent);
-        return stackedHubs.Contains(parent.Id) ? edge - 22 - (ports.Count - 1 - i) * SocketPitch : edge * (i + 0.5) / ports.Count;
+        double edge = horizontalTree ? HeightFor(parent) : WidthFor(parent), half = (horizontalTree ? SocketHeight : SocketWidth) / 2;
+        if (stackedHubs.Contains(parent.Id))
+        {
+            double offset = edge - 22;
+            for (int k = ports.Count - 1; k > i; k--) offset -= socketParts.GetValueOrDefault(ports[k].Id) == NodeVisuals.SocketPart.Second ? 2 * half : SocketPitch;
+            return offset;
+        }
+        return socketParts.GetValueOrDefault(child.Id) switch
+        {
+            NodeVisuals.SocketPart.First => edge * (i + 1) / ports.Count - half,
+            NodeVisuals.SocketPart.Second => edge * i / ports.Count + half,
+            _ => edge * (i + 0.5) / ports.Count
+        };
     }
     private double WidthFor(UsbNode n) => horizontalTree ? CardWidth + (EdgePorts(n).Count > 0 ? SocketWidth + 6 : 0) : Math.Max(CardWidth, EdgePorts(n).Count * SocketPitch + 20);
     // Card height from its rows: the name, a custom label's detected name, the figures line (taller when
-    // its warnings wrap) or a host's summary, the bandwidth meter, other warnings, and the socket strip.
+    // its warnings wrap) or a host's summary, the bandwidth meter, other warnings, the card sharing its
+    // sockets, and the socket strip.
     private double HeightFor(UsbNode n)
     {
         double height = 2 + 8 + 22 + 8;
@@ -134,6 +173,7 @@ public partial class MainWindow
         height += n.Kind is "Controller" or "Root hub" ? 20 : RowHeight(n, CardFigures(n));
         if (ShowsMeter(n)) height += 4 + 18;
         height += 24 * BadgeRows(n, OtherIssues(n));
+        if (SharedSockets(n).Count > 0) height += 16;
         int ports = EdgePorts(n).Count;
         if (ports > 0) height = horizontalTree ? Math.Max(height, ports * SocketStep + 12) : height + 6 + SocketHeight;
         return height;
@@ -155,12 +195,13 @@ public partial class MainWindow
     private void PrepareGraph()
     {
         appliedQuery = Search.Text.Trim();
-        pathLabels.Clear(); visibleIds.Clear(); matches.Clear(); edgePortCache.Clear(); mergedHosts.Clear();
+        pathLabels.Clear(); visibleIds.Clear(); matches.Clear(); edgePortCache.Clear(); mergedHosts.Clear(); nodeParents.Clear(); socketParts.Clear();
         foreach (var controller in snapshot.Controllers) if (MergedRoot(controller) is UsbNode root) mergedHosts[root.Id] = controller;
         // A merged root hub shares its controller's path, so root ports read H01/03.
         void Visit(UsbNode n, string path)
         {
             pathLabels[n.Id] = path;
+            foreach (var child in n.Children) nodeParents[child.Id] = n;
             foreach (var child in n.Children) Visit(child, mergedHosts.ContainsKey(child.Id) ? path : path + "/" + (child.Port > 0 ? child.Port.ToString("00") : "root"));
             bool match = appliedQuery.Length > 0 && !mergedHosts.ContainsKey(n.Id) && Matches(n, appliedQuery);
             if (match) matches.Add(n);
@@ -199,6 +240,9 @@ public partial class MainWindow
         EmptyMessage.Text = snapshot.Controllers.Count == 0 ? "No USB controllers found. Try Refresh." : "No matching devices. Press Escape to clear search.";
         EmptyMessage.Visibility = cards.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateSelection(); UpdateGraphHint();
+        // The socket legend is redrawn with the graph so it follows the theme.
+        SocketLegend.Children.Clear(); foreach (var entry in NodeVisuals.SocketLegend()) SocketLegend.Children.Add(entry);
+        SocketLegend.ToolTip = NodeVisuals.SocketLegendHelp;
         if (focusId != null)
         {
             if (portSlots.TryGetValue(focusId, out var slot)) slot.Focus();
@@ -292,6 +336,9 @@ public partial class MainWindow
             foreach (var (severity, text) in issues) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 0, 4, 0);  badges.Children.Add(badge); }
             panel.Children.Add(badges);
         }
+        // The other half of a USB 3 hub, drawn as its own card, holds the other halves of these sockets.
+        if (SharedSockets(node) is { Count: > 0 } shared)
+            panel.Children.Add(new TextBlock { Text = "Shares its sockets with " + string.Join(", ", shared), FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0), Tag = SharedSocketsTag, ToolTip = SharedSocketsHelp(shared) });
         var edgePorts = EdgePorts(node);
         var padding = edgePorts.Count == 0 ? new Thickness(10, 8, 10, 8) : horizontalTree ? new Thickness(10, 8, 10 + SocketWidth + 6, 8) : new Thickness(10, 8, 10, 8 + 6 + SocketHeight);
         var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush(NodeVisuals.Fill(node)), BorderBrush = Brush(NodeVisuals.Edge(node)), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.DisplayName + "\n" + NodeVisuals.Label(node) + (metric.Length > 0 ? " · " + metric : "") + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
@@ -315,11 +362,10 @@ public partial class MainWindow
         {
             var port = edgePorts[i];
             double cross = (horizontalTree ? y : x) + PortOffset(node, port)!.Value;
-            // A slot with its number inside: filled when in use, outlined when empty, a pill for USB-C.
-            var number = new TextBlock { Text = port.Port.ToString("00") + (port.PortConnectorIsTypeC == true ? " C" : port.PortConnectorIsTypeC == false ? " —" : " ?"), FontSize = 11.5, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            if (port.Kind == "Empty port") number.Opacity = 0.85;
-            var button = new Button { Content = number, Tag = port, Width = SocketWidth, Height = SocketHeight, Padding = new Thickness(0), Template = NodeVisuals.SocketTemplate(port.PortConnectorIsTypeC == true), Cursor = Cursors.Hand, ToolTip = $"Logical port {port.Port}{(port.PortLabel.Length > 0 ? " · " + port.PortLabel : "")} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{(port.PortConnectorIsTypeC == true ? "USB-C receptacle reported by Windows" : port.PortConnectorIsTypeC == false ? "Windows reports this port is not USB-C; exact connector shape is not reported" : "Connector type unknown; Windows did not report it")}" };
-            System.Windows.Automation.AutomationProperties.SetName(button, $"Port {port.Port}, {(port.PortConnectorIsTypeC == true ? "USB-C" : port.PortConnectorIsTypeC == false ? "Not USB-C" : "Unknown connector")}, {port.DisplayName}");
+            // The port's socket with its number on the tongue: cavity filled when in use, hollow when empty.
+            string companion = port.CompanionId.Length > 0 && pathLabels.TryGetValue(port.CompanionId, out var other) ? $"\nShares this socket with port {other}." : "";
+            var button = new Button { Content = NodeVisuals.SocketNumber(port), Tag = port, Width = SocketWidth, Height = SocketHeight, Padding = new Thickness(0), Template = NodeVisuals.SocketTemplate(port, socketParts.GetValueOrDefault(port.Id), horizontalTree), Cursor = Cursors.Hand, ToolTip = $"Logical port {port.Port}{(port.PortLabel.Length > 0 ? " · " + port.PortLabel : "")} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{NodeVisuals.SocketLabel(port)} socket\n{port.SocketEvidence}{companion}" };
+            System.Windows.Automation.AutomationProperties.SetName(button, $"Port {port.Port}, {NodeVisuals.SocketLabel(port)}, {port.DisplayName}");
             button.Click += (_, e) => { SelectNode(port); e.Handled = true; };
             Canvas.SetLeft(button, horizontalTree ? bounds.Right - button.Width : cross - button.Width / 2);
             Canvas.SetTop(button, horizontalTree ? cross - button.Height / 2 : bounds.Bottom - button.Height);
@@ -345,6 +391,8 @@ public partial class MainWindow
             Place(children[i], left + children[i].X, top + children[i].Y);
         }
     }
+    private const string SharedSocketsTag = "shared-sockets";
+    private static string SharedSocketsHelp(List<string> shared) => $"Windows sees each USB 3 socket as two logical ports, one USB 2 and one USB 3, and sees a USB 3 hub as two hubs, one for each. This card's ports and those on {string.Join(", ", shared)} are the two halves of the same sockets; each socket's tooltip names its other half.";
     private void AddWire(string id, List<Point> route)
     {
         var wire = new System.Windows.Shapes.Path { Data = RoundedRoute(route, 6), Stroke = Brush("Wire"), StrokeThickness = 1.5, IsHitTestVisible = false };
@@ -431,22 +479,21 @@ public partial class MainWindow
             bool upstream = chain.Contains(id);
             wire.Stroke = Brush(upstream ? "Accent" : "Wire"); wire.StrokeThickness = upstream ? 2.25 : 1.5;
         }
-        // Occupied sockets fill in the color of their wire, accent on the selected path; empty ones are
-        // outlined, so occupancy reads even on folded hubs.
+        // An occupied socket's cavity fills in the color of its wire, as a plug would, accent on the selected
+        // path; an empty one stays hollow, so occupancy reads even on folded hubs. Tongues keep their color.
         foreach (var (id, slot) in connectedPorts)
         {
             string ink = chain.Contains(id) ? "Accent" : "Wire";
             slot.Background = slot.BorderBrush = Brush(ink);
-            slot.Foreground = Brush(ink == "Accent" ? "OnAccent" : "TextPrimary");
-            slot.BorderThickness = new Thickness(1);
+            if (!NodeVisuals.HasTongue((UsbNode)slot.Tag)) ((TextBlock)slot.Content).Foreground = Brush(ink == "Accent" ? "OnAccent" : "TextPrimary");
+            slot.BorderThickness = NodeVisuals.SocketBorder(socketParts.GetValueOrDefault(id), horizontalTree, 1);
         }
         foreach (var (id, slot) in portSlots)
         {
             bool chosen = id == selected?.Id, match = appliedQuery.Length > 0 && Matches((UsbNode)slot.Tag, appliedQuery);
             slot.Background = Brush(chosen ? "Selection" : "Surface");
-            slot.BorderBrush = Brush(chosen || match ? "Accent" : "Border");
-            slot.Foreground = Brush("TextPrimary");
-            slot.BorderThickness = new Thickness(chosen || match ? 2 : 1);
+            slot.BorderBrush = Brush(chosen || match ? "Accent" : "Wire");
+            slot.BorderThickness = NodeVisuals.SocketBorder(socketParts.GetValueOrDefault(id), horizontalTree, chosen || match ? 2 : 1);
         }
         LocateButton.IsEnabled = selected != null && (cards.ContainsKey(selected.Id) || portSlots.ContainsKey(selected.Id));
         int index = matches.FindIndex(n => n.Id == selected?.Id);

@@ -267,7 +267,7 @@ public partial class MainWindow : Window
             Field("Port number", node.Port.ToString("00"));
             Field("Port name", PortNameEditor(node));
             Field("Port supports", node.Protocols);
-            Field("Connector", NodeVisuals.Connector(node));
+            Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)));
             Field("Location", node.Location == "Unknown" ? "Not reported" : node.Location + " · inferred");
             Field("Supply capacity", "Unknown · not measured");
             Section("Hub");
@@ -348,7 +348,14 @@ public partial class MainWindow : Window
         }
         if (node.OpenPipes.Count > 0) notes.Add("Open pipes: " + string.Join("; ", node.OpenPipes) + ".");
         notes.Add("Port protocols: " + node.Protocols);
-        notes.Add("Connector graphics identify the upstream socket. The cable and device-end plug are unknown.");
+        if (host) notes.Add("Connector graphics identify the upstream socket. The cable and device-end plug are unknown.");
+        else
+        {
+            notes.Add("Socket: " + NodeVisuals.SocketLabel(node) + ". " + node.SocketEvidence + " The cable and device-end plug are unknown.");
+            if (node.CompanionId.Length > 0 && pathLabels.TryGetValue(node.CompanionId, out var companion))
+                notes.Add($"Shares this socket with port {companion}: USB 3 sockets have a USB 2 and a USB 3 logical port, and both are drawn as the socket they share" + (SocketPartner(node) != null ? ", side by side as one socket split at a seam." : "."));
+        }
+        if (SharedSockets(node) is { Count: > 0 } shared) notes.Add(SharedSocketsHelp(shared));
         notes.AddRange(node.Notes);
         foreach (var note in notes) evidence.Children.Add(new TextBlock { Text = note, FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 0, 0, 10) });
         Details.Children.Add(new Expander { Header = "Detection details", Content = evidence, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 16, 0, 0), FontSize = 12 });

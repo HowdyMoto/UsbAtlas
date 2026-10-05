@@ -58,6 +58,8 @@ public sealed class UsbScanner
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }
+        HubRelationships.ResolveCompanions(snapshot);
+        DeviceIdentity.ClassifySockets(snapshot);
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         HubRelationships.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
@@ -92,6 +94,7 @@ public sealed class UsbScanner
             if (Query(handle, 278, connector, out var connectorReturned) && connectorReturned >= 16)
             {
                 DeviceIdentity.ApplyPortProperties(node, BitConverter.ToUInt32(connector, 8));
+                // A USB 3 socket is two logical ports, one on each bus; its companion is the other half.
                 node.CompanionPortNumber = BitConverter.ToUInt16(connector, 14);
                 if (connectorReturned > 16)
                     node.CompanionHubSymbolicLink = Encoding.Unicode.GetString(connector, 16, (Math.Min(connectorReturned, connector.Length) - 16) & ~1).Split('\0')[0];
@@ -115,6 +118,7 @@ public sealed class UsbScanner
             var bcd = BitConverter.ToUInt16(data, 6);
             node.UsbVersion = $"USB {bcd >> 8:X}.{(bcd >> 4) & 15:X}{bcd & 15:X}";
             (node.Speed, node.LinkMbps) = DecodeSpeed(data[23], flags);
+            if (hasV2) node.SuperSpeedPlusCapable = (flags & 8) != 0;
             node.SpeedLimited = ((flags & 2) != 0 && (flags & 1) == 0) || ((flags & 8) != 0 && (flags & 4) == 0);
             if (node.SpeedLimited) node.Notes.Add("This device reports support for a faster USB link than its current connection. Check the upstream port, hub and cable.");
             node.DriverKey = QueryName(handle, 264, port, 8);

@@ -55,6 +55,70 @@ internal static class DeviceIdentity
         node.PortConnectorIsTypeC = (flags & 8) != 0;
     }
 
+    // A USB 3 socket is two logical ports, a USB 2 half and a USB 3 half, often on different hubs, so
+    // each port is drawn as the socket both halves share.
+    internal static void ClassifySockets(Snapshot snapshot)
+    {
+        var ports = snapshot.Nodes.Where(n => n.Kind is "Root hub" or "Hub").SelectMany(hub => hub.Children.Select(port => (Port: port, Hub: hub))).ToList();
+        var byId = new Dictionary<string, (UsbNode Port, UsbNode Hub)>();
+        foreach (var half in ports) byId.TryAdd(half.Port.Id, half);
+        foreach (var half in ports)
+            ClassifySocket(half.Port.CompanionId.Length > 0 && byId.TryGetValue(half.Port.CompanionId, out var other) ? [half, other] : [half]);
+    }
+
+    // Classifies the first half's socket from the connector Windows reports and the fastest rate either
+    // half is known to carry. Ports people plug into are USB-A or USB-C, so a user-accessible port that
+    // isn't USB-C is USB-A. Windows doesn't report an empty port's top rate, so 10 Gb/s needs proof: a
+    // device linked at SuperSpeedPlus, or a hub that supports it.
+    internal static void ClassifySocket(IReadOnlyList<(UsbNode Port, UsbNode Hub)> halves)
+    {
+        var (port, hub) = halves[0];
+        var evidence = new List<string>();
+        if (halves.Any(h => h.Port.PortConnectorIsTypeC == true))
+        {
+            port.Connector = "USB-C"; evidence.Add("Windows reports a USB-C socket.");
+        }
+        else if (halves.Any(h => h.Port.PortIsUserConnectable == true))
+        {
+            port.Connector = "USB-A"; evidence.Add("Windows reports a user-accessible socket that isn't USB-C, so it is drawn as USB-A.");
+            if (hub.Kind == "Hub") evidence.Add("Plug-in hubs usually can't tell Windows that a socket is USB-C, so a USB-C socket on one may be drawn as USB-A.");
+        }
+        else if (halves.Any(h => h.Port.PortIsUserConnectable == false))
+        {
+            port.Connector = "Internal"; evidence.Add("Windows marks this port as not user-accessible: usually a built-in device or internal connection, with no socket to plug into.");
+        }
+        else
+        {
+            port.Connector = "Not reported"; evidence.Add("Windows did not report this port's connector.");
+        }
+        var super = halves.Where(h => h.Port.Protocols.Contains("USB 3.x")).ToList();
+        if (halves.Any(h => h.Port.Speed.StartsWith("SuperSpeedPlus")))
+        {
+            port.SocketSpeed = "≥10 Gb/s"; evidence.Add("A device in this socket is linked at SuperSpeedPlus, 10 Gb/s or faster.");
+        }
+        else if (super.Any(h => h.Hub.SuperSpeedPlusCapable == true))
+        {
+            port.SocketSpeed = "≥10 Gb/s"; evidence.Add("Its hub supports SuperSpeedPlus, so this USB 3 socket is taken to carry 10 Gb/s or faster.");
+        }
+        else if (super.Count > 0)
+        {
+            // A plug-in hub that doesn't support SuperSpeedPlus caps its sockets at 5 Gb/s; a host's may be faster.
+            bool capped = super.All(h => h.Hub.Kind == "Hub" && h.Hub.SuperSpeedPlusCapable == false);
+            port.SocketSpeed = capped ? "5 Gb/s" : "≥5 Gb/s";
+            evidence.Add(capped ? "This socket supports SuperSpeed USB 3, and its hub tops out at 5 Gb/s."
+                : "This socket supports SuperSpeed USB 3, 5 Gb/s or faster. Windows doesn't report whether it also carries 10 Gb/s until a device links that fast.");
+        }
+        else if (halves.Any(h => h.Port.Protocols != "Not reported"))
+        {
+            port.SocketSpeed = "USB 2.0"; evidence.Add("This socket supports USB 2.0, up to 480 Mb/s; Windows reports no USB 3 half for it.");
+        }
+        else
+        {
+            port.SocketSpeed = "Not reported"; evidence.Add("Windows did not report which USB versions this port supports.");
+        }
+        port.SocketEvidence = string.Join(" ", evidence);
+    }
+
     internal static void AssignLocation(UsbNode node, UsbNode parent)
     {
         // A captive connection inside an external dock is not a motherboard connection.
