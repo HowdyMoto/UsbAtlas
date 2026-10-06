@@ -35,6 +35,7 @@ internal static class CliTests
         CommandTests();
         DisplayTests();
         EventTests();
+        ReturnsTests();
         HubDescriptorTests();
     }
 
@@ -114,6 +115,10 @@ internal static class CliTests
         Check(wokenIssues.Contains("Last woke from sleep") && wokenIssues.Contains("Device -HID-compliant mouse (H01/04 Wireless mouse receiver)") && wokenIssues.Contains("NOTE: Woke the computer — H01/04"),
             "issues opens with the last wake, placed on the device, and notes it.");
         Check(Session.Redact(woken).Nodes.First(n => n.Name == "Wireless mouse receiver").WokeComputerAt != null, "Redaction keeps which device woke the computer.");
+        Check(Reports.Show(s, s.Resolve("NVMe SSD enclosure"))["node"]!["storage"]!["protocol"]!.ToString() == "UAS" && s.Find("UAS").Any(n => n.Name == "NVMe SSD enclosure") && Reports.Show(s, s.Resolve("Mechanical keyboard"))["node"]!["storage"] == null,
+            "show reports a drive's protocol, search finds UAS, and other devices have none.");
+        var flash = Reports.Show(s, s.Resolve("H01/05/01"))["node"]!["hubsAbove"]!;
+        Check(flash["count"]!.GetValue<int>() == 1 && flash["limit"]!.GetValue<int>() == 5 && flash["chain"]![0]!.ToString() == "H01/05 Travel hub", "show counts the hubs above a device and names them.");
         Check(show["node"]!["link"]!["typicalBestTransfer"]!.ToString() == "about 40 MB/s for a fast drive; typical, not measured"
             && Reports.Show(s, s.Resolve("Portable SSD"))["node"]!["link"]!["typicalBestTransfer"]!.ToString().StartsWith("about 450 MB/s"), "show says what a fast drive moves at best over the link, as typical rather than measured.");
         Check(UsbBudgets.BestTransfer(null) == "" && UsbBudgets.BestTransfer(1.5) == "", "No typical transfer for an unknown rate or low speed.");
@@ -672,6 +677,35 @@ internal static class CliTests
         Check(UsbScanner.HubDescriptorEx(other, other.Length) == null, "Anything but a hub descriptor is refused.");
         var decoded = Descriptors.Decode(d, 3, 0x0320);
         Check(decoded["bHubContrCurrent"]!.ToString() == "2 (8 mA)" && decoded["wHubDelay"]!.ToString() == "200 ns", "SuperSpeed hub descriptors decode their own fields.");
+    }
+
+    // A burst like replugging a hub: it and the devices behind it go and come back before the next scan, so the
+    // scans match and only the notifications show it.
+    private static void ReturnsTests()
+    {
+        var s = Demo();
+        UsbNode Named(string name) => s.Snapshot.Nodes.First(n => n.Name == name);
+        var (hub, drive, light, receiver, keyboard) = (Named("Travel hub"), Named("USB flash drive"), Named("LED ring light"), Named("Wireless mouse receiver"), Named("Mechanical keyboard"));
+        foreach (var (n, i) in new[] { hub, drive, light, receiver, keyboard }.Select((n, i) => (n, i))) n.InstanceId = $@"USB\VID_000{i}&PID_0001\{i}";
+        var t = new DateTime(2026, 10, 6, 12, 16, 24);
+        var burst = new List<(DateTime At, bool Arrived, string Instance)>
+        {
+            (t, false, hub.InstanceId), (t, false, drive.InstanceId), (t, false, light.InstanceId), (t.AddSeconds(0.1), false, receiver.InstanceId), (t.AddSeconds(0.1), false, keyboard.InstanceId),
+            (t.AddSeconds(0.8), true, hub.InstanceId.ToLowerInvariant()), (t.AddSeconds(1.2), true, drive.InstanceId), (t.AddSeconds(1.3), true, light.InstanceId), (t.AddSeconds(2.1), true, receiver.InstanceId),
+            (t.AddSeconds(3), true, @"USB\VID_9999&PID_0001
+ew"),
+        };
+        var back = Watch.Returns(s, burst, J.Obj(("connected", new JsonArray())));
+        var list = back!["returned"]!.AsArray();
+        Check(list.Count == 2 && list.Any(r => r!["path"]!.ToString() == "H01/05" && r["behindDevices"]!.GetValue<int>() == 2 && r["goneSeconds"]!.GetValue<double>() == 0.8)
+            && list.Any(r => r!["name"]!.ToString() == "Wireless mouse receiver"), "A hub that came back with its devices is one entry, beside a device that came back on its own.");
+        Check(!list.Any(r => r!["name"]!.ToString() == "Mechanical keyboard"), "Something that left and hasn't come back isn't a return.");
+        string text = Watch.Text(Ok(back));
+        Check(text.Contains("↺ dropped and came back  H01/05 Travel hub, with 2 devices behind it · gone 0.8 s"), "Each return reads as one line.");
+        var shown = Watch.Returns(s, burst, J.Obj(("connected", new JsonArray(J.Obj(("path", s.PathOf(receiver)))))));
+        Check(shown!["returned"]!.AsArray().Count == 1, "A device the diff already reported isn't reported again.");
+        Check(Watch.Returns(s, [(t, true, hub.InstanceId)], J.Obj(("connected", new JsonArray()))) == null, "An arrival alone isn't a return.");
+        static JsonObject Ok(JsonObject o) { o["time"] = "12:16:30.000"; return o; }
     }
 
     private static void CommandTests()

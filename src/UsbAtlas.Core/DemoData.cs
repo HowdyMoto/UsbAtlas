@@ -61,6 +61,8 @@ internal static class DemoData
         }
         hub.Children[0].PortConnectorIsTypeC = true;
         enclosure.PortConnectorIsTypeC = true;
+        // Fast enclosures use UAS; a flash drive offers only bulk-only, as it should.
+        enclosure.StorageProtocol = "UAS"; enclosure.OffersUas = true;
         foreach (var n in root.Walk().Skip(1)) n.PortIsUserConnectable ??= true;
         // Windows' defaults: USB selective suspend on in the power plan, and every device allowed to be turned off.
         var snapshot = new Snapshot { IsDemo = true, UsbSuspendPluggedIn = true, UsbSuspendOnBattery = true, OnBattery = false, Usb4HostRouters = ["USB4 host router"], Usb4Devices = [], UsbCConnectorManager = true, Controllers = [new UsbNode { Id = "demo", Name = "USB xHCI host controller", Kind = "Controller", PcieGeneration = 3, PcieLanes = 4, PcieMaxGeneration = 3, PcieMaxLanes = 4, Children = [root], PowerSource = "System supplied", Location = "Host", LocationEvidence = "Demo host controller." }] };
@@ -74,6 +76,8 @@ internal static class DemoData
         DeviceIdentity.ClassifySockets(snapshot);
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         PortMap.Analyze(snapshot);
+        Interference.Analyze(snapshot);
+        HubDepth.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         PowerSaving.Analyze(snapshot);
         return snapshot;

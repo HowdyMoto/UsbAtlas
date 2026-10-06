@@ -71,7 +71,7 @@ internal static class DeviceIdentity
     // Classifies the first half's socket from the connector Windows reports and the fastest rate either
     // half is known to carry. Ports people plug into are USB-A or USB-C, so a user-accessible port that
     // isn't USB-C is USB-A. Windows doesn't report an empty port's top rate, so 10 Gb/s needs proof: a
-    // device linked at SuperSpeedPlus, or a hub that supports it.
+    // device linked at SuperSpeedPlus, a speed the user set for the socket, or a hub that supports it.
     internal static void ClassifySocket(IReadOnlyList<(UsbNode Port, UsbNode Hub)> halves)
     {
         var (port, hub) = halves[0];
@@ -94,9 +94,17 @@ internal static class DeviceIdentity
             port.Connector = "Not reported"; evidence.Add("Windows did not report this port's connector.");
         }
         var super = halves.Where(h => h.Port.Protocols.Contains("USB 3.x")).ToList();
+        // A speed the user set belongs to the socket, so either half carries it for both.
+        double? rated = halves.Max(h => h.Port.SocketRatedMbps);
         if (halves.Any(h => h.Port.Speed.StartsWith("SuperSpeedPlus")))
         {
             port.SocketSpeed = "≥10 Gb/s"; evidence.Add("A device in this socket is linked at SuperSpeedPlus, 10 Gb/s or faster.");
+            if (rated is < 10000) evidence.Add("That is faster than the 5 Gb/s you set for this socket.");
+        }
+        else if (rated is double set && super.Count > 0)
+        {
+            port.SocketSpeed = set >= 10000 ? "≥10 Gb/s" : "5 Gb/s";
+            evidence.Add($"You set this socket's speed to {(set >= 10000 ? "10 Gb/s or faster" : "5 Gb/s")}; Windows doesn't report a port's top rate.");
         }
         else if (super.Any(h => h.Hub.SuperSpeedPlusCapable == true))
         {

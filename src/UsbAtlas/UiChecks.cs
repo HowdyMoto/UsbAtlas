@@ -509,6 +509,19 @@ public partial class MainWindow
         }
         static double Contrast(Color a, Color b) { double x = Luminance(a), y = Luminance(b); return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05); }
         var categories = NodeVisuals.Categories;
+        // No hue on the canvas means two things (#26): selection is at least 25° in OKLab hue from every category
+        // ink, socket color and status color; error red stays clearly apart from the 10 Gb/s tongue's red; and
+        // port numbers keep 4.5:1 on every tongue.
+        foreach (bool dark in new[] { false, true })
+        {
+            string theme = dark ? "dark" : "light";
+            var accent = Theme.Of("Accent", dark);
+            foreach (var other in categories.Concat(["SocketSuperSpeed", "SocketSuperSpeedPlus", "Warning", "Error"]))
+                Check(HueGap(accent, Theme.Of(other, dark)) >= 25, $"Selection's teal is only {HueGap(accent, Theme.Of(other, dark)):0}° from {other} in {theme} mode; it needs 25°.");
+            Check(OkDistance(Theme.Of("Error", dark), Theme.Of("SocketSuperSpeedPlus", dark)) >= 12, $"Error red is too close to the 10 Gb/s tongue's red in {theme} mode.");
+            foreach (var tongue in new[] { "SocketUsb2", "SocketSuperSpeed", "SocketSuperSpeedPlus", "SocketUnknown" })
+                Check(Contrast(Theme.Of("OnSocket", dark), Theme.Of(tongue, dark)) >= 4.5, $"Port numbers on {tongue} have under 4.5:1 in {theme} mode.");
+        }
         foreach (bool dark in new[] { false, true })
             for (int i = 0; i < categories.Length; i++)
             {
@@ -519,17 +532,26 @@ public partial class MainWindow
             }
     }
 
-    // Warning and error colors appear only as semibold text beside a status glyph, every issue on a
-    // card has its badge, and no role color can be mistaken for a status color.
+    // Warning and error colors appear only as semibold text beside a status glyph, error text also on its
+    // tinted surface, every issue on a card has its badge, and no role color can be mistaken for a status color.
     private void VerifyStatusStyling()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         static bool IsGlyph(DependencyObject d) => d is FrameworkElement { Tag: NodeVisuals.StatusGlyphTag };
         var status = new[] { Brush("Warning"), Brush("Error") };
-        var roots = cards.Values.Select(c => (DependencyObject)c.Card).Append(Details).Append(DeviceTree).Append(IssuesButton);
+        var roots = cards.Values.Select(c => (DependencyObject)c.Card).Append(Details).Append(DeviceTree).Append(IssuesButton).Append(FixFirstList);
         foreach (var text in roots.SelectMany(VisualDescendants).OfType<TextBlock>().Where(t => status.Append(Brush("Note")).Contains(t.Foreground)))
             Check(text.FontWeight == FontWeights.SemiBold && text.Parent is Panel row && row.Children.Cast<DependencyObject>().Any(IsGlyph),
                 $"\"{text.Text}\" uses a note, warning or error color without the status glyph and weight.");
+        // Red alone never says error: error text sits on the error tint, in a badge or a button that wears it.
+        bool OnErrorTint(DependencyObject d)
+        {
+            for (var at = VisualTreeHelper.GetParent(d); at != null; at = VisualTreeHelper.GetParent(at))
+                if (at is Border { Background: var b } && b == Brush("ErrorSurface") || at is Control { Background: var c } && c == Brush("ErrorSurface")) return true;
+            return false;
+        }
+        foreach (var text in roots.SelectMany(VisualDescendants).OfType<TextBlock>().Where(t => t.Foreground == Brush("Error")))
+            Check(OnErrorTint(text), $"\"{text.Text}\" is in the error color without the error tint behind it.");
         foreach (var (id, item) in cards)
         {
             var node = (UsbNode)item.Card.Tag;
@@ -540,6 +562,23 @@ public partial class MainWindow
         static double Distance(Brush a, Brush b) { var (x, y) = (((SolidColorBrush)a).Color, ((SolidColorBrush)b).Color); return Math.Sqrt(Math.Pow(x.R - y.R, 2) + Math.Pow(x.G - y.G, 2) + Math.Pow(x.B - y.B, 2)); }
         foreach (var category in NodeVisuals.Categories)
             foreach (var severity in status) Check(Distance(Brush(category), severity) > 100, $"{category} is too close to a warning or error color.");
+    }
+
+    // Perceptual color: OKLab lightness and the two opponent axes, so hue and distance match what people see.
+    private static (double L, double A, double B) OkLab(Color c)
+    {
+        static double Linear(byte v) { double s = v / 255.0; return s <= 0.04045 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4); }
+        double r = Linear(c.R), g = Linear(c.G), b = Linear(c.B);
+        double l = Math.Cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b), m = Math.Cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b), s = Math.Cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+        return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s);
+    }
+    // How far apart two colors are, on a 0-100 scale, and how far apart their hues are in degrees.
+    private static double OkDistance(Color x, Color y) { var (a, b) = (OkLab(x), OkLab(y)); return 100 * Math.Sqrt(Math.Pow(a.L - b.L, 2) + Math.Pow(a.A - b.A, 2) + Math.Pow(a.B - b.B, 2)); }
+    private static double HueGap(Color x, Color y)
+    {
+        static double Hue(Color c) { var (_, a, b) = OkLab(c); return (Math.Atan2(b, a) * 180 / Math.PI + 360) % 360; }
+        double gap = Math.Abs(Hue(x) - Hue(y)) % 360;
+        return Math.Min(gap, 360 - gap);
     }
 
     // Cards mark link rate, reserved bandwidth and requested power with their glyphs, power problems
@@ -783,6 +822,22 @@ public partial class MainWindow
             editSelectedLabel!(); editor = inlineLabelHost!; UpdateLayout();
             Descendants(editor).OfType<Button>().Single(b => b.Content as string == "Reset").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(hub.UserLabel == "" && hub.DisplayName == "Studio desktop hub", "Label Reset failed to restore the detected name.");
+            // A socket's speed set in Properties recolors its tongue on the graph, on both halves, and clears again.
+            var socket = snapshot.Nodes.Single(n => n.Id == "demo/root/7"); var otherHalf = snapshot.Nodes.Single(n => n.Id == socket.CompanionId);
+            Border Tongue(UsbNode port) { var slot = portSlots.GetValueOrDefault(port.Id) ?? connectedPorts[port.Id]; return (Border)slot.Template.FindName("Tongue", slot); }
+            SelectNode(socket); UpdateLayout();
+            var speedButton = Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag));
+            Check(Tongue(socket).Background == Brush("SocketSuperSpeed") && speedButton.Content as string == "As detected · Set…", "An unproven USB 3 socket starts blue, with its speed to be set.");
+            Check(speedButton.ContextMenu?.Items.OfType<MenuItem>().Select(i => i.Header as string).SequenceEqual(["As detected", "5 Gb/s", "10 Gb/s or faster"]) == true && speedButton.ContextMenu.Items.OfType<MenuItem>().Count(i => i.IsChecked) == 1, "The speed menu must offer the three choices with the current one checked.");
+            SetSocketSpeed(socket, 10000); UpdateLayout();
+            Check(Tongue(socket).Background == Brush("SocketSuperSpeedPlus") && Tongue(otherHalf).Background == Brush("SocketSuperSpeedPlus"), "Setting a socket to 10 Gb/s must turn both halves' tongues red.");
+            Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).Content as string == "10 Gb/s or faster · Edit" && Evidence().Any(t => t.Contains("You set this socket's speed")), "Properties must show the speed set and why the socket is drawn so.");
+            SetSocketSpeed(socket, null); UpdateLayout();
+            Check(Tongue(socket).Background == Brush("SocketSuperSpeed") && socket.SocketRatedMbps == null, "Removing the setting must turn the socket blue again.");
+            SelectNode(snapshot.Nodes.Single(n => n.Id == "demo/root/8")); UpdateLayout();
+            Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).IsEnabled, "A USB 2 half of a USB 3 socket must offer the socket's speed too.");
+            SelectNode(snapshot.Nodes.First(n => n.Kind == "Empty port" && n.Protocols == "USB 2.0" && n.CompanionId.Length == 0)); UpdateLayout();
+            Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)) is { IsEnabled: false, Content: "Not applicable" }, "A USB 2 socket has no speed to set.");
         }
         finally
         {
@@ -806,6 +861,20 @@ public partial class MainWindow
             Check(RefreshButton.ToolTip is StackPanel tip && tip.Children.OfType<TextBlock>().First().Text.Contains("auto"), "Refresh's tooltip must say auto-refresh is on.");
             item = RefreshMenu().Items.OfType<MenuItem>().Single(); item.IsChecked = false; item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Check(!autoRefresh && AutoRefreshDot.Visibility == Visibility.Collapsed, "Turning auto-refresh off must clear the dot.");
+            // The item is a themed toggle switch, not WPF's light check box: outlined and left when off, accent and right when on.
+            foreach (bool on in new[] { false, true })
+            {
+                SetAutoRefresh(on);
+                var menu = RefreshMenu(); menu.IsOpen = true; menu.UpdateLayout();
+                var toggle = menu.Items.OfType<MenuItem>().Single(); toggle.ApplyTemplate();
+                var track = (Border)toggle.Template.FindName("Track", toggle); var thumb = (System.Windows.Shapes.Ellipse)toggle.Template.FindName("Thumb", toggle);
+                bool drawn = track.Visibility == Visibility.Visible && thumb.HorizontalAlignment == (on ? HorizontalAlignment.Right : HorizontalAlignment.Left)
+                    && track.Background == (on ? Brush("Accent") : Brushes.Transparent) && thumb.Fill == Brush(on ? "OnAccent" : "TextMuted") && menu.Background == Brush("Surface");
+                { var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)Math.Ceiling(menu.ActualWidth), (int)Math.Ceiling(menu.ActualHeight), 96, 96, PixelFormats.Pbgra32); bitmap.Render(menu); var png = new System.Windows.Media.Imaging.PngBitmapEncoder(); png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap)); using var stream = System.IO.File.Create($"refresh-menu-{(on ? "on" : "off")}-preview.png"); png.Save(stream); }
+                menu.IsOpen = false;
+                Check(drawn, $"Auto-refresh must be a themed toggle switch, {(on ? "on: accent track, thumb right" : "off: outlined track, thumb left")}.");
+            }
+            SetAutoRefresh(false);
         }
         finally { SetAutoRefresh(wasOn); }
         // Demo refresh completes immediately, exercising the shortest possible scan.

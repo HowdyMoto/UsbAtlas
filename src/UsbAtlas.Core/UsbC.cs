@@ -36,7 +36,7 @@ internal static class UsbC
     {
         if (!IsUsbC(n) || n.Kind is "Controller" or "Root hub") return [];
         string usb4 = !OnHost(s, n) ? "Not reported: Windows doesn't say whether a hub's or dock's USB-C sockets carry USB4 or Thunderbolt."
-            : s.Usb4HostRouters is { Count: > 0 } routers ? $"Not reported for this socket. This computer has a USB4 host router ({string.Join(", ", routers)}), so some of its USB-C sockets are USB4 ports; Windows doesn't say which. Look for a lightning-bolt or USB4 logo beside the socket."
+            : s.Usb4HostRouters is { Count: > 0 } routers ? $"Not reported for this socket. This computer has a USB4 host router ({Names(routers)}), so some of its USB-C sockets are USB4 ports; Windows doesn't say which. Look for a lightning-bolt or USB4 logo beside the socket."
             : s.Usb4HostRouters != null ? "Not reported for this socket. Windows lists no USB4 host router in this computer, so it's most likely not a USB4 port; an older Thunderbolt 3 controller isn't detected."
             : "Not reported.";
         return
@@ -47,11 +47,15 @@ internal static class UsbC
         ];
     }
 
+    // Router names without Windows' trademark and driver-maker suffixes: "USB4(TM) Host Router (Microsoft)" reads
+    // "USB4 Host Router". Done when shown, so snapshots saved earlier read the same.
+    internal static string Names(IEnumerable<string> names) => string.Join(", ", names.Select(n => System.Text.RegularExpressions.Regex.Replace(n, @"\((?:TM|R|Microsoft)\)|™|®", "").Replace("  ", " ").Trim()).Distinct());
+
     // The computer's USB-C hardware as Windows lists it, for a host's Detection details and atlascli show.
     internal static List<string> Computer(Snapshot s)
     {
         var lines = new List<string>();
-        if (s.Usb4HostRouters is { Count: > 0 } routers) lines.Add($"USB4 host router: {string.Join(", ", routers)}. Some of the computer's USB-C sockets are USB4 ports, many also Thunderbolt-compatible; Windows doesn't say which sockets, or which host controllers they share.");
+        if (s.Usb4HostRouters is { Count: > 0 } routers) lines.Add($"USB4 host router: {Names(routers)}. Some of the computer's USB-C sockets are USB4 ports, many also Thunderbolt-compatible; Windows doesn't say which sockets, or which host controllers they share.");
         else if (s.Usb4HostRouters != null) lines.Add("Windows lists no USB4 host router in this computer. Older Thunderbolt 3 controllers aren't detected.");
         if (s.Usb4Devices is { Count: > 0 } docks) lines.Add($"Connected through USB4: {string.Join(", ", docks)}.");
         if (s.UsbCConnectorManager == true) lines.Add("A USB-C connector manager (UCSI) runs this computer's USB-C ports: their power roles, charging and alternate modes. atlascli events lists its failures.");
