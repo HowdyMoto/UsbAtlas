@@ -115,6 +115,10 @@ public sealed class UsbNode
     public string Connector { get; set; } = "Not reported";
     public string SocketSpeed { get; set; } = "Not reported";
     public string SocketEvidence { get; set; } = "";
+    // The speed the user set for the socket, when the board's labels or manual say what Windows can't report:
+    // 5000 or 10000 Mb/s. Saved with port names (DeviceLabels), shared by both halves, and beaten by a device
+    // that links faster.
+    public double? SocketRatedMbps { get; set; }
     public bool? SuperSpeedPlusCapable { get; set; }
     // Linked at full speed: true when it answers a request for its device qualifier, so it supports high speed;
     // false when it doesn't, as a full-speed-only device must refuse it, or couldn't be asked.

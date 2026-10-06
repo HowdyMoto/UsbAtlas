@@ -27,6 +27,42 @@
     <ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Tick" Property="Visibility" Value="Visible"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
   </Style>
+  <!-- Menus in the app's own colors and font: popups don't inherit the window's, and WPF's default item
+       template draws its check box in fixed light colors. A checkable item is a toggle switch: an outlined
+       track with its thumb at the left when off, the accent track with its thumb at the right when on. -->
+  <Style TargetType="ContextMenu">
+   <Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+   <Setter Property="BorderBrush" Value="{DynamicResource Border}"/><Setter Property="FontFamily" Value="{StaticResource UiFont}"/><Setter Property="FontSize" Value="13"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ContextMenu">
+    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="4"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/></Border>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="MenuItem">
+   <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/><Setter Property="Padding" Value="8,6"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="MenuItem">
+    <Border x:Name="Row" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+     <DockPanel>
+      <ContentPresenter x:Name="IconSlot" ContentSource="Icon" DockPanel.Dock="Left" Width="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+      <Border x:Name="Track" DockPanel.Dock="Right" Visibility="Collapsed" Width="32" Height="18" CornerRadius="9" Margin="18,0,0,0" VerticalAlignment="Center"
+              Background="Transparent" BorderBrush="{DynamicResource TextMuted}" BorderThickness="1.5">
+       <Ellipse x:Name="Thumb" Width="10" Height="10" Margin="3,0" HorizontalAlignment="Left" VerticalAlignment="Center" Fill="{DynamicResource TextMuted}"/>
+      </Border>
+      <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+     </DockPanel>
+    </Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="Icon" Value="{x:Null}"><Setter TargetName="IconSlot" Property="Visibility" Value="Collapsed"/></Trigger>
+     <Trigger Property="IsCheckable" Value="True"><Setter TargetName="Track" Property="Visibility" Value="Visible"/></Trigger>
+     <Trigger Property="IsChecked" Value="True">
+      <Setter TargetName="Track" Property="Background" Value="{DynamicResource Accent}"/><Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+      <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/><Setter TargetName="Thumb" Property="Fill" Value="{DynamicResource OnAccent}"/>
+      <Setter TargetName="Thumb" Property="Width" Value="12"/><Setter TargetName="Thumb" Property="Height" Value="12"/><Setter TargetName="Thumb" Property="Margin" Value="2,0"/>
+     </Trigger>
+     <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource TextMuted}"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
   <Style x:Key="ScrollThumb" TargetType="Thumb"><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Thumb"><Border Background="{DynamicResource Wire}" CornerRadius="4" Margin="2"/></ControlTemplate></Setter.Value></Setter></Style>
   <Style x:Key="ScrollTrackButton" TargetType="RepeatButton"><Setter Property="Focusable" Value="False"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></Setter.Value></Setter></Style>
   <Style TargetType="ScrollBar">

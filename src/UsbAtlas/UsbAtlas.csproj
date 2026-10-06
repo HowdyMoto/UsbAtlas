@@ -8,6 +8,8 @@
     <AssemblyName>UsbAtlas</AssemblyName>
     <Version>1.5.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The .exe's icon, for Explorer, Start and a pinned taskbar button; the window shows the same one. -->
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Authors>Wright Bagwell</Authors>
     <Copyright>Copyright (c) 2026 Wright Bagwell</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -20,6 +22,7 @@
     <ProjectReference Include="..\UsbAtlas.Cli\UsbAtlas.Cli.csproj" />
     <None Include="..\..\LICENSE;..\..\THIRD-PARTY-NOTICES.md" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Resource Include="Assets\Fonts\*.ttf" />
+    <Resource Include="Assets\AppIcon.ico" />
     <None Update="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="Assets\Icons\LICENSE.txt;Assets\Icons\NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
