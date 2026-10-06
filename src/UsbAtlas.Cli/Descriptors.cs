@@ -36,7 +36,9 @@ internal static class Descriptors
         if (Bytes(raw.Bos) is { } bos) report["bos"] = J.Arr(Walk(bos, speed, bcd).Select(d => (JsonNode)d));
         if (Bytes(raw.Hub) is { } hub)
         {
-            report["hubNote"] = "Reported by Windows (IOCTL_USB_GET_NODE_INFORMATION) in USB 2.0 hub-descriptor format. For root hubs and USB 3 hubs Windows fills it in itself, so fields such as TT think time and controller current may not describe the hardware.";
+            report["hubNote"] = raw.HubSource == "hub"
+                ? $"Read from the hub itself (IOCTL_USB_GET_HUB_INFORMATION_EX){(raw.HubType.Length > 0 ? $"; Windows reports it as a {raw.HubType}" : "")}. A USB 3 hub's is the SuperSpeed format (0x2A); a root hub's comes from the host controller's driver."
+                : "Reported by Windows (IOCTL_USB_GET_NODE_INFORMATION) in USB 2.0 hub-descriptor format. For root hubs and USB 3 hubs Windows fills it in itself, so fields such as TT think time and controller current may not describe the hardware.";
             report["hub"] = J.Arr(Walk(hub, speed, bcd).Select(d => (JsonNode)d));
         }
         return report;

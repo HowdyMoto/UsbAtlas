@@ -163,6 +163,10 @@ public sealed class RawDescriptors
     public string Configuration { get; set; } = "";
     public string Bos { get; set; } = "";
     public string Hub { get; set; } = "";
+    // Where the hub descriptor came from: "hub", read through IOCTL_USB_GET_HUB_INFORMATION_EX, or "windows",
+    // the USB 2-format one in USB_NODE_INFORMATION that Windows fills in for root and USB 3 hubs.
+    public string HubSource { get; set; } = "";
+    public string HubType { get; set; } = "";
     // USB_NODE_CONNECTION_SUPERSPEEDPLUS_INFORMATION after its port index and length: the RX speed and
     // lane count, then the TX speed and lane count, for a port linked at SuperSpeed or faster.
     public string SuperSpeedPlus { get; set; } = "";

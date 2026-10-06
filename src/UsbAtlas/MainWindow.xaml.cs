@@ -44,6 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
+                pinnedModifiers = ModifierKeys.None;
                 try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyEverythingExplains(); VerifyFixFirst(); File.WriteAllText("ui-test.txt", "UI checks passed: what to fix first and the exported image, everything on the graph explains itself on hover or click, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
@@ -117,12 +118,16 @@ public partial class MainWindow : Window
         RefreshProgress.BeginAnimation(OpacityProperty, null);
         RefreshProgress.Opacity = 0;
     }
+    // The keyboard's modifier state, which --verify-ui pins to none: its simulated keys must not pick up
+    // Shift or Ctrl held in another window while the off-screen checks run.
+    private ModifierKeys? pinnedModifiers;
+    private ModifierKeys Modifiers => pinnedModifiers ?? Keyboard.Modifiers;
     private async void WindowKeyDown(object sender, KeyEventArgs e)
     {
         // Framing shortcuts, as in design tools; typing in the search box or a label editor keeps its characters.
-        if (Keyboard.Modifiers == ModifierKeys.Shift && Keyboard.FocusedElement is not TextBox && FramingShortcut(e.Key)) { e.Handled = true; return; }
-        if (Keyboard.Modifiers == ModifierKeys.Control && Keyboard.FocusedElement is not TextBox && ZoomShortcut(e.Key)) { e.Handled = true; return; }
-        if (e.Key != Key.F5 || Keyboard.Modifiers != ModifierKeys.None) return;
+        if (Modifiers == ModifierKeys.Shift && Keyboard.FocusedElement is not TextBox && FramingShortcut(e.Key)) { e.Handled = true; return; }
+        if (Modifiers == ModifierKeys.Control && Keyboard.FocusedElement is not TextBox && ZoomShortcut(e.Key)) { e.Handled = true; return; }
+        if (e.Key != Key.F5 || Modifiers != ModifierKeys.None) return;
         e.Handled = true;
         if (!e.IsRepeat) await Refresh();
     }
@@ -246,9 +251,9 @@ public partial class MainWindow : Window
                 UsesExternalPower(node) ? "Runs on its own supply, so it requests little or nothing from the bus." : "The most current the device's active configuration says it will draw. A declared maximum, not a measurement.");
             Details.Children.Add(metrics);
             Section("Device identity & connection");
-            Field("VID / PID", attached && node.VendorId.Length > 0 ? $"{node.VendorId} : {node.ProductId}" : Reported(""));
-            Field("Manufacturer", Reported(node.Manufacturer));
-            Field("Serial", Reported(node.Serial));
+            Field("VID / PID", attached && node.VendorId.Length > 0 ? $"{node.VendorId} : {node.ProductId}" : Reported(""), "The vendor and product IDs the device reports. They identify its chip or product, and are what driver and support pages search by.");
+            Field("Manufacturer", Reported(node.Manufacturer), "The maker's name as the device reports it, often the chip's maker rather than the brand on the box.");
+            Field("Serial", Reported(node.Serial), "The serial number the device reports. A unique one lets Windows and USB Atlas recognize it on any port; many devices report none, or one every unit shares.");
             Field("USB version", Reported(node.UsbVersion), "The USB version the device says it was built to (bcdUSB). How fast it runs now is Link speed.");
             Field("Device revision", Reported(node.DeviceRevision), "The maker's own revision number for this device (bcdDevice). For hubs and adapters it's usually the firmware version, the first thing their makers' support asks for.");
             Field("Alternate modes", node.Billboard != null ? Billboard.Summary(node) is { Length: > 0 } modes ? modes : "None offered" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable,
@@ -256,9 +261,9 @@ public partial class MainWindow : Window
             Field("Part of", attached && Containers.PartOf(snapshot, node) is { Length: > 0 } part ? part : node.Kind == "Unavailable" ? "Unknown" : NotApplicable,
                 "Windows groups the USB devices of one product, such as a monitor's hub, audio and Billboard, into a device container. Detection details lists the others.");
             // Polling applies to devices with an open interrupt input pipe; hubs poll only for port changes.
-            Field("Polling rate", node.Kind == "Device" ? node.PollIntervalMs is double ms ? $"{UsbBudgets.PollingRate(ms)} · {UsbBudgets.PollingInterval(ms)}" : node.ReservedMbps != null ? NotApplicable : "Not reported" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable);
-            Field("Power source", Reported(node.PowerSource));
-            Field("Power saving", attached ? PowerSavingText(node) : Reported(""));
+            Field("Polling rate", node.Kind == "Device" ? node.PollIntervalMs is double ms ? $"{UsbBudgets.PollingRate(ms)} · {UsbBudgets.PollingInterval(ms)}" : node.ReservedMbps != null ? NotApplicable : "Not reported" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable, PollingHelp);
+            Field("Power source", Reported(node.PowerSource), "Whether it runs on power from the USB port or its own supply, as its configuration and, for a hub, Windows report it.");
+            Field("Power saving", attached ? PowerSavingText(node) : Reported(""), PowerSavingHelp);
             Field("Power at 5 V", attached && node.MaxPowerMa is int draw ? $"{draw * 0.005:0.##} W declared" : Reported(""), "Its power request at USB's nominal 5 volts, from its descriptor (MaxPower). A declared maximum, not a measurement.");
             Field("Reserved at peak", attached && node.PeakReservedMbps is double peak ? $"Up to {UsbBudgets.Rate(peak)} when active" : Reported(""), "The most bus time it would hold when fully active, such as a camera while streaming, from its busiest alternate settings.");
             if (UsbBudgets.LinkUse(node) is (var use, var room, _))
@@ -267,24 +272,24 @@ public partial class MainWindow : Window
                 var share = new TextBlock { Text = UsbBudgets.Share(use, room), FontSize = 12, Margin = new Thickness(8, 0, 0, 0) };
                 DockPanel.SetDock(share, Dock.Right); usage.Children.Add(share);
                 var bar = NodeVisuals.LinkBar(use / room); bar.VerticalAlignment = VerticalAlignment.Center; usage.Children.Add(bar);
-                Field("Link use", usage);
+                Field("Link use", usage, LinkUseHelp);
             }
-            else Field("Link use", attached ? "Not reported" : Reported(""));
+            else Field("Link use", attached ? "Not reported" : Reported(""), LinkUseHelp);
             Section("Port");
             Field("Path", pathLabels.GetValueOrDefault(node.Id, NotApplicable), PathHelp);
-            Field("Port number", node.Port.ToString("00"));
+            Field("Port number", node.Port.ToString("00"), "The number Windows gives this port on its hub. A USB 3 socket has two, one for its USB 2 half and one for its USB 3 half.");
             Field("Hubs above", HubDepth.Summary(node), "Hubs between the computer and this port, not counting the computer's own. USB allows five in a row; docks, monitors and keyboards often have hubs inside.");
-            Field("Port name", PortNameEditor(node));
-            Field("Port supports", node.Protocols);
-            Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)), UsbC.Socket(snapshot, node).Count > 0
-                ? "Windows doesn't report whether a USB-C socket carries USB4 or Thunderbolt, DisplayPort, or what Power Delivery contract it has. Detection details says what is known." : null);
+            Field("Port name", PortNameEditor(node), "Your own name for this socket. It stays with the hub port when the device in it changes.");
+            Field("Port supports", node.Protocols, "The USB versions Windows says this port carries.");
+            Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)), ConnectorHelp + (UsbC.Socket(snapshot, node).Count > 0
+                ? " Windows doesn't report whether a USB-C socket carries USB4 or Thunderbolt, DisplayPort, or what Power Delivery contract it has. Detection details says what is known." : ""));
             Field("Location", node.Location switch { "Unknown" => "Not reported", "External" => "Likely outside the computer", "Internal" => "Likely built in", "Host" => "In the computer", var other => other },
                 "Worked out from whether Windows says the port is one you can plug into, and what it's connected through. Windows doesn't report where hardware sits.");
             Field("Power available", "Unknown · not measured", SupplyHelp);
             Section("Hub");
             Field("Ports", hub ? node.PortCount.ToString() : NotApplicable, PortsHelp);
-            Field("Its ports support", hub ? ProtocolSummary(node) : NotApplicable);
-            Field("Devices behind", hub ? node.Walk().Count(n => n.Kind == "Device").ToString() : NotApplicable);
+            Field("Its ports support", hub ? ProtocolSummary(node) : NotApplicable, "The USB versions this hub's ports carry, as Windows reports them.");
+            Field("Devices behind", hub ? node.Walk().Count(n => n.Kind == "Device").ToString() : NotApplicable, "Devices connected through this hub, including those behind hubs plugged into it.");
             // Only a single TT is shared; a hub with one per port gives each port its own, which Link use covers.
             Field("Slower devices", hub ? TtType(node) : NotApplicable, "Full- and low-speed devices, such as keyboards, mice and many controllers and audio interfaces, reach the computer through the hub's transaction translator (TT): one link shared by all ports, or one per port.");
             if (UsbBudgets.SharedTtUse(node) is (var ttNow, _, _, _))
@@ -293,9 +298,9 @@ public partial class MainWindow : Window
                 var share = new TextBlock { Text = UsbBudgets.Share(ttNow, UsbBudgets.FullSpeedReservableMbps), FontSize = 12, Margin = new Thickness(8, 0, 0, 0) };
                 DockPanel.SetDock(share, Dock.Right); usage.Children.Add(share);
                 var bar = NodeVisuals.LinkBar(ttNow / UsbBudgets.FullSpeedReservableMbps); bar.VerticalAlignment = VerticalAlignment.Center; usage.Children.Add(bar);
-                Field("Shared link", usage, "How much of the shared 12 Mb/s link's reservable time (10.8 Mb/s) the slower devices on every port hold. Low-speed devices count eight times their payload, since each byte takes eight times as long.");
+                Field("Shared link", usage, SharedLinkHelp);
             }
-            else Field("Shared link", node.TransactionTranslators == "Per port" ? "Not shared · one per port" : NotApplicable);
+            else Field("Shared link", node.TransactionTranslators == "Per port" ? "Not shared · one per port" : NotApplicable, SharedLinkHelp);
         }
         else
         {
@@ -315,16 +320,16 @@ public partial class MainWindow : Window
                     + (controller.PcieTunneled == true ? " This one is tunneled over USB4 or Thunderbolt, so what it can carry depends on that connection, which Windows doesn't report here." : ""));
             Field("Endpoints", $"{UsbBudgets.ControllerLoad(controller).Endpoints} in use",
                 "The channels this controller keeps open for its devices: one for each device's control plus one for each open pipe. Controllers hold only so many, and Windows doesn't say how many; some common ones top out at 96.");
-            Field("Port support", ProtocolSummary(node));
+            Field("Port support", ProtocolSummary(node), "The USB versions the host's root ports carry, as Windows reports them.");
             Field("Ports", roots.Sum(r => r.PortCount).ToString(), PortsHelp);
-            Field("In use", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString());
-            Field("Devices", node.Walk().Count(n => n.Kind == "Device").ToString());
-            Field("Connector", NodeVisuals.Connector(node));
+            Field("In use", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString(), "Root ports with something plugged into them, counting each half of a USB 3 socket.");
+            Field("Devices", node.Walk().Count(n => n.Kind == "Device").ToString(), "Devices connected through this host, directly or behind hubs.");
+            Field("Connector", NodeVisuals.Connector(node), "The host's sockets are its root ports, each drawn on its card as the kind of socket it is.");
             Field("Location", controller.Location == UsbC.TunneledLocation ? UsbC.TunneledLocation : "Host hardware", controller.LocationEvidence);
-            Field("Power source", node.PowerSource);
+            Field("Power source", node.PowerSource, "Host controllers run on the computer's own power.");
             // The root hub is what Device Manager lists, and what sim hardware guides point to.
-            Field("Power saving", PowerSavingText(MergedRoot(node) ?? node));
-            Field("Power plan", PowerSaving.PlanSummary(snapshot));
+            Field("Power saving", PowerSavingText(MergedRoot(node) ?? node), PowerSavingHelp);
+            Field("Power plan", PowerSaving.PlanSummary(snapshot), "The power plan's USB selective suspend setting. While it's off, Windows suspends no USB device, whatever each device's own power-saving setting says.");
             Field("Power available", "Unknown · not measured", SupplyHelp);
         }
         Section("Upstream path");
@@ -475,13 +480,18 @@ public partial class MainWindow : Window
     // Plain row names; where a technical term sits behind one, the label's tooltip names it.
     private const string PathHelp = "The host, then each port number on the way here. Windows numbers the USB 2 and USB 3 halves of a USB 3 socket as separate logical ports.";
     private const string PortsHelp = "Logical ports Windows reports. On the computer, a USB 3 socket counts as two, one USB 2 and one USB 3; a USB 3 hub instead appears as two hubs, each with one port per socket.";
+    private const string PollingHelp = "How often the host asks it for input, as its endpoint descriptor requests. Not a measured report rate: a device skips a poll when it has nothing new.";
+    private const string PowerSavingHelp = "Device Manager's “Allow the computer to turn off this device to save power”. When it's on and the power plan's USB selective suspend is on, Windows may suspend the device when it looks idle.";
+    private const string LinkUseHelp = "How much of the time this link can set aside for timed transfers, such as audio, video and input, is held now. Bulk transfers, such as storage, reserve nothing and share what is left.";
+    private const string SharedLinkHelp = "How much of the shared 12 Mb/s link's reservable time (10.8 Mb/s) the slower devices on every port hold. Low-speed devices count eight times their payload, since each byte takes eight times as long.";
+    private const string ConnectorHelp = "The socket it's plugged into, as Windows reports it: USB-A, USB-C, or built in with no socket. The tongue's color is the fastest speed the socket is known to carry.";
     private const string SupplyHelp = "How much power the port can supply. Windows doesn't report it, so USB Atlas can't tell.";
-    private void Field(string label, string value, string? help = null)
+    private void Field(string label, string value, string help)
     {
         bool missing = value is NotApplicable or "Not reported" || value.StartsWith("Unknown", StringComparison.Ordinal);
         Field(label, new TextBlock { Text = value, FontSize = 13, Foreground = Brush(missing ? "TextMuted" : "TextPrimary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value }, help);
     }
-    private void Field(string label, FrameworkElement value, string? help = null)
+    private void Field(string label, FrameworkElement value, string help)
     {
         var row = new Grid { Margin = new Thickness(0, 0, 0, 5), Tag = "field", MinHeight = 18 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(112) }); row.ColumnDefinitions.Add(new ColumnDefinition());

@@ -724,7 +724,7 @@ public partial class MainWindow
     }
     private void SearchKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter) { NextMatch(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1); e.Handled = true; }
+        if (e.Key == Key.Enter) { NextMatch(Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1); e.Handled = true; }
         if (e.Key == Key.Escape) { Search.Clear(); ApplySearch(); e.Handled = true; }
     }
     private void InspectorClick(object sender, RoutedEventArgs e)
