@@ -149,29 +149,32 @@ public partial class MainWindow
     // The node whose card shows this one: a merged root hub is drawn by its controller.
     private UsbNode CardNode(UsbNode n) => mergedHosts.GetValueOrDefault(n.Id) ?? n;
     // A USB 3 hub appears to Windows as a USB 2 hub and a USB 3 hub with the same sockets. When Windows
-    // pairs them, both hang off the same hub, and no other device's connection runs between their two
+    // pairs them, both hang off the same card, and no other device's connection runs between their two
     // ports, they are drawn as one card: the USB 3 side's, with each socket split into its two halves and
     // two connections in, one per side. Otherwise their wires would have to cross, so they keep two cards
     // that mark each other. Merging only draws: either side still selects as itself.
     private readonly Dictionary<string, UsbNode> mergedHubs = [], mergedSides = [];
     private UsbNode DrawnAs(UsbNode n) => mergedHubs.GetValueOrDefault(n.Id) ?? CardNode(n);
     private IEnumerable<UsbNode> Sides(UsbNode n) => mergedSides.TryGetValue(n.Id, out var side) ? [n, side] : [n];
+    // Both sides of the hub on this one's card: a merged card links and unlinks as one stage.
+    private List<UsbNode> CardSides(UsbNode n) => Sides(DrawnAs(n)).ToList();
+    private bool SnappedToParent(UsbNode n) => CardSides(n).Any(s => s.SnapToParentHub);
     private void PrepareMerges()
     {
-        mergedHubs.Clear(); mergedSides.Clear();
+        mergedHubs.Clear(); mergedSides.Clear(); edgePortCache.Clear(); socketParts.Clear();
         bool Shown(UsbNode n) => Visible(n) && (focusedIds == null || focusedIds.Contains(n.Id));
-        foreach (var usb2 in snapshot.Nodes.Where(n => n.Kind == "Hub" && n.IsUsb2Companion && n.CompanionHubId.Length > 0 && !n.SnapToParentHub && Shown(n)))
+        // Outer hubs come first, so the two sides of a hub plugged into a merged one, each on its own side's
+        // port, find themselves on one card.
+        foreach (var usb2 in snapshot.Nodes.Where(n => n.Kind == "Hub" && n.IsUsb2Companion && n.CompanionHubId.Length > 0 && Shown(n)))
         {
-            // Linked hub stages route their own connections, so a pair beside them stays apart.
-            if (snapshot.Nodes.FirstOrDefault(n => n.Id == usb2.CompanionHubId) is not UsbNode usb3 || usb3.SnapToParentHub || !Shown(usb3)
-                || !nodeParents.TryGetValue(usb2.Id, out var parent) || nodeParents.GetValueOrDefault(usb3.Id) != parent
-                || parent.SnapToParentHub || parent.Children.Any(c => c.SnapToParentHub)) continue;
-            var ports = EdgePorts(parent);
+            if (snapshot.Nodes.FirstOrDefault(n => n.Id == usb2.CompanionHubId) is not UsbNode usb3 || !Shown(usb3)
+                || !nodeParents.TryGetValue(usb2.Id, out var parent) || !nodeParents.TryGetValue(usb3.Id, out var otherParent) || DrawnAs(parent).Id != DrawnAs(otherParent).Id) continue;
+            var ports = EdgePorts(DrawnAs(parent));
             int a = ports.IndexOf(usb2), b = ports.IndexOf(usb3);
             if (a < 0 || b < 0 || ports.Skip(Math.Min(a, b) + 1).Take(Math.Abs(a - b) - 1).Any(p => p.Kind != "Empty port" && Shown(p))) continue;
             mergedHubs[usb2.Id] = usb3; mergedSides[usb3.Id] = usb2;
+            edgePortCache.Clear(); socketParts.Clear();
         }
-        edgePortCache.Clear(); socketParts.Clear();
     }
     // Devices follow their sockets along the edge, so connections never cross.
     private List<UsbNode> Children(UsbNode n)
@@ -199,9 +202,12 @@ public partial class MainWindow
         return edgePortCache[n.Id] = ports;
     }
     // The other half of a port's socket, when Windows pairs them on the same card and each names the other.
+    // A port wired inside an enclosure, from one hub chip to the next, has no companion reported at all, but
+    // the two sides of the hub on it are the two halves of that one socket.
+    private static string SocketCompanion(UsbNode port) => port.CompanionId.Length > 0 ? port.CompanionId : port.Kind == "Hub" && port.CompanionPortNumber == 0 ? port.CompanionHubId : "";
     private UsbNode? SocketPartner(UsbNode port) =>
-        port.CompanionId.Length > 0 && nodeParents.TryGetValue(port.Id, out var hub) && nodeParents.TryGetValue(port.CompanionId, out var otherHub) && DrawnAs(otherHub).Id == DrawnAs(hub).Id
-            && otherHub.Children.FirstOrDefault(c => c.Id == port.CompanionId) is UsbNode other && other.CompanionId == port.Id ? other : null;
+        SocketCompanion(port) is { Length: > 0 } id && nodeParents.TryGetValue(port.Id, out var hub) && nodeParents.TryGetValue(id, out var otherHub) && DrawnAs(otherHub).Id == DrawnAs(hub).Id
+            && otherHub.Children.FirstOrDefault(c => c.Id == id) is UsbNode other && SocketCompanion(other) == port.Id ? other : null;
     // Paths of the cards holding the other halves of this card's sockets. Windows sees a USB 3 hub as a
     // USB 2 hub and a USB 3 hub with the same sockets, and each gets its own card. A hub already labeled
     // as one side of a paired hub doesn't repeat its partner here.
@@ -451,7 +457,7 @@ public partial class MainWindow
             var port = edgePorts[i];
             double cross = (horizontalTree ? y : x) + PortOffset(node, port)!.Value;
             // The port's socket with its number on the tongue: cavity filled when in use, hollow when empty.
-            string companion = port.CompanionId.Length > 0 && pathLabels.TryGetValue(port.CompanionId, out var other) ? $"\nShares this socket with port {other}." : "";
+            string companion = (port.CompanionId.Length > 0 ? port.CompanionId : SocketPartner(port)?.Id) is string otherId && pathLabels.TryGetValue(otherId, out var other) ? $"\nShares this socket with port {other}." : "";
             if (HubRelationships.MissingUsb3HubFor(port, snapshot) is UsbNode lostHub)
                 companion += "\n\n" + Explanations.MissingUsb3Half(lostHub, FindPath(lostHub.Id)).What + " Click for what to do.";
             var button = new Button { Content = NodeVisuals.SocketNumber(port), Tag = port, Width = SocketWidth, Height = SocketHeight, Padding = new Thickness(0), Template = NodeVisuals.SocketTemplate(port, socketParts.GetValueOrDefault(port.Id), horizontalTree), Cursor = Cursors.Hand, ToolTip = $"Logical port {port.Port}{(port.PortLabel.Length > 0 ? " · " + port.PortLabel : "")} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{NodeVisuals.SocketLabel(port)} socket\n{port.SocketEvidence}{companion}" };
