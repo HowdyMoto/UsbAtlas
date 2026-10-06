@@ -73,6 +73,7 @@ internal sealed class Session
             PortMap.Analyze(snapshot);
             HubDepth.Analyze(snapshot);
             Containers.Analyze(snapshot);
+            Remembered.Analyze(snapshot);
             Wake.Analyze(snapshot);
             Interference.Analyze(snapshot);
             if (snapshot.Controllers.Count == 0 && snapshot.Diagnostics.Count == 0) throw new CliException($"{file} has no controllers. Is it a USB Atlas snapshot (atlascli scan, or Export in the app)?");
@@ -122,6 +123,8 @@ internal sealed class Session
         // values, so they stay; hashing them would also make them look unique. Hashes aren't hashed again.
         var serials = snapshot.Nodes.Select(n => n.Serial).Where(Identifying).Distinct().OrderByDescending(s => s.Length).ToList();
         foreach (var n in snapshot.Nodes) if (Identifying(n.Serial)) n.Serial = Token(n.Serial);
+        // Remembered devices aren't connected, so their serials are found in their instance IDs.
+        foreach (var r in snapshot.Remembered ?? []) r.InstanceId = RedactText(r.InstanceId);
         if (snapshot.LastWake is WakeInfo wake) wake.InstanceId = RedactText(wake.InstanceId);
         string json = JsonSerializer.Serialize(snapshot, Json.Compact);
         foreach (var serial in serials)
@@ -131,6 +134,7 @@ internal sealed class Session
         }
         var redacted = JsonSerializer.Deserialize<Snapshot>(json, Json.Options)!;
         // What isn't saved is worked out again.
+        Remembered.Analyze(redacted);
         Wake.Analyze(redacted);
         Interference.Analyze(redacted);
         return redacted;

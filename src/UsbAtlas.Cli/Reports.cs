@@ -115,7 +115,11 @@ internal static class Reports
     // The hub whose USB 3 side belongs on this empty or failed port, by path.
     private static string? HalfOf(Session s, UsbNode port) => HubRelationships.MissingUsb3HubFor(port, s.Snapshot) is UsbNode hub ? s.PathOf(hub) : null;
 
-    internal static JsonObject Tree(Session s, bool ports)
+    // A device Windows remembers but that isn't connected, where it was and when.
+    private static JsonObject Remembered(RememberedDevice r, string place) => J.Obj(("place", place), ("name", J.S(r.Name)), ("vidPid", $"{r.VendorId}:{r.ProductId}"), ("comPort", J.S(r.ComPort)),
+        ("lastConnected", r.LastConnected?.ToString("yyyy-MM-dd HH:mm")), ("lastRemoved", r.LastRemoved?.ToString("yyyy-MM-dd HH:mm")), ("instanceId", r.InstanceId));
+
+    internal static JsonObject Tree(Session s, bool ports, bool hidden = false)
     {
         JsonObject Node(UsbNode n)
         {
@@ -134,6 +138,12 @@ internal static class Reports
         var report = Header(s, "tree");
         report["counts"] = Counts(s);
         report["controllers"] = J.Arr(s.Snapshot.Controllers.Select(c => (JsonNode)Node(c)));
+        if (hidden)
+        {
+            var labels = Topology.PathLabels(s.Snapshot);
+            report["remembered"] = s.Snapshot.Remembered == null ? "Not read: this snapshot was saved before remembered devices were, or comes from Linux."
+                : J.Arr(s.Snapshot.Remembered.Select(r => (JsonNode)Remembered(r, UsbAtlas.Remembered.Place(s.Snapshot, r, labels))));
+        }
         return report;
     }
 
@@ -163,7 +173,7 @@ internal static class Reports
             ("deviceType", n.Kind == "Device" ? n.DeviceType : null), ("typeEvidence", n.Kind == "Device" ? n.TypeEvidence : null), ("wirelessReceiver", Interference.IsReceiver(n) ? true : null),
             ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("manufacturer", J.S(n.Manufacturer)), ("product", J.S(n.ReportedProduct)), ("windowsName", J.S(n.WindowsName)),
             ("lookup", J.S(string.Join(" · ", new[] { n.LookupVendor, n.LookupProduct }.Where(x => x.Length > 0)))), ("nameSource", n.NameSource),
-            ("serial", J.S(n.Serial)), ("instanceId", J.S(n.InstanceId)), ("id", n.Id),
+            ("serial", J.S(n.Serial)), ("comPort", J.S(n.ComPort)), ("instanceId", J.S(n.InstanceId)), ("id", n.Id),
             ("deviceClass", J.S(n.DeviceClass)), ("interfaceFunctions", J.Some(n.InterfaceFunctions.Select(x => (JsonNode)x))), ("hidUsages", J.Some(n.HidUsages.Select(x => (JsonNode)x))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["link"] = J.Obj(("usbVersion", n.UsbVersion), ("speed", n.Speed), ("linkMbps", J.N(n.LinkMbps)), ("lanes", n.LinkLanes), ("superSpeedPlusCapable", n.SuperSpeedPlusCapable),
@@ -219,6 +229,7 @@ internal static class Reports
             node["billboard"] = J.Obj(("version", b.Version), ("vconnPower", b.VconnPower), ("preferredMode", b.PreferredMode),
                 ("insufficientPower", b.InsufficientPower ? true : null), ("powerDeliveryFailed", b.PowerDeliveryFailed ? true : null), ("additionalInfoUrl", J.S(b.AdditionalInfoUrl)),
                 ("modes", J.Arr(b.Modes.Select(m => (JsonNode)J.Obj(("index", m.Index), ("svid", m.Svid), ("name", m.Name), ("description", J.S(m.Description)), ("state", m.State.ToLowerInvariant()), ("vdo", J.S(m.Vdo)))))));
+        if (n.OtherEntries.Count > 0) node["otherEntries"] = J.Arr(n.OtherEntries.Select(o => (JsonNode)Remembered(o.Entry, o.Place)));
         if (Uas.Summary(n).Length > 0)
             node["storage"] = J.Obj(("protocol", J.S(n.StorageProtocol)), ("offersUas", n.OffersUas), ("summary", Uas.Summary(n)));
         if (n.QuickReconnects > 0)

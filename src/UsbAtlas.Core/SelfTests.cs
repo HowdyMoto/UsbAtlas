@@ -56,6 +56,33 @@ internal static class SelfTests
         Check(Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]).Cause.StartsWith("Its USB 3 connection didn't come up"), "Without DisplayPort entered, the cable is the likely cause.");
         stuck.HighSpeedCapable = false;
         Check(!HubRelationships.ReducedSpeed(stuck) && !HubRelationships.ReducedSpeed(new UsbNode { Kind = "Device", LinkMbps = 12 }), "A full-speed-only device at 12 Mb/s is where it belongs.");
+        // Remembered devices: a serial adapter without a serial number got a new COM number on each port.
+        Check(Remembered.ComOf("USB Serial Device (COM13)") == "COM13" && Remembered.ComOf("USB Composite Device") == "" && Remembered.ByPort(@"USB\VID_16D0&PID_127B\7&1&0&1")
+            && !Remembered.ByPort(@"USB\VID_303A&PID_4D01\E8F60AE0C461") && Remembered.VidPid(@"USB\VID_16d0&PID_127b\7&1&0&1") == ("16D0", "127B"), "Remembered devices read their COM number, IDs and whether Windows named them by port.");
+        var adapter = new UsbNode { Id = "m/r/3", Kind = "Device", Port = 3, VendorId = "16D0", ProductId = "127B", InstanceId = @"USB\VID_16D0&PID_127B\7&1&0&3", ComPort = "COM13", DeviceType = "Serial / communications" };
+        var desk = new Snapshot
+        {
+            Controllers = [new() { Id = "m", Kind = "Controller", Children = [new() { Id = "m/r", Kind = "Root hub", LocationPath = "PCIROOT(0)#PCI(0000)#USBROOT(0)", Children = [adapter] }] }],
+            Remembered =
+            [
+                new() { InstanceId = @"USB\VID_16D0&PID_127B\7&1&0&1", VendorId = "16D0", ProductId = "127B", LocationPath = "PCIROOT(0)#PCI(0000)#USBROOT(0)#USB(1)", ComPort = "COM9", LastConnected = new DateTime(2026, 9, 22, 8, 17, 0) },
+                new() { InstanceId = @"USB\VID_16D0&PID_127B\8&2&0&2", VendorId = "16D0", ProductId = "127B", LocationPath = "PCIROOT(0)#PCI(0000)#USBROOT(0)#USB(4)#USB(2)", LocationInfo = "Port_#0002.Hub_#0005", ComPort = "COM13" },
+                new() { InstanceId = @"USB\VID_16D0&PID_127B\ABC123456", VendorId = "16D0", ProductId = "127B", ComPort = "COM4" },
+                new() { InstanceId = @"USB\VID_16D0&PID_127C\7&1&0&2", VendorId = "16D0", ProductId = "127C", ComPort = "COM5" }
+            ]
+        };
+        Remembered.Analyze(desk);
+        Check(adapter.OtherEntries.Select(o => o.Place).SequenceEqual(["H01/01", "Port_#0002.Hub_#0005 (on a hub not connected now)"]),
+            "Other entries are the same VID:PID named by port, never a unit with a serial number or another product, placed on the map when their hub is connected.");
+        var comChanged = Explanations.For(adapter, Remembered.ComChanged, Topology.FindPath(desk, adapter.Id));
+        Check(adapter.RememberedIssue == Remembered.ComChanged && IssueRules.For(adapter).Contains((Severity.Note, Remembered.ComChanged)) && comChanged.What.StartsWith("This device is COM13 on this port, but it was COM9 on H01/01.")
+            && comChanged.Steps!.Any(s => s.Contains("pnputil /remove-device")), "A serial adapter on a new COM number gets a note naming the old one, and how to remove old entries.");
+        adapter.ComPort = ""; adapter.DeviceType = "Game controller"; Remembered.Analyze(desk);
+        Check(adapter.RememberedIssue == Remembered.OtherPorts && Explanations.For(adapter, Remembered.OtherPorts, []).What.StartsWith("Windows remembers this controller on 2 other ports too: H01/01"), "A game controller remembered on other ports gets a note.");
+        adapter.DeviceType = "Keyboard"; Remembered.Analyze(desk);
+        Check(adapter.OtherEntries.Count == 2 && adapter.RememberedIssue == "", "Other entries of anything else are listed but not flagged.");
+        adapter.InstanceId = @"USB\VID_16D0&PID_127B\ABC123456"; Remembered.Analyze(desk);
+        Check(adapter.OtherEntries.Count == 0, "A device with a serial number has one entry wherever it's plugged in.");
         // Waking the computer: a device may when any function may, and the last wake's source is placed on the
         // device that has its name, when one does.
         Check(Wake.Classify([]) == "Not supported" && Wake.Classify([false, true]) == "On" && Wake.Classify([false]) == "Off", "A device can wake the computer when any of its functions may.");
