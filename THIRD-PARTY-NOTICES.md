@@ -27,7 +27,9 @@ not require the application code to use the OFL.
   display_external_input, error, hard_drive, head_mounted_device, headphones,
   keyboard, mouse, print, save, schedule, sd_card, sports_esports, swap_vert,
   tune, usb, usb_off, videocam, warning.
-- Files: the SVG path data, unchanged, in `MaterialSymbols.cs`.
+- Files: the SVG path data, unchanged, in `MaterialSymbols.cs`. The app icon,
+  `src/UsbAtlas/Assets/AppIcon.ico`, is the `usb` symbol drawn in white on a
+  rounded teal square, at each size Windows uses.
 - License: Apache License 2.0; full text in `Assets/Icons/LICENSE.txt`.
 - Modification: the paths are drawn as WPF geometry, shifted into a square
   design box, and filled with colors from the application theme.

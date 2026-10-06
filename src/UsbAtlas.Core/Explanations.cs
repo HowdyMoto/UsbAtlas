@@ -353,7 +353,7 @@ internal static class Explanations
         {
             (true, "USB 2.0") => ("This port supports only USB 2.", [$"Plug it into {port}. {tongue}"]),
             (false, "5 Gb/s") => ("This port supports up to 5 Gb/s.", [$"Plug it into {port}. {tongue}"]),
-            (false, "≥5 Gb/s") => ("This port may support only 5 Gb/s; Windows doesn't say until something links faster.", ["Try a port labeled 10 Gb/s on the computer.", "If this port does support 10 Gb/s, use a cable rated 10 Gb/s or faster."]),
+            (false, "≥5 Gb/s") => ("This port may support only 5 Gb/s; Windows doesn't say until something links faster.", ["Try a port labeled 10 Gb/s on the computer.", "If this port does support 10 Gb/s, use a cable rated 10 Gb/s or faster, and set the socket's speed in USB Atlas's Properties so it knows."]),
             (_, "Not reported") => ("Windows didn't report what this port supports.", [$"Check that it's {port}. {tongue}", seat, cableStep]),
             _ => ($"The port supports {(usb2 ? "USB 3" : "10 Gb/s")}, so the cable or the plug is the likely cause.", [seat, cableStep])
         };

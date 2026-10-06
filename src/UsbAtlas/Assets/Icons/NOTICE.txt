@@ -1,4 +1,5 @@
 Icons from Google Material Symbols, Copyright Google, licensed under Apache License 2.0.
 Source: https://github.com/google/material-design-icons (symbols/web/<name>/materialsymbolsoutlined)
 The SVG path data is embedded unchanged in MaterialSymbols.cs, drawn as WPF geometry and colored using the app theme.
+The app icon (Assets/AppIcon.ico) is the usb symbol drawn in white on a rounded teal square.
 See LICENSE.txt in this directory.
