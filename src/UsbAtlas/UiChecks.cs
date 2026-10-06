@@ -67,10 +67,10 @@ public partial class MainWindow
             Draw(); SelectNode(monitor); UpdateLayout();
             Check(Issues(monitor).Contains((Severity.Note, "Running at USB 2")), "A hub that slows nothing plugged into it must be a calm note.");
             Check(VisualDescendants(cards[monitor.Id].Card).OfType<Border>().Any(b => b.Background == Brush("NoteSurface")), "The note must use the calm badge on the card.");
-            // The missing USB 3 side shows on the canvas: a dashed amber stub on the empty half of its socket.
+            // The missing USB 3 side shows on the canvas: a dashed stub on the empty half of its socket, in its connection's ink.
             var stub = Graph.Children.OfType<System.Windows.Shapes.Line>().SingleOrDefault(l => Equals(l.Tag, MissingUsb3Tag));
-            Check(stub != null && (new Point(stub.X1, stub.Y1) - portAnchors["demo/root/7"]).Length < 0.01 && stub.Stroke == Brush("Warning") && stub.StrokeDashArray.Count > 0
-                && new Vector(stub.X2 - stub.X1, stub.Y2 - stub.Y1).Length < TopologyLayout.Stub, "A hub whose USB 3 side didn't connect must show a short dashed amber stub on the empty USB 3 half of its socket.");
+            Check(stub != null && (new Point(stub.X1, stub.Y1) - portAnchors["demo/root/7"]).Length < 0.01 && stub.Stroke == Brush(NodeVisuals.WireInk(monitor)) && stub.StrokeDashArray.Count > 0
+                && new Vector(stub.X2 - stub.X1, stub.Y2 - stub.Y1).Length < TopologyLayout.Stub, "A hub whose USB 3 side didn't connect must show a short dashed stub on the empty USB 3 half of its socket, in its connection's ink.");
             var text = ExplanationText("Running at USB 2");
             Check(text.Contains("connected at USB 2 (480 Mb/s)") && text.Contains("Does it affect you?") && text.Contains("Not right now") && text.Contains("USB-C Prioritization") && text.Contains("charging cables"),
                 "The explanation must say what is happening, that nothing is affected, and the likely USB-C causes.");
@@ -103,6 +103,23 @@ public partial class MainWindow
     }
     private void VerifySearchInput()
     {
+        // The field stands out from the title bar: a recessed fill, an edge at 3:1 or more against the bar
+        // (WCAG's minimum for an input's boundary), and a placeholder at 4.5:1 on the fill, in both themes.
+        static double Luminance(Color c)
+        {
+            static double Channel(byte v) { double s = v / 255.0; return s <= 0.03928 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4); }
+            return 0.2126 * Channel(c.R) + 0.7152 * Channel(c.G) + 0.0722 * Channel(c.B);
+        }
+        static double Contrast(Color a, Color b) { double x = Luminance(a), y = Luminance(b); return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05); }
+        if (Search.Background != Brush("SearchField") || Search.BorderBrush != Brush("SearchEdge")) throw new Exception("The search box must use the search field's fill and edge.");
+        foreach (bool dark in new[] { false, true })
+        {
+            string theme = dark ? "dark" : "light";
+            Color bar = Theme.Of("Surface", dark), field = Theme.Of("SearchField", dark);
+            if (field == bar) throw new Exception($"The search field must differ from the title bar in {theme} mode.");
+            if (Contrast(Theme.Of("SearchEdge", dark), bar) < 3) throw new Exception($"The search field's edge has {Contrast(Theme.Of("SearchEdge", dark), bar):0.0}:1 against the title bar in {theme} mode; it needs 3:1.");
+            if (Contrast(Theme.Of("TextSecondary", dark), field) < 4.5) throw new Exception($"The search placeholder has {Contrast(Theme.Of("TextSecondary", dark), field):0.0}:1 on the field in {theme} mode; it needs 4.5:1.");
+        }
         var original = Search.Text;
         try
         {
@@ -776,9 +793,23 @@ public partial class MainWindow
     }
     private async Task VerifyRefreshUi()
     {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        // Auto-refresh sits with Refresh: the chevron's menu turns it on and off, and a dot on Refresh says it's on.
+        bool wasOn = autoRefresh;
+        try
+        {
+            SetAutoRefresh(false);
+            var item = RefreshMenu().Items.OfType<MenuItem>().Single();
+            Check(item.Header as string == AutoRefreshItem && item.IsCheckable && !item.IsChecked && AutoRefreshDot.Visibility == Visibility.Collapsed, "The Refresh menu must offer auto-refresh, off by default, with no dot.");
+            item.IsChecked = true; item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Check(autoRefresh && AutoRefreshDot.Visibility == Visibility.Visible && RefreshMenu().Items.OfType<MenuItem>().Single().IsChecked, "Turning auto-refresh on must mark Refresh with a dot and check the menu item.");
+            Check(RefreshButton.ToolTip is StackPanel tip && tip.Children.OfType<TextBlock>().First().Text.Contains("auto"), "Refresh's tooltip must say auto-refresh is on.");
+            item = RefreshMenu().Items.OfType<MenuItem>().Single(); item.IsChecked = false; item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Check(!autoRefresh && AutoRefreshDot.Visibility == Visibility.Collapsed, "Turning auto-refresh off must clear the dot.");
+        }
+        finally { SetAutoRefresh(wasOn); }
         // Demo refresh completes immediately, exercising the shortest possible scan.
         if (!demo) return;
-        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, Key.F5) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
         Search.RaiseEvent(key);
         Check(key.Handled && busy && RefreshProgress.Visibility == Visibility.Visible && RefreshProgress.Opacity == 1, "F5 must show progress immediately, including from search.");

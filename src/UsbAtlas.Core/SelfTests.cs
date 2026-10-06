@@ -45,6 +45,20 @@ internal static class SelfTests
         // A controller's PCIe link is shared by everything on its ports.
         Check(UsbBudgets.PcieMbps(2, 1) == 4000 && UsbBudgets.PcieMbps(4, 16) == 15754 * 16 && UsbBudgets.PcieMbps(null, 4) == null && UsbBudgets.PcieMbps(7, 1) == null
             && UsbBudgets.PcieText(3, 4) == "PCIe 3.0 ×4", "PCIe links are read after line encoding.");
+        // USB-C: a dock's tunneled controller, and what Windows does and doesn't say about a USB-C socket.
+        var docked = new UsbNode { Kind = "Controller", PcieTunneled = true, PcieGeneration = 1, PcieLanes = 1, Location = "Host" };
+        UsbC.MarkTunneled(docked);
+        Check(docked.Location == UsbC.TunneledLocation && UsbBudgets.Uplink(docked) == null && UsbBudgets.UplinkSeverity(docked) == null,
+            "A controller reached over USB4 or Thunderbolt is in a dock, and its tunnel's PCIe link isn't judged.");
+        var usbCPort = new UsbNode { Id = "c/root/1", Kind = "Empty port", Port = 1, Connector = "USB-C" };
+        var usbCHost = new Snapshot { Controllers = [new() { Id = "c", Kind = "Controller", Children = [new() { Id = "c/root", Kind = "Root hub", Children = [usbCPort] }] }] };
+        string Usb4(Snapshot s) => UsbC.Socket(s, usbCPort).Single(f => f.Feature == "USB4 / Thunderbolt").Text;
+        Check(UsbC.Socket(usbCHost, usbCPort).Select(f => f.Feature).SequenceEqual(["USB4 / Thunderbolt", "DisplayPort", "Power Delivery"]) && UsbC.Socket(usbCHost, usbCPort).All(f => f.Text.StartsWith("Not reported"))
+            && Usb4(usbCHost) == "Not reported.", "Every USB-C socket says USB4, DisplayPort and Power Delivery aren't reported, and claims nothing when routers weren't read.");
+        usbCHost.Usb4HostRouters = ["Router"];
+        Check(Usb4(usbCHost).Contains("has a USB4 host router (Router)") && Usb4(usbCHost).Contains("doesn't say which"), "A computer with a USB4 router says some sockets are USB4, not which.");
+        usbCHost.Usb4HostRouters = [];
+        Check(Usb4(usbCHost).Contains("most likely not a USB4 port") && UsbC.Socket(usbCHost, new UsbNode { Kind = "Empty port", Connector = "USB-A" }).Count == 0, "No router means most likely not USB4; USB-A sockets get nothing.");
         UsbNode Card(int generation, int lanes, params UsbNode[] ports) => new() { Kind = "Controller", PcieGeneration = generation, PcieLanes = lanes, PcieMaxGeneration = 3, PcieMaxLanes = 2,
             Children = [new UsbNode { Kind = "Root hub", Children = [.. ports] }] };
         UsbNode Linked(double mbps) => new() { Kind = "Device", Name = "SSD", DeviceType = "External drive", LinkMbps = mbps };

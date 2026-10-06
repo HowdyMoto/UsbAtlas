@@ -9,15 +9,23 @@
      <Button x:Name="TreeButton" Visibility="Collapsed" Content="Show devices" Click="TreePanelClick" Padding="8,4" Margin="14,0,0,0" ToolTip="Show or hide the device tree"/>
     </StackPanel>
     <Grid x:Name="SearchBox" Width="340" Height="30" HorizontalAlignment="Center" VerticalAlignment="Center">
-     <TextBox x:Name="Search" TextChanged="SearchChanged" KeyDown="SearchKeyDown" ToolTip="Search names, IDs, serials, types, paths or issues. Enter: next; Shift+Enter: previous; Escape: clear." Padding="32,0,9,0" VerticalContentAlignment="Center" AutomationProperties.Name="Search devices"/>
+     <TextBox x:Name="Search" Background="{DynamicResource SearchField}" BorderBrush="{DynamicResource SearchEdge}" TextChanged="SearchChanged" KeyDown="SearchKeyDown" ToolTip="Search names, IDs, serials, types, paths or issues. Enter: next; Shift+Enter: previous; Escape: clear." Padding="32,0,9,0" VerticalContentAlignment="Center" AutomationProperties.Name="Search devices"/>
      <ContentControl x:Name="SearchIcon" Width="16" Height="16" Margin="9,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False" Focusable="False"/>
-     <TextBlock Text="Find a device…" Foreground="{DynamicResource TextMuted}" Margin="33,0,9,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=Search}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+     <TextBlock Text="Find a device…" Foreground="{DynamicResource TextSecondary}" Margin="33,0,9,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=Search}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
     </Grid>
     <StackPanel x:Name="TitleRight" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" SizeChanged="TitleBarSizeChanged">
      <Button x:Name="InspectorButton" Visibility="Collapsed" Content="Show properties" Click="InspectorClick" Margin="0,0,6,0" Padding="8,4"/>
      <Button x:Name="ThemeButton" Content="Dark mode" Click="ThemeClick" Margin="0,0,6,0" Padding="8,4" Background="Transparent" BorderBrush="Transparent"/>
      <Button Content="Export…" Click="ExportClick" Margin="0,0,6,0" Padding="8,4"/>
-     <Button x:Name="RefreshButton" Click="RefreshClick" Padding="10,4" ToolTip="Refresh devices (F5)" Style="{StaticResource PrimaryButton}"><TextBlock Text="Refresh" Foreground="White"/></Button>
+     <!-- A split button: Refresh, and a chevron for its options, auto-refresh among them; a dot marks auto-refresh on. -->
+     <StackPanel Orientation="Horizontal" AutomationProperties.Name="Refresh">
+      <Button x:Name="RefreshButton" Click="RefreshClick" Padding="10,4" Style="{StaticResource PrimaryButton}" AutomationProperties.Name="Refresh">
+       <StackPanel Orientation="Horizontal"><TextBlock Text="Refresh" Foreground="White"/><Ellipse x:Name="AutoRefreshDot" Width="6" Height="6" Fill="White" Margin="6,1,0,0" VerticalAlignment="Center" Visibility="Collapsed"/></StackPanel>
+      </Button>
+      <Button x:Name="RefreshMenuButton" Click="RefreshMenuClick" Padding="5,4" Margin="1,0,0,0" Style="{StaticResource PrimaryButton}" AutomationProperties.Name="Refresh options">
+       <Path Data="M0,0 L4,4 L8,0" Stroke="White" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" VerticalAlignment="Center"/>
+      </Button>
+     </StackPanel>
     </StackPanel>
    </Grid>
   </Border>
@@ -88,23 +96,46 @@
     </ScrollViewer>
     <ProgressBar x:Name="RefreshProgress" Grid.Row="1" Panel.ZIndex="5" Height="4" VerticalAlignment="Top" Foreground="{DynamicResource Accent}" Background="{DynamicResource Selection}" BorderThickness="0" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False" Focusable="False" AutomationProperties.Name="Refreshing USB topology"/>
     <TextBlock Grid.Row="1" x:Name="EmptyMessage" Text="Reading your USB connections…" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="14" IsHitTestVisible="False"/>
-    <Grid x:Name="ViewControls" Grid.Row="1" Panel.ZIndex="4" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,12,12" AutomationProperties.Name="View controls">
-     <Border Background="{DynamicResource Surface}" CornerRadius="6"><Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="2" Direction="270" Opacity="0.14"/></Border.Effect></Border>
-     <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="4">
-      <StackPanel Orientation="Horizontal">
-       <StackPanel Orientation="Horizontal" AutomationProperties.Name="Layout">
-        <Button x:Name="HorizontalLayoutButton" Content="Horizontal" Click="LayoutChoiceClick" ToolTip="Layout: host on the left, devices to the right" Padding="8,3"/>
-        <Button x:Name="VerticalLayoutButton" Content="Vertical" Click="LayoutChoiceClick" ToolTip="Layout: host at the top, devices below" Padding="8,3" Margin="-1,0,0,0"/>
-       </StackPanel>
-       <Border Width="1" Margin="8,3" Background="{DynamicResource Divider}"/>
-       <Button Content="−" Click="ZoomOut" Padding="10,3" ToolTip="Zoom out (wheel)" AutomationProperties.Name="Zoom out"/>
-       <Button Click="ActualSizeClick" Padding="0" BorderBrush="Transparent" Background="Transparent" ToolTip="Full cards at 100%, laid out for the window (Shift+0)"><TextBlock x:Name="ZoomLabel" FontFamily="{StaticResource MonoFont}" Text="100%" Width="52" TextAlignment="Center"/></Button>
-       <Button Content="+" Click="ZoomIn" Padding="10,3" ToolTip="Zoom in (wheel)" AutomationProperties.Name="Zoom in"/>
-       <Button Content="Fit all" Click="OverviewClick" Padding="10,3" Margin="6,0,0,0" ToolTip="The whole topology, at the most detailed cards that fit (Shift+1). Shift+2 centers the selection."/>
+    <!-- Map-style view controls: compact glyph buttons in floating cards, layout above fitting above zoom. -->
+    <StackPanel x:Name="ViewControls" Grid.Row="1" Panel.ZIndex="4" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,12,12" AutomationProperties.Name="View controls">
+     <StackPanel.Resources>
+      <Style x:Key="ViewCard" TargetType="Border"><Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="BorderBrush" Value="{DynamicResource Border}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="1"/><Setter Property="Margin" Value="0,6,0,0"/><Setter Property="HorizontalAlignment" Value="Right"/><Setter Property="Effect"><Setter.Value><DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.16"/></Setter.Value></Setter></Style>
+      <Style x:Key="ViewButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Width" Value="24"/><Setter Property="Height" Value="24"/><Setter Property="Padding" Value="0"/><Setter Property="Background" Value="Transparent"/><Setter Property="BorderBrush" Value="Transparent"/></Style>
+      <Style x:Key="ViewGlyph" TargetType="Path"><Setter Property="Width" Value="18"/><Setter Property="Height" Value="18"/><Setter Property="Stroke" Value="{DynamicResource TextPrimary}"/><Setter Property="StrokeThickness" Value="1.7"/><Setter Property="StrokeStartLineCap" Value="Round"/><Setter Property="StrokeEndLineCap" Value="Round"/><Setter Property="StrokeLineJoin" Value="Round"/><Setter Property="LayoutTransform"><Setter.Value><ScaleTransform ScaleX="0.75" ScaleY="0.75"/></Setter.Value></Setter></Style>
+     </StackPanel.Resources>
+     <Border Style="{StaticResource ViewCard}" Margin="0" AutomationProperties.Name="Layout">
+      <StackPanel>
+       <Button x:Name="HorizontalLayoutButton" Style="{StaticResource ViewButton}" Click="LayoutChoiceClick" AutomationProperties.Name="Horizontal layout">
+        <Path Style="{StaticResource ViewGlyph}" Data="M2,7 H6 V11 H2 Z M12,2 H16 V6 H12 Z M12,12 H16 V16 H12 Z M6,9 H9 M9,4 V14 M9,4 H12 M9,14 H12"/>
+       </Button>
+       <Button x:Name="VerticalLayoutButton" Style="{StaticResource ViewButton}" Margin="0,2,0,0" Click="LayoutChoiceClick" AutomationProperties.Name="Vertical layout">
+        <Path Style="{StaticResource ViewGlyph}" Data="M7,2 V6 H11 V2 Z M2,12 V16 H6 V12 Z M12,12 V16 H16 V12 Z M9,6 V9 M4,9 H14 M4,9 V12 M14,9 V12"/>
+       </Button>
       </StackPanel>
      </Border>
-    </Grid>
-    <StackPanel Grid.Row="2" Margin="16,3,0,0"><WrapPanel x:Name="SocketLegend" Margin="0,0,16,0"/><TextBlock x:Name="GraphHint" TextTrimming="CharacterEllipsis" Text="Drag to pan · Scroll to zoom · Tab / arrows to navigate" Margin="0,2,0,0" FontSize="12" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></StackPanel>
+     <Border Style="{StaticResource ViewCard}">
+      <StackPanel>
+       <Button x:Name="FindSelectionButton" Style="{StaticResource ViewButton}" Click="LocateClick" AutomationProperties.Name="Find selection">
+        <Path Style="{StaticResource ViewGlyph}" Data="M9,4 A5,5 0 1 1 8.99,4 Z M9,1 V4 M9,14 V17 M1,9 H4 M14,9 H17"/>
+       </Button>
+       <Button x:Name="FitAllButton" Style="{StaticResource ViewButton}" Margin="0,1,0,0" Click="OverviewClick" AutomationProperties.Name="Fit all">
+        <Path Style="{StaticResource ViewGlyph}" Data="M2,6 V2 H6 M12,2 H16 V6 M16,12 V16 H12 M6,16 H2 V12"/>
+       </Button>
+      </StackPanel>
+     </Border>
+     <Border Style="{StaticResource ViewCard}" AutomationProperties.Name="Zoom">
+      <StackPanel>
+       <Button x:Name="ZoomInButton" Style="{StaticResource ViewButton}" Click="ZoomIn" AutomationProperties.Name="Zoom in">
+        <Path Style="{StaticResource ViewGlyph}" Data="M9,3 V15 M3,9 H15"/>
+       </Button>
+       <Border Height="1" Margin="6,2" Background="{DynamicResource Divider}"/>
+       <Button x:Name="ZoomOutButton" Style="{StaticResource ViewButton}" Click="ZoomOut" AutomationProperties.Name="Zoom out">
+        <Path Style="{StaticResource ViewGlyph}" Data="M3,9 H15"/>
+       </Button>
+      </StackPanel>
+     </Border>
+    </StackPanel>
+    <StackPanel Grid.Row="2" Margin="16,3,0,4" VerticalAlignment="Center"><WrapPanel x:Name="SocketLegend" Margin="0,0,16,0"/></StackPanel>
    </Grid>
    <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Border x:Name="InspectorPanel" Grid.Column="4" Background="{DynamicResource Surface}">
@@ -123,7 +154,7 @@
    </Border>
   </Grid>
   <Border Grid.Row="2" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Background="{DynamicResource Surface}" Padding="16,0">
-   <DockPanel><CheckBox x:Name="AutoRefresh" DockPanel.Dock="Right" Content="Auto-refresh · 10 s" FontSize="12" Margin="15,0,0,0"/><TextBlock x:Name="StatusText" Text="Starting…" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="12" TextTrimming="CharacterEllipsis"/></DockPanel>
+   <DockPanel><TextBlock x:Name="StatusText" Text="Starting…" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="12" TextTrimming="CharacterEllipsis"/></DockPanel>
   </Border>
  </Grid>
 </Window>

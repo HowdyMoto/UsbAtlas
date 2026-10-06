@@ -30,26 +30,26 @@ public partial class MainWindow : Window
     public MainWindow(bool demo, bool render, bool verifyUi = false, bool? horizontal = null)
     {
         InitializeComponent(); this.demo = demo; this.render = render;
-        var searchGlyph = NodeVisuals.Symbol("search", Theme.Brush("TextMuted"), 16);
-        ((System.Windows.Shapes.Path)((Canvas)searchGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextMuted");
+        var searchGlyph = NodeVisuals.Symbol("search", Theme.Brush("TextSecondary"), 16);
+        ((System.Windows.Shapes.Path)((Canvas)searchGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextSecondary");
         SearchIcon.Content = searchGlyph;
         var copyGlyph = NodeVisuals.Symbol("content_copy", Brush("TextPrimary"), 14);
         ((System.Windows.Shapes.Path)((Canvas)copyGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextPrimary");
         CopyDetailsIcon.Content = copyGlyph;
         horizontalTree = horizontal ?? SavedLayoutIsHorizontal();
-        ShowLayoutChoice();
+        ShowLayoutChoice(); ShowViewTips(); ShowRefreshTips();
         ThemeButton.Content = Theme.IsDark ? "Light mode" : "Dark mode";
         Loaded += async (_, _) =>
         {
             await Refresh();
             if (verifyUi)
             {
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyFixFirst(); File.WriteAllText("ui-test.txt", "UI checks passed: what to fix first and the exported image, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyEverythingExplains(); VerifyFixFirst(); File.WriteAllText("ui-test.txt", "UI checks passed: what to fix first and the exported image, everything on the graph explains itself on hover or click, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
         };
-        timer.Tick += async (_, _) => { if (AutoRefresh.IsChecked == true && !demo && !busy) await Refresh(); };
+        timer.Tick += async (_, _) => { if (autoRefresh && !demo && !busy) await Refresh(); };
         searchTimer.Tick += (_, _) => ApplySearch();
         SourceInitialized += (_, _) => WatchDevices();
         SizeChanged += (_, e) => { if (e.WidthChanged) FoldTreeForRoom(e.NewSize.Width); };
@@ -121,6 +121,7 @@ public partial class MainWindow : Window
     {
         // Framing shortcuts, as in design tools; typing in the search box or a label editor keeps its characters.
         if (Keyboard.Modifiers == ModifierKeys.Shift && Keyboard.FocusedElement is not TextBox && FramingShortcut(e.Key)) { e.Handled = true; return; }
+        if (Keyboard.Modifiers == ModifierKeys.Control && Keyboard.FocusedElement is not TextBox && ZoomShortcut(e.Key)) { e.Handled = true; return; }
         if (e.Key != Key.F5 || Keyboard.Modifiers != ModifierKeys.None) return;
         e.Handled = true;
         if (!e.IsRepeat) await Refresh();
@@ -138,18 +139,19 @@ public partial class MainWindow : Window
         badge.Cursor = Cursors.Hand;
         badge.Focusable = true;
         System.Windows.Automation.AutomationProperties.SetName(badge, "Explain " + issue);
-        void Explain()
-        {
-            // A badge asks what the issue means, so its explanation opens whole.
-            openExplanations.Add(issue);
-            SelectNode(node);
-            if (InspectorPanel.Visibility != Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
-            UpdateLayout();
-            Details.Children.OfType<FrameworkElement>().FirstOrDefault(x => Equals(x.Tag, "warning:" + issue))?.BringIntoView();
-        }
-        badge.Click += (_, e) => { Explain(); e.Handled = true; };
+        badge.Click += (_, e) => { OpenExplanation(node, issue); e.Handled = true; };
         badge.ToolTip = this.Explain(node, issue).What + " Click to see what to do.";
         return badge;
+    }
+    // Selects the node and opens what an issue means whole, as asking about it does: from its badge, or a
+    // mark on the canvas that stands for it.
+    private void OpenExplanation(UsbNode node, string issue)
+    {
+        openExplanations.Add(issue);
+        SelectNode(node);
+        if (InspectorPanel.Visibility != Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
+        UpdateLayout();
+        Details.Children.OfType<FrameworkElement>().FirstOrDefault(x => Equals(x.Tag, "warning:" + issue))?.BringIntoView();
     }
     private void CopyDetailsClick(object sender, RoutedEventArgs e)
     {
@@ -203,6 +205,15 @@ public partial class MainWindow : Window
         Details.Children.Add(status);
         var issues = Issues(node);
         foreach (var (severity, issue) in issues) AddExplanation(node, severity, issue, issues.Count > 1);
+        if (HubRelationships.MissingUsb3HubFor(node, snapshot) is UsbNode lostHub)
+        {
+            string title = $"USB 3 side of {NodeVisuals.ShortName(lostHub)} not connected";
+            AddExplanation(node, Explanations.SpeedSeverity(lostHub), title, true, Explanations.MissingUsb3Half(lostHub, FindPath(lostHub.Id)));
+            var show = new Button { Content = "Show " + NodeVisuals.ShortName(lostHub), Padding = new Thickness(8, 3, 8, 3), Margin = new Thickness(0, -4, 0, 10), HorizontalAlignment = HorizontalAlignment.Left, Tag = ShowLostHubTag,
+                ToolTip = "Select the hub whose USB 3 side belongs on this half of the socket." };
+            show.Click += (_, _) => OpenExplanation(lostHub, Explanations.SpeedLabel(lostHub));
+            Details.Children.Add(show);
+        }
         AddHubSnapControls(node);
 
 
@@ -222,7 +233,8 @@ public partial class MainWindow : Window
             }
             string unread = node.Kind == "Unavailable" ? "Unknown" : NotApplicable;
             Metric(NodeVisuals.Metric.Link, attached ? (ShortSpeed(node) == "Rate unknown" ? "Unknown" : ShortSpeed(node)) : unread, "Link speed", 0,
-                "The signaling rate negotiated when the device connected. Everything upstream on the same path shares it; it is not a measured speed.");
+                "The signaling rate negotiated when the device connected. Everything upstream on the same path shares it; it is not a measured speed."
+                + (UsbBudgets.BestTransfer(node.LinkMbps) is { Length: > 0 } best ? $" A fast drive on this link moves {best} at best; copy a large file or run a disk benchmark to see what it really does." : ""));
             Metric(NodeVisuals.Metric.Reserved, attached ? (node.ReservedMbps is double reserved ? UsbBudgets.Rate(reserved) : "Unknown") : unread, "Reserved", 1,
                 "Bus time held for this device's open interrupt and isochronous pipes, such as audio, video and input. Bulk transfers, such as storage, reserve nothing and share what is left.");
             // A third of the panel is too narrow for the card's "External + 100 mA", so its parts are split
@@ -263,7 +275,8 @@ public partial class MainWindow : Window
             Field("Port number", node.Port.ToString("00"));
             Field("Port name", PortNameEditor(node));
             Field("Port supports", node.Protocols);
-            Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)));
+            Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)), UsbC.Socket(snapshot, node).Count > 0
+                ? "Windows doesn't report whether a USB-C socket carries USB4 or Thunderbolt, DisplayPort, or what Power Delivery contract it has. Detection details says what is known." : null);
             Field("Location", node.Location switch { "Unknown" => "Not reported", "External" => "Likely outside the computer", "Internal" => "Likely built in", "Host" => "In the computer", var other => other },
                 "Worked out from whether Windows says the port is one you can plug into, and what it's connected through. Windows doesn't report where hardware sits.");
             Field("Power available", "Unknown · not measured", SupplyHelp);
@@ -295,8 +308,10 @@ public partial class MainWindow : Window
             bool heldBack = controller.PcieMaxGeneration > controller.PcieGeneration || controller.PcieMaxLanes > controller.PcieLanes;
             Field("PCIe link", UsbBudgets.PcieMbps(controller.PcieGeneration, controller.PcieLanes) is double uplink
                 ? $"{UsbBudgets.PcieText(controller.PcieGeneration!.Value, controller.PcieLanes!.Value)} · about {UsbBudgets.Rate(uplink)}"
-                    + (heldBack ? $" · can do {UsbBudgets.PcieText(controller.PcieMaxGeneration ?? controller.PcieGeneration.Value, controller.PcieMaxLanes ?? controller.PcieLanes.Value)}" : "") : "Not reported",
-                "The PCIe connection this controller reaches the computer over, shared by all its ports: the most they can move together. Built-in controllers often report a wide internal link.");
+                    + (heldBack ? $" · can do {UsbBudgets.PcieText(controller.PcieMaxGeneration ?? controller.PcieGeneration.Value, controller.PcieMaxLanes ?? controller.PcieLanes.Value)}" : "")
+                    + (controller.PcieTunneled == true ? " · over USB4/Thunderbolt" : "") : controller.PcieTunneled == true ? "Over USB4/Thunderbolt" : "Not reported",
+                "The PCIe connection this controller reaches the computer over, shared by all its ports: the most they can move together. Built-in controllers often report a wide internal link."
+                    + (controller.PcieTunneled == true ? " This one is tunneled over USB4 or Thunderbolt, so what it can carry depends on that connection, which Windows doesn't report here." : ""));
             Field("Endpoints", $"{UsbBudgets.ControllerLoad(controller).Endpoints} in use",
                 "The channels this controller keeps open for its devices: one for each device's control plus one for each open pipe. Controllers hold only so many, and Windows doesn't say how many; some common ones top out at 96.");
             Field("Port support", ProtocolSummary(node));
@@ -304,7 +319,7 @@ public partial class MainWindow : Window
             Field("In use", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString());
             Field("Devices", node.Walk().Count(n => n.Kind == "Device").ToString());
             Field("Connector", NodeVisuals.Connector(node));
-            Field("Location", "Host hardware");
+            Field("Location", controller.Location == UsbC.TunneledLocation ? UsbC.TunneledLocation : "Host hardware", controller.LocationEvidence);
             Field("Power source", node.PowerSource);
             // The root hub is what Device Manager lists, and what sim hardware guides point to.
             Field("Power saving", PowerSavingText(MergedRoot(node) ?? node));
@@ -353,6 +368,8 @@ public partial class MainWindow : Window
         if (node.InterfaceFunctions.Count > 0) notes.Add("Reported functions: " + string.Join(", ", node.InterfaceFunctions));
         if (node.HidUsages.Count > 0) notes.Add("HID collections: " + string.Join(", ", node.HidUsages) + ".");
         notes.AddRange(Billboard.Evidence(node));
+        notes.AddRange(UsbC.Socket(snapshot, node).Select(f => $"{f.Feature}: {f.Text}"));
+        if (host) notes.AddRange(UsbC.Computer(snapshot));
         notes.AddRange(Containers.Evidence(snapshot, node, n => pathLabels.GetValueOrDefault(n.Id, "")));
         if (host) notes.Add(PowerSaving.PlanNote(snapshot));
         var knownLinks = chain.Where(n => n.LinkMbps.HasValue).ToList();
@@ -394,9 +411,11 @@ public partial class MainWindow : Window
     // anything now, and what to do. Severity sets how much shows before the rows: a note affects nothing
     // now, so it is one line until opened; a warning says what is happening and whether it affects you,
     // with what to do a click away; an error is shown whole. With several issues each panel names its own.
-    private void AddExplanation(UsbNode node, Severity severity, string issue, bool named)
+    private const string ShowLostHubTag = "show-lost-hub";
+    // An explanation that isn't one of the node's issues, such as what an empty socket half is for, is given.
+    private void AddExplanation(UsbNode node, Severity severity, string issue, bool named, Explanations.Explanation? given = null)
     {
-        var e = Explain(node, issue);
+        var e = given ?? Explain(node, issue);
         bool open = severity == Severity.Error || openExplanations.Contains(issue);
         var body = new StackPanel();
         var more = new StackPanel { Tag = ExplanationMoreTag };
@@ -479,6 +498,17 @@ public partial class MainWindow : Window
             case Key.D0 or Key.NumPad0: ActualSizeClick(this, new RoutedEventArgs()); return true;
             case Key.D1 or Key.NumPad1: OverviewClick(this, new RoutedEventArgs()); return true;
             case Key.D2 or Key.NumPad2: LocateClick(this, new RoutedEventArgs()); return true;
+            case Key.L: LayoutChoiceClick(horizontalTree ? VerticalLayoutButton : HorizontalLayoutButton, new RoutedEventArgs()); return true;
+            default: return false;
+        }
+    }
+    // Ctrl+= and Ctrl+− zoom by a step around the view's center, as the + and − buttons do.
+    private bool ZoomShortcut(Key key)
+    {
+        switch (key)
+        {
+            case Key.OemPlus or Key.Add: ZoomIn(this, new RoutedEventArgs()); return true;
+            case Key.OemMinus or Key.Subtract: ZoomOut(this, new RoutedEventArgs()); return true;
             default: return false;
         }
     }
@@ -511,11 +541,35 @@ public partial class MainWindow : Window
         GraphScroll.UpdateLayout();
     }
     private async void RefreshClick(object sender, RoutedEventArgs e) => await Refresh();
+    // Auto-refresh lives with Refresh: the chevron beside it opens a menu that turns it on and off, and a dot
+    // on Refresh says it's on.
+    private bool autoRefresh;
+    private const string AutoRefreshItem = "Auto-refresh every 10 s";
+    private ContextMenu RefreshMenu()
+    {
+        var menu = new ContextMenu { Background = Brush("Surface"), Foreground = Brush("TextPrimary"), BorderBrush = Brush("Border"), PlacementTarget = RefreshMenuButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        var item = new MenuItem { Header = AutoRefreshItem, IsCheckable = true, IsChecked = autoRefresh };
+        item.Click += (_, _) => SetAutoRefresh(item.IsChecked);
+        menu.Items.Add(item);
+        return menu;
+    }
+    private void RefreshMenuClick(object sender, RoutedEventArgs e) => RefreshMenu().IsOpen = true;
+    private void SetAutoRefresh(bool on)
+    {
+        autoRefresh = on;
+        AutoRefreshDot.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        ShowRefreshTips();
+    }
+    private void ShowRefreshTips()
+    {
+        RefreshButton.ToolTip = ShortcutTip(autoRefresh ? "Refresh · auto on" : "Refresh", "F5");
+        RefreshMenuButton.ToolTip = "Auto-refresh";
+    }
     private void SearchChanged(object sender, TextChangedEventArgs e) { searchTimer.Stop(); searchTimer.Start(); }
     // Search stays centered in the title bar, narrowing rather than running under the buttons on either side.
     private void TitleBarSizeChanged(object sender, SizeChangedEventArgs e) =>
         SearchBox.Width = Math.Clamp(TitleBar.ActualWidth - 2 * Math.Max(TitleLeft.ActualWidth, TitleRight.ActualWidth) - 32, 160, 340);
-    private void SetZoom(double value) { readableView = overviewView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; ZoomLabel.Text = $"{value:P0}"; }
+    private void SetZoom(double value) { readableView = overviewView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; }
     private void ZoomIn(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX * 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
     private void ZoomOut(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX / 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
     private void FitClick(object sender, RoutedEventArgs e)
@@ -708,7 +762,7 @@ public partial class MainWindow : Window
         SetOrientation(!horizontalTree);
         Check(selected?.Id == selection && folded.SetEquals(collapsed), "Changing direction lost selection or folded branches.");
         var (on, off) = horizontalTree ? (HorizontalLayoutButton, VerticalLayoutButton) : (VerticalLayoutButton, HorizontalLayoutButton);
-        Check(on.Background == Brush("SelectionStrong") && on.FontWeight == FontWeights.SemiBold && off.Background == Brush("Surface") && off.FontWeight == FontWeights.Normal, "The layout control must mark the current layout and only it.");
+        Check(on.Background == Brush("SelectionStrong") && on.BorderBrush == Brush("Accent") && off.Background is SolidColorBrush { Color.A: 0 } && off.BorderBrush is SolidColorBrush { Color.A: 0 }, "The layout control must mark the current layout and only it.");
         var switched = cards.Values.ToList();
         for (int i = 0; i < switched.Count; i++)
             for (int j = i + 1; j < switched.Count; j++)

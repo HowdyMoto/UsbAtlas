@@ -33,6 +33,8 @@ internal static class CliTests
         TraceTests();
         McpTests();
         CommandTests();
+        DisplayTests();
+        EventTests();
     }
 
     private static void OptionTests()
@@ -80,7 +82,18 @@ internal static class CliTests
 
         var tree = Reports.Tree(s, false);
         string text = TextOut.Render(tree);
-        Check(text.Contains("H01/01 Studio desktop hub — Plug-in hub · 5 Gb/s") && text.Contains("empty ports 03,04"), "The tree shows each hub with its figures and summarizes empty ports.");
+        Check(text.Contains("H01/01 Studio desktop hub — Plug-in hub · 5 Gb/s") && text.Contains("empty ports 03, 04"), "The tree shows each hub with its figures and summarizes empty ports.");
+        // A hub whose USB 3 side didn't connect: the empty USB 3 half of its socket says whose it is.
+        var missing = DemoData.Create();
+        var monitor = missing.Nodes.First(n => n.Id == "demo/root/5");
+        monitor.SpeedLimited = true; monitor.Connector = "USB-C"; monitor.CompanionId = "demo/root/7";
+        HubRelationships.Analyze(missing);
+        var ms = new Session(missing, "demo");
+        var half = Reports.Show(ms, ms.Resolve("H01/07"))["usb3HalfOf"];
+        Check(half?["hub"]?.ToString() == "H01/05" && half["what"]!.ToString().Contains("USB 3 half of the socket") && half["steps"] != null, "show on the empty USB 3 half names the hub and explains it.");
+        Check(TextOut.Render(Reports.Tree(ms, true)).Contains("H01/07 Available port 7 — Empty port  [USB 3 half of H01/05's socket") && TextOut.Render(Reports.Tree(ms, false)).Contains("07 (USB 3 half of H01/05's socket, not connected)"),
+            "The tree marks the empty USB 3 half, with and without --ports.");
+        Check(Reports.Show(ms, ms.Resolve("H01"))["children"]!.AsArray().Any(c => c!["usb3HalfOf"]?.ToString() == "H01/05"), "A host's empty port lists whose USB 3 half it is.");
         Check(text.Contains("H01/09 Direct-drive wheel base — Game controller · 12 Mb/s · 1000 Hz"), "Game controllers show their polling rate.");
         Check(TextOut.Render(Reports.Tree(s, true)).Contains("H01/01/03 Available port 3 — Empty port"), "--ports lists every empty port.");
 
@@ -88,10 +101,15 @@ internal static class CliTests
         Check(show["node"]!["hub"]!["transactionTranslators"]!.ToString().Contains("single TT") && show["children"]!.AsArray().Count == 4 && show["siblings"]!.AsArray().Count > 0 && show["upstream"]!.AsArray().Count == 1, "show includes the hub, its children, its siblings and the chain to the host.");
         Check(show["issues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Over power budget"), "show explains the node's issues.");
         Check(TextOut.Render(show).Contains("transactionTranslators: Share one link · single TT"), "show renders as key: value text.");
+        Check(show["node"]!["link"]!["typicalBestTransfer"]!.ToString() == "about 40 MB/s for a fast drive; typical, not measured"
+            && Reports.Show(s, s.Resolve("Portable SSD"))["node"]!["link"]!["typicalBestTransfer"]!.ToString().StartsWith("about 450 MB/s"), "show says what a fast drive moves at best over the link, as typical rather than measured.");
+        Check(UsbBudgets.BestTransfer(null) == "" && UsbBudgets.BestTransfer(1.5) == "", "No typical transfer for an unknown rate or low speed.");
         var host = Reports.Show(s, s.Resolve("H01"));
         var pciHost = DemoData.Create(); pciHost.Controllers[0].PciId = "1B21:2142";
         var pcie = Reports.Show(new Session(pciHost, "demo"), pciHost.Controllers[0])["node"]!["controller"]!;
         Check(pcie["pcieLink"]!["generation"]!.GetValue<int>() == 3 && pcie["pcieLink"]!["lanes"]!.GetValue<int>() == 4 && pcie["endpointsInUse"]!.GetValue<int>() > 0, "show reports a controller's PCIe link and endpoints in use.");
+        Check(host["node"]!["usbC"]!.AsArray().Any(l => l!.ToString().StartsWith("USB4 host router: USB4 host router")) && Reports.Show(s, s.Resolve("H01/01"))["node"]!["socket"]!["usbCFeatures"]!["Power Delivery"]!.ToString().StartsWith("Not reported"),
+            "show gives the computer's USB4 router and says what a USB-C socket doesn't report.");
         Check(host["node"]!["hub"]!["ports"]!.GetValue<int>() == 9 && host["children"]!.AsArray().Count == 9, "A merged host shows its root ports.");
 
         var budget = Reports.Budget(s, null);
@@ -518,7 +536,7 @@ internal static class CliTests
         JsonObject Reply(JsonNode id) => replies.First(r => JsonNode.DeepEquals(r["id"], id));
         Check(Reply(1)["result"]!["protocolVersion"]!.ToString() == "2025-06-18" && Reply(1)["result"]!["capabilities"]!["tools"] != null, "initialize agrees a protocol version and offers tools.");
         var tools = Reply(2)["result"]!["tools"]!.AsArray();
-        Check(tools.Count == 12 && tools.Any(t => t!["name"]!.ToString() == "usb_trace") && tools.All(t => t!["inputSchema"]!["properties"]!["format"] != null && t["annotations"]!["readOnlyHint"]!.GetValue<bool>()), "Every tool is listed, read-only, with a format option.");
+        Check(tools.Count == 13 && tools.Any(t => t!["name"]!.ToString() == "usb_trace") && tools.Any(t => t!["name"]!.ToString() == "usb_displays") && tools.All(t => t!["inputSchema"]!["properties"]!["format"] != null && t["annotations"]!["readOnlyHint"]!.GetValue<bool>()), "Every tool is listed, read-only, with a format option.");
         string Text(JsonObject r) => r["result"]!["content"]![0]!["text"]!.ToString();
         Check(Text(Reply(3)).Contains("ERROR: Insufficient power") && !Text(Reply(3)).Contains("WARNING:") && !Reply(3)["result"]!["isError"]!.GetValue<bool>(), "usb_issues runs the issues command; finding errors isn't a tool error.");
         Check(JsonNode.Parse(Text(Reply(4)))!["node"]!["path"]!.ToString() == "H01/05", "format json returns the same report as JSON.");
@@ -538,6 +556,94 @@ internal static class CliTests
         }
         finally { File.Delete(broken); }
         Check(Text(Reply(9)).Contains("Baseline saved") && Text(Reply(10)).Contains("No changes."), "usb_baseline then usb_diff compares with the saved state.");
+    }
+
+    // A laptop the morning a graphics driver update removed the NVIDIA driver and never installed the new
+    // one, as Windows recorded it: the Dell's USB hub connected over USB-C, the Dell itself gone from the
+    // NVIDIA adapter at 09:40, and a Billboard device once reported under the hub.
+    private static void DisplayTests()
+    {
+        const string amd = @"PCI\VEN_1002&DEV_1114&SUBSYS_800417AA&REV_C2\4&4A6783B&0&0041", nvidia = @"PCI\VEN_10DE&DEV_2D19&SUBSYS_800417AA&REV_A1\276A548B0C2DB04800";
+        const string hubId = @"USB\VID_0451&PID_8442\MSFT20E30108613F47";
+        var removed = new DateTime(2026, 10, 6, 9, 40, 22);
+        Snapshot Laptop(bool driver, bool dellShowing, bool billboard = true)
+        {
+            var hub = new UsbNode { Id = "h/root/1", Kind = "Hub", Name = "Dell KVM monitor hub", InstanceId = hubId, Port = 1 };
+            var s = new Snapshot
+            {
+                Controllers = [new UsbNode { Id = "h", Kind = "Controller", Name = "AMD USB 3.10 xHCI", Children = [new UsbNode { Id = "h/root", Kind = "Root hub", PortCount = 1, Children = [hub] }] }],
+                Gpus = [new() { InstanceId = amd, Name = "AMD Radeon(TM) 860M Graphics", Vendor = "AMD", Service = "amduw23g", HasDriver = true },
+                        new() { InstanceId = nvidia, Name = "Display", Vendor = "NVIDIA", Service = driver ? "nvlddmkm" : "", HasDriver = driver }],
+                Displays = [new() { InstanceId = @"DISPLAY\EDO4245\5&1ABF721E&0&UID512", Name = "Lenovo DisplayHDR", External = false, Present = true, GpuInstanceId = amd },
+                            new() { InstanceId = @"DISPLAY\DELA0F4\5&1AC5154C&0&UID405762", Name = "Generic Monitor (DELL U3818DW)", External = true, Present = dellShowing, GpuInstanceId = nvidia,
+                                LastArrival = removed.AddMinutes(-94), LastRemoval = dellShowing ? null : removed },
+                            new() { InstanceId = @"DISPLAY\DELA0F4\5&1ABF721E&0&UID517", Name = "Generic Monitor (DELL U3818DW)", External = true, Present = false, GpuInstanceId = amd, LastArrival = removed.AddDays(-2) }]
+            };
+            Displays.Analyze(s, billboard ? [hubId.ToLowerInvariant()] : []);
+            return s;
+        }
+        UsbNode Hub(Snapshot s) => s.Nodes.First(n => n.Kind == "Hub");
+
+        var broken = Laptop(driver: false, dellShowing: false);
+        var f = Hub(broken).Display;
+        Check(f is { GpuWithoutDriver: true, DisplayName: "DELL U3818DW", GpuName: "NVIDIA GPU", GpuVendor: "NVIDIA" } && f.LastShown == removed, "The hub of a dark USB-C display names the display and the driverless adapter it was last shown through.");
+        Check(IssueRules.For(Hub(broken)).Contains((Severity.Warning, Displays.NotShowing)), "A display whose adapter has no driver is a warning.");
+        var e = Explanations.For(Hub(broken), Displays.NotShowing, Topology.FindPath(broken, Hub(broken).Id));
+        Check(e.What.Contains("USB is connected, but Windows isn't showing it as a display") && e.Cause.Contains("last shown through the NVIDIA GPU until " + Displays.Moment(removed)) && e.Steps!.Any(x => x.Contains("NVIDIA App")),
+            "The explanation names the cause and how to reinstall that vendor's driver.");
+        Check(broken.Diagnostics.Any(d => d.Contains("no driver running the NVIDIA GPU") && d.Contains("DELL U3818DW was last shown through it")), "A driverless adapter is reported for the whole scan, with the display it last drove.");
+        Check(Reports.HealthCode(new Session(broken, "file")) == 1, "A dark display is a warning in the exit code.");
+
+        var working = Laptop(driver: true, dellShowing: true);
+        Check(Hub(working).Display == null && working.Diagnostics.Count == 0, "With the display showing and every adapter driven, nothing is flagged.");
+        var otherSource = Laptop(driver: true, dellShowing: false);
+        Check(Hub(otherSource).Display is { GpuWithoutDriver: false } && IssueRules.For(Hub(otherSource)).Contains((Severity.Note, Displays.NotShowing)) && otherSource.Diagnostics.Count == 0
+            && Explanations.For(Hub(otherSource), Displays.NotShowing, []).Steps!.Any(x => x.Contains("Windows+P")) && Explanations.For(Hub(otherSource), Displays.NotShowing, []).Steps!.Any(x => x.Contains("KVM")),
+            "With every adapter driven, a USB-C display without a picture is a note: it may be showing another source, so it says how to check.");
+        var plainHub = Laptop(driver: false, dellShowing: false, billboard: false);
+        Check(Hub(plainHub).Display == null && plainHub.Diagnostics.Count == 1, "A hub that never reported a Billboard isn't taken for a display, though the driverless adapter still is.");
+
+        Check(Displays.Placeholder(@"DISPLAY\NVD0000\5&1AC5154C&0&UID405762", nvidia) && Displays.Placeholder(@"DISPLAY\DEFAULT_MONITOR\1&8713BCA&0&UID0", @"ROOT\BasicDisplay\0000")
+            && !Displays.Placeholder(@"DISPLAY\DELA0F4\5&1AC5154C&0&UID405762", nvidia), "Failsafe and Basic Display stand-ins aren't monitors.");
+        Check(Displays.MonitorName("Generic Monitor (DELL U3818DW)") == "DELL U3818DW" && Displays.GpuLabel(new GpuInfo { Name = "Display", Vendor = "NVIDIA" }) == "NVIDIA GPU", "Names read as people know them.");
+
+        var report = Reports.Displays(new Session(broken, "file"));
+        Check(report["adapters"]!.AsArray().Any(a => a!["driver"]!.ToString() == "none") && report["usbCDisplays"]!.AsArray().Count == 1
+            && report["monitors"]!.AsArray()[0]!["name"]!.ToString() == "Lenovo DisplayHDR" && TextOut.Render(report).Contains("lastShownThrough: NVIDIA GPU"), "displays lists adapters, monitors and the dark USB-C display.");
+        var show = Reports.Show(new Session(broken, "file"), Hub(broken));
+        Check(show["node"]!["display"]!["adapterHasDriver"]!.GetValue<bool>() == false, "show includes the display finding.");
+        string file = Path.Combine(Path.GetTempPath(), $"usbatlas-display-test-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(file, JsonSerializer.Serialize(broken, Json.Options));
+            var loaded = Session.LoadFile(file);
+            Check(loaded.Gpus.Count == 2 && loaded.Displays.Count == 3 && Hub(loaded).Display?.GpuWithoutDriver == true, "Saved snapshots keep adapters, displays and findings.");
+            File.WriteAllText(file, """{"controllers":[{"kind":"Controller","name":"x"}],"gpus":null,"displays":null}""");
+            Check(Session.LoadFile(file).Gpus.Count == 0, "Older snapshots without display information load.");
+        }
+        finally { File.Delete(file); }
+    }
+
+    // Events as that morning's logs recorded them: a driver updater disabling the NVIDIA driver and
+    // restarting the computer, around USB and monitor events.
+    private static void EventTests()
+    {
+        const string gpu = @"PCI\VEN_10DE&DEV_2D19&SUBSYS_800417AA&REV_A1\276A548B0C2DB04800";
+        var gpus = new HashSet<string>([gpu], StringComparer.OrdinalIgnoreCase);
+        (string, string)? Of(string provider, int id, params (string, string)[] data) => EventLog.Classify(provider, id, [.. data], gpus);
+        Check(Of("User32", 1074, ("param1", @"C:\ProgramData\NVIDIA Corporation\NVIDIA App\UpdateFramework\setup.exe")) == (EventLog.Restart, "")
+            && Of("Microsoft-Windows-Kernel-Power", 41, ("BugcheckCode", "0")) == (EventLog.Restart, ""), "A restart a program started, and one nothing asked for, are restarts.");
+        Check(Of("Service Control Manager", 7040, ("param1", "nvlddmkm"), ("param2", "demand start"), ("param3", "disabled")) == (EventLog.Display, "")
+            && Of("Service Control Manager", 7040, ("param1", "Background Intelligent Transfer Service")) == null, "Service changes count only when they're about graphics.");
+        Check(Of("Microsoft-Windows-WindowsUpdateClient", 19, ("updateTitle", "NVIDIA - Display - 32.0.15.9144")) == (EventLog.Display, "")
+            && Of("Microsoft-Windows-WindowsUpdateClient", 19, ("updateTitle", "Security Intelligence Update for Microsoft Defender")) == null, "Windows Update installs count only when they're graphics drivers.");
+        Check(Of("Microsoft-Windows-Kernel-PnP", 400, ("DeviceInstanceId", @"DISPLAY\DELA0F4\5&1AC5154C&0&UID405762")) == (EventLog.Display, @"DISPLAY\DELA0F4\5&1AC5154C&0&UID405762")
+            && Of("Microsoft-Windows-Kernel-PnP", 411, ("DeviceInstanceId", gpu.ToLowerInvariant())) == (EventLog.Display, gpu.ToLowerInvariant()), "Monitors and graphics adapters coming and going are display events.");
+        Check(Of("Microsoft-Windows-Kernel-PnP", 400, ("DeviceInstanceId", @"USB\VID_0451&PID_8442\MSFT20E30108613F47")) == (EventLog.Usb, @"USB\VID_0451&PID_8442\MSFT20E30108613F47")
+            && Of("Microsoft-Windows-USB-USBHUB3", 196, ("fid_UsbDevice", "draining")) == (EventLog.Usb, "") && Of("Display", 4101, ("param1", "nvlddmkm")) == (EventLog.Display, ""),
+            "USB events stay USB, and a display driver that stopped responding is a display event.");
+        Check(Of("Microsoft-Windows-Kernel-PnP", 400, ("DeviceInstanceId", @"PCI\VEN_8086&DEV_1234\3&1")) == null && Of("Some-Provider", 1) == null, "Anything else is left out.");
+        Check(Run("events", "--demo", "--usb-only", "--max", "1").Code is 0 or 3 && Options.Parse(["events", "--usb-only"]).Has("usb-only"), "events takes --usb-only.");
     }
 
     private static void CommandTests()

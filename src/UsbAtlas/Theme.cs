@@ -15,6 +15,8 @@ internal static class Theme
         ("WindowSurface", "#FAFAF8", "#181C22"), ("CanvasSurface", "#F3F4F2", "#14181E"),
         ("HostSurface", "#EAEEEF", "#202731"), ("HostBorder", "#DCE1E3", "#303A47"),
         ("Border", "#D5D9DC", "#3A4451"), ("Divider", "#E5E8EB", "#303843"),
+        // The search field is recessed below the title bar it sits on, and its edge keeps 3:1 against the bar.
+        ("SearchField", "#EEF1F4", "#14181E"), ("SearchEdge", "#7F8B97", "#6B7A8D"),
         ("Hover", "#E9EDF2", "#303B49"), ("Pressed", "#DCE4EE", "#3A485B"),
         ("Accent", "#4772B2", "#86ADE5"), ("Selection", "#F2F6FC", "#27364C"), ("SelectionStrong", "#DCE6F4", "#304A6E"), ("OnAccent", "#FFFFFF", "#14181E"),
         ("Primary", "#253448", "#3E597B"), ("PrimaryHover", "#3D516B", "#4D6B92"),

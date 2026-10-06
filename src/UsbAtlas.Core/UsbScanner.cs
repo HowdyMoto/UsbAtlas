@@ -25,6 +25,9 @@ public sealed class UsbScanner
     {
         snapshot = new(); visited.Clear(); names.Clear(); devices.Clear(); hidUsages.Clear();
         ReadDevices();
+        snapshot.Usb4HostRouters = [.. devices.Where(d => UsbC.IsHostRouter(d.Value.Service)).Select(d => d.Value.Name.Length > 0 ? d.Value.Name : "USB4 host router")];
+        snapshot.Usb4Devices = [.. devices.Where(d => UsbC.IsUsb4Device(d.Key)).Select(d => d.Value.Name.Length > 0 ? d.Value.Name : "USB4 device")];
+        snapshot.UsbCConnectorManager = devices.Values.Any(d => UsbC.IsConnectorManager(d.Service));
         var guid = ControllerGuid;
         var set = Native.SetupDiGetClassDevs(ref guid, null, IntPtr.Zero, 0x12);
         if (set == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -60,6 +63,9 @@ public sealed class UsbScanner
                     (controller.PcieMaxGeneration, controller.PcieMaxLanes) = (PciProperty(set, ref dev, 11), PciProperty(set, ref dev, 12));
                     controller.Location = "Host";
                     controller.LocationEvidence = "Host controller: motherboard or expansion hardware. Physical mounting is not reported.";
+                    // DEVPKEY_PciDevice_IsTunneledDevice: reached over USB4 or Thunderbolt, as a dock's controller is.
+                    controller.PcieTunneled = PciBool(set, ref dev, 47);
+                    UsbC.MarkTunneled(controller);
                     controller.Notes.Add("Controller ports may use separate USB 2 and USB 3 buses. Their link rates are not a single controller-wide bandwidth budget.");
                     snapshot.Controllers.Add(controller);
                     using var handle = Open(path);
@@ -88,6 +94,13 @@ public sealed class UsbScanner
         PortMap.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
+        try
+        {
+            var (gpus, displays, billboards) = UsbAtlas.Displays.Read();
+            snapshot.Gpus = gpus; snapshot.Displays = displays;
+            UsbAtlas.Displays.Analyze(snapshot, billboards);
+        }
+        catch (Exception ex) when (ex is Win32Exception or ExternalException or ArgumentException) { snapshot.Diagnostics.Add("Displays and graphics adapters unavailable: " + ex.Message); }
         PowerSaving.Read(snapshot, devices);
         PowerSaving.Analyze(snapshot);
         if (snapshot.Controllers.Count == 0) snapshot.Diagnostics.Add("No USB host controllers were returned by Windows.");
@@ -302,6 +315,13 @@ public sealed class UsbScanner
         var bytes = new byte[4];
         // DEVPROP_TYPE_UINT32.
         return Native.SetupDiGetDeviceProperty(set, ref d, ref key, out uint type, bytes, (uint)bytes.Length, out _, 0) && type == 7 && BitConverter.ToInt32(bytes) is > 0 and var value ? value : null;
+    }
+    private static bool? PciBool(IntPtr set, ref Native.DeviceData d, uint id)
+    {
+        var key = new Native.PropertyKey { Category = PciDeviceProperties, Id = id };
+        var bytes = new byte[1];
+        // DEVPROP_TYPE_BOOLEAN: one byte, 0 or 0xFF.
+        return Native.SetupDiGetDeviceProperty(set, ref d, ref key, out uint type, bytes, (uint)bytes.Length, out _, 0) && type == 0x11 ? bytes[0] != 0 : null;
     }
     internal static int DecodePower(byte maxPower, ushort bcdUsb) => maxPower * (bcdUsb >= 0x0300 ? 8 : 2);
     // Binary-coded decimal as USB versions and revisions are written: 0x0210 is 2.10.

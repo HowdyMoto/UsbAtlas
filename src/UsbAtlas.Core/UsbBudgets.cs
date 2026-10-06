@@ -142,6 +142,19 @@ internal static class UsbBudgets
         return (percent is > 0 and < 1 ? "<1" : $"{Math.Round(percent):0}") + "% of " + Rate(capacity);
     }
 
+    // What a fast drive typically moves at best over a link, after protocol overhead: the figure to compare a
+    // measured copy or benchmark with, since the link rate itself is never reached. Empty when the rate isn't
+    // known or isn't one a drive uses. These are typical figures, not measurements of this link.
+    internal static string BestTransfer(double? linkMbps) => linkMbps switch
+    {
+        12 => "about 1 MB/s",
+        480 => "about 40 MB/s",
+        5000 => "about 450 MB/s",
+        10000 => "about 1 GB/s",
+        20000 => "about 2 GB/s",
+        _ => ""
+    };
+
     internal static string Rate(double mbps) => mbps switch
     {
         0 => "0 Mb/s",
@@ -223,10 +236,12 @@ internal static class UsbBudgets
     private static double? SocketDataMbps(UsbNode port) => UsbDataMbps(port) ?? port.SocketSpeed switch { "≥10 Gb/s" => 10000 * 128.0 / 132, "≥5 Gb/s" or "5 Gb/s" => 4000, _ => null };
 
     // Everything on a controller's root ports shares its PCIe link to the computer: its usable rate, what its
-    // fastest port could carry, what's linked to its ports now, and a device linked faster than it alone.
+    // fastest port could carry, what's linked to its ports now, and a device linked faster than it alone. A
+    // controller reached through a USB4 or Thunderbolt tunnel reports the tunnel's PCIe link, which doesn't
+    // say what the tunnel carries, so it isn't judged.
     internal static (double Uplink, double Fastest, double Linked, UsbNode? Capped)? Uplink(UsbNode controller)
     {
-        if (controller.Kind != "Controller" || PcieMbps(controller.PcieGeneration, controller.PcieLanes) is not double uplink) return null;
+        if (controller.Kind != "Controller" || controller.PcieTunneled == true || PcieMbps(controller.PcieGeneration, controller.PcieLanes) is not double uplink) return null;
         var ports = controller.Children.Where(r => r.Kind == "Root hub").SelectMany(r => r.Children).ToList();
         var links = ports.Where(p => p.Kind is "Device" or "Hub" && UsbDataMbps(p) != null).ToList();
         return (uplink, ports.Select(SocketDataMbps).Max() ?? 0, links.Sum(p => UsbDataMbps(p)!.Value), links.FirstOrDefault(p => UsbDataMbps(p) > uplink));

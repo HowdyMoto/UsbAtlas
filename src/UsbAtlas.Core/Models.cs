@@ -77,6 +77,9 @@ public sealed class UsbNode
     public int? PcieLanes { get; set; }
     public int? PcieMaxGeneration { get; set; }
     public int? PcieMaxLanes { get; set; }
+    // DEVPKEY_PciDevice_IsTunneledDevice: Windows reaches this controller through a PCIe tunnel over USB4 or
+    // Thunderbolt, so it's in a dock or enclosure. Its reported PCIe link is the tunnel's, not a real slot's.
+    public bool? PcieTunneled { get; set; }
     // The driver Windows loaded for the device itself, from its driver key: service, package version and
     // date, provider and INF. Empty when Windows has none recorded.
     public string DriverService { get; set; } = "";
@@ -128,6 +131,8 @@ public sealed class UsbNode
     // A USB-C device's Billboard: the alternate modes it offers and how each went. Null for anything else.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public BillboardInfo? Billboard { get; set; }
+    // A USB-C display whose USB is connected but which Windows isn't showing as a display, on its hub.
+    public DisplayFinding? Display { get; set; }
     public List<string> Notes { get; set; } = [];
     public List<UsbNode> Children { get; set; } = [];
     public IEnumerable<UsbNode> Walk() { yield return this; foreach (var c in Children) foreach (var n in c.Walk()) yield return n; }
@@ -172,6 +177,16 @@ public sealed class Snapshot
     public List<string> Diagnostics { get; set; } = [];
     // The device containers USB devices belong to, with the names Windows gives them.
     public List<DeviceContainer> Containers { get; set; } = [];
+    // The computer's USB4 host routers and the USB4 devices, such as docks, connected through them, by name,
+    // and whether a USB-C connector manager (UCSI) runs its USB-C ports (UsbC.cs). Null when not read: a
+    // snapshot saved before they were, or Linux.
+    public List<string>? Usb4HostRouters { get; set; }
+    public List<string>? Usb4Devices { get; set; }
+    public bool? UsbCConnectorManager { get; set; }
+    // Graphics adapters present now, and every monitor Windows has known, so a USB-C display's missing
+    // picture can be traced to the adapter it was last shown through.
+    public List<GpuInfo> Gpus { get; set; } = [];
+    public List<DisplayInfo> Displays { get; set; } = [];
     // The active power plan's USB selective suspend setting, plugged in and on battery, and which applies now.
     public bool? UsbSuspendPluggedIn { get; set; }
     public bool? UsbSuspendOnBattery { get; set; }
