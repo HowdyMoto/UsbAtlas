@@ -59,6 +59,8 @@ public sealed class UsbNode
     public List<DateTime> QuickReconnectTimes { get; set; } = [];
     public string VendorId { get; set; } = "";
     public string ProductId { get; set; } = "";
+    // The device descriptor's bcdDevice, such as 1.04: the maker's own revision number, usually its firmware version.
+    public string DeviceRevision { get; set; } = "";
     public string Manufacturer { get; set; } = "";
     public string Serial { get; set; } = "";
     public string DeviceClass { get; set; } = "";

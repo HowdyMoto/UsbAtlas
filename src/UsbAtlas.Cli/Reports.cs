@@ -102,7 +102,7 @@ internal static class Reports
         JsonObject Node(UsbNode n)
         {
             var children = (Topology.MergedRoot(n) ?? n).Children;
-            var o = J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))), ("figures", J.S(Figures(n))),
+            var o = J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("figures", J.S(Figures(n))),
                 ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)),
                 ("issues", J.Some(IssuesOf(s, n).Select(i => (JsonNode)$"{i.Severity.ToString().ToLowerInvariant()}: {i.Text}"))));
             var shown = children.Where(c => ports || c.Kind != "Empty port").OrderBy(c => c.Port).ToList();
@@ -141,7 +141,7 @@ internal static class Reports
             ("path", s.PathOf(n)), ("name", n.DisplayName), ("shortName", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("nodeKind", n.Kind),
             ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)), ("status", n.Status),
             ("deviceType", n.Kind == "Device" ? n.DeviceType : null), ("typeEvidence", n.Kind == "Device" ? n.TypeEvidence : null),
-            ("vidPid", J.S(VidPid(n))), ("manufacturer", J.S(n.Manufacturer)), ("product", J.S(n.ReportedProduct)), ("windowsName", J.S(n.WindowsName)),
+            ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("manufacturer", J.S(n.Manufacturer)), ("product", J.S(n.ReportedProduct)), ("windowsName", J.S(n.WindowsName)),
             ("lookup", J.S(string.Join(" · ", new[] { n.LookupVendor, n.LookupProduct }.Where(x => x.Length > 0)))), ("nameSource", n.NameSource),
             ("serial", J.S(n.Serial)), ("instanceId", J.S(n.InstanceId)), ("id", n.Id),
             ("deviceClass", J.S(n.DeviceClass)), ("interfaceFunctions", J.Some(n.InterfaceFunctions.Select(x => (JsonNode)x))), ("hidUsages", J.Some(n.HidUsages.Select(x => (JsonNode)x))));

@@ -121,6 +121,13 @@ internal static class CliTests
         Check(!diff["newIssues"]!.AsArray().Any(i => i!["name"]!.ToString() == "USB flash drive"), "Issues follow a moved device instead of reappearing.");
         Check(Diff.Text(diff).Contains("> moved         USB flash drive H01/05/01 → H01/01/03") && Diff.Text(diff).Contains("- disconnected  H01/03 Mechanical keyboard"), "Diff text has one line per change.");
         Check(Diff.Empty(Diff.Compare(Demo(), Demo())), "Identical snapshots have no differences.");
+        // A firmware update shows as a new revision; a snapshot saved before revisions were recorded doesn't.
+        static Session Revised(string revision) { var s = DemoData.Create(); s.Nodes.First(n => n.Name == "Studio desktop hub").DeviceRevision = revision; return new(s, "demo"); }
+        var update = Diff.Compare(Revised("1.04"), Revised("1.10"));
+        Check(Diff.Text(update).Contains("~ changed       H01/01 Studio desktop hub: revision 1.04 → 1.10"), "A device whose revision changed is reported.");
+        Check(Diff.Empty(Diff.Compare(Revised(""), Revised("1.10"))), "A snapshot without revisions doesn't report every device as changed.");
+        var revised = Revised("1.10");
+        Check(Reports.Show(revised, revised.Resolve("H01/01"))["node"]!["revision"]!.ToString() == "1.10" && revised.Find("rev 1.10").Count == 1, "show and find carry the revision.");
         // A redacted baseline compared with a redacted scan: redaction must be stable and idempotent.
         var serialed = DemoData.Create(); serialed.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";
         var again = DemoData.Create(); again.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";

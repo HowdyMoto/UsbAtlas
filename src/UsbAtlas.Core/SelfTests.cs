@@ -7,6 +7,8 @@ internal static class SelfTests
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         Check(UsbScanner.DecodePower(250, 0x0200) == 500, "USB 2 power units must be 2 mA.");
         Check(UsbScanner.DecodePower(112, 0x0300) == 896, "USB 3 power units must be 8 mA.");
+        Check(UsbScanner.Bcd(0x0104) == "1.04" && UsbScanner.Bcd(0x0210) == "2.10" && UsbScanner.Bcd(0x1A0F) == "1A.0F", "Versions and revisions read as binary-coded decimal.");
+        Check(Topology.SearchText(new UsbNode { DeviceRevision = "1.04" }, null).Contains("rev 1.04"), "Search finds a device by its revision.");
         Check(UsbScanner.DecodeSpeed(2, 1).Item2 == 5000, "EX V2 must override legacy high-speed reporting.");
         Check(UsbScanner.DecodeSpeed(2, 4).Item2 == null, "SuperSpeedPlus must not pretend to know exact lane rate.");
         Check(UsbScanner.DecodeSpeed(0, 0).Item2 == 1.5, "Low-speed decoding.");

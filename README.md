@@ -139,6 +139,9 @@ are named from the bundled offline USB ID database. Those entries usually name t
 maker of the chip inside (a hub in a Dell monitor may appear as Realtek), not the
 retail brand; clicking its name or pencil in Properties can rename it. Detection details record where
 each name came from, along with the original USB strings, Windows name and lookup results.
+**Device revision** is the device descriptor's `bcdDevice`, the maker's own revision number; for hubs and
+adapters it is usually the firmware version, the first thing their makers' support asks for. Search finds
+it as “rev 1.04”, and `diff` and `watch` report a device whose revision changed, as a firmware update does.
 
 **Game controllers:** wheels, pedals, shifters, handbrakes, button boxes, joysticks and
 game pads are recognized by the HID collections Windows lists for them (a Joystick, Game

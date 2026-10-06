@@ -156,8 +156,9 @@ public sealed class UsbScanner
             node.Kind = data[24] != 0 ? "Hub" : "Device";
             node.VendorId = BitConverter.ToUInt16(data, 12).ToString("X4");
             node.ProductId = BitConverter.ToUInt16(data, 14).ToString("X4");
+            node.DeviceRevision = Bcd(BitConverter.ToUInt16(data, 16));
             var bcd = BitConverter.ToUInt16(data, 6);
-            node.UsbVersion = $"USB {bcd >> 8:X}.{(bcd >> 4) & 15:X}{bcd & 15:X}";
+            node.UsbVersion = "USB " + Bcd(bcd);
             (node.Speed, node.LinkMbps) = DecodeSpeed(data[23], flags);
             // A SuperSpeedPlus link's lane speed and lane count come from a query of their own, which
             // Windows refuses for slower links.
@@ -281,6 +282,8 @@ public sealed class UsbScanner
         return Native.SetupDiGetDeviceProperty(set, ref d, ref key, out uint type, bytes, (uint)bytes.Length, out _, 0) && type == 7 && BitConverter.ToInt32(bytes) is > 0 and var value ? value : null;
     }
     internal static int DecodePower(byte maxPower, ushort bcdUsb) => maxPower * (bcdUsb >= 0x0300 ? 8 : 2);
+    // Binary-coded decimal as USB versions and revisions are written: 0x0210 is 2.10.
+    internal static string Bcd(ushort value) => $"{value >> 8:X}.{(value >> 4) & 15:X}{value & 15:X}";
     private static int SpeedClass(byte speed, int flags) => (flags & 5) != 0 ? 3 : speed;
 
     // Open pipes follow NumberOfOpenPipes (offset 27) as packed USB_PIPE_INFO entries from offset 35:
@@ -323,8 +326,9 @@ public sealed class UsbScanner
         if (!DescriptorRead(data)) return;
         node.VendorId = BitConverter.ToUInt16(data, 12).ToString("X4");
         node.ProductId = BitConverter.ToUInt16(data, 14).ToString("X4");
+        node.DeviceRevision = Bcd(BitConverter.ToUInt16(data, 16));
         var bcd = BitConverter.ToUInt16(data, 6);
-        node.UsbVersion = $"USB {bcd >> 8:X}.{(bcd >> 4) & 15:X}{bcd & 15:X}";
+        node.UsbVersion = "USB " + Bcd(bcd);
         node.DeviceClass = ClassName(data[8]);
         ushort language = 0x0409;
         var langs = Descriptor(handle, port, 3, 0, 0, 255);

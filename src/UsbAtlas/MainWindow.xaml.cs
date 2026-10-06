@@ -238,6 +238,7 @@ public partial class MainWindow : Window
             Field("Manufacturer", Reported(node.Manufacturer));
             Field("Serial", Reported(node.Serial));
             Field("USB version", Reported(node.UsbVersion), "The USB version the device says it was built to (bcdUSB). How fast it runs now is Link speed.");
+            Field("Device revision", Reported(node.DeviceRevision), "The maker's own revision number for this device (bcdDevice). For hubs and adapters it's usually the firmware version, the first thing their makers' support asks for.");
             // Polling applies to devices with an open interrupt input pipe; hubs poll only for port changes.
             Field("Polling rate", node.Kind == "Device" ? node.PollIntervalMs is double ms ? $"{UsbBudgets.PollingRate(ms)} · {UsbBudgets.PollingInterval(ms)}" : node.ReservedMbps != null ? NotApplicable : "Not reported" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable);
             Field("Power source", Reported(node.PowerSource));

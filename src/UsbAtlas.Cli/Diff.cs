@@ -16,7 +16,7 @@ internal static class Diff
 
     private static readonly (string Field, Func<UsbNode, Session, string> Value)[] Fields =
     [
-        ("status", (n, _) => n.Status), ("link", (n, _) => n.Speed), ("usbVersion", (n, _) => n.UsbVersion),
+        ("status", (n, _) => n.Status), ("link", (n, _) => n.Speed), ("usbVersion", (n, _) => n.UsbVersion), ("revision", (n, _) => n.DeviceRevision),
         ("power", (n, _) => Topology.PowerFigure(n).Text), ("powerSource", (n, _) => n.PowerSource),
         ("powerSaving", (n, s) => Topology.PowerSavingText(n, s.Snapshot)), ("deviceType", (n, _) => n.DeviceType),
         ("polling", (n, _) => n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : ""),
@@ -51,7 +51,9 @@ internal static class Diff
         {
             if (!now.TryGetValue(key, out var m)) m = moved.FirstOrDefault(p => p.From == n).To;
             if (m == null) continue;
-            var changes = Fields.Select(f => (f.Field, Before: f.Value(n, before), After: f.Value(m, after))).Where(c => c.Before != c.After).ToList();
+            // A snapshot saved before revisions were recorded has none; that isn't a firmware change.
+            var changes = Fields.Select(f => (f.Field, Before: f.Value(n, before), After: f.Value(m, after)))
+                .Where(c => c.Before != c.After && !(c.Field == "revision" && (c.Before.Length == 0 || c.After.Length == 0))).ToList();
             if (changes.Count > 0)
                 changed.Add(J.Obj(("path", after.PathOf(m)), ("name", Topology.ShortName(m)), ("changes", J.Arr(changes.Select(c => (JsonNode)J.Obj(("field", c.Field), ("before", c.Before), ("after", c.After)))))));
         }
