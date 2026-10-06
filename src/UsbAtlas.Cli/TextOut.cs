@@ -76,6 +76,14 @@ internal static class TextOut
             foreach (var c in n["children"]?.AsArray() ?? []) Line(c!.AsObject(), depth + 1);
         }
         foreach (var c in r["controllers"]!.AsArray()) Line(c!.AsObject(), 0);
+        if (r["remembered"] is JsonArray remembered)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"Remembered, not connected: {remembered.Count}");
+            foreach (var e in remembered)
+                sb.AppendLine("  " + string.Join(" · ", new[] { "place", "name", "vidPid", "comPort", "lastConnected" }.Where(k => e![k] != null).Select(k => k == "lastConnected" ? "last connected " + Str(e![k]) : Str(e![k]))));
+        }
+        else if (r["remembered"] is JsonNode note) { sb.AppendLine(); sb.AppendLine("Remembered, not connected: " + Str(note)); }
         return sb.ToString();
     }
 

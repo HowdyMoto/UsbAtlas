@@ -44,7 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyEverythingExplains(); VerifyFixFirst(); File.WriteAllText("ui-test.txt", "UI checks passed: what to fix first and the exported image, everything on the graph explains itself on hover or click, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyEverythingExplains(); VerifyFixFirst(); VerifyRememberedDevices(); File.WriteAllText("ui-test.txt", "UI checks passed: remembered devices on other ports, what to fix first and the exported image, everything on the graph explains itself on hover or click, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -352,6 +352,12 @@ public partial class MainWindow : Window
                 Details.Children.Add(pair);
             }
         }
+        if (node.OtherEntries.Count > 0)
+        {
+            Text("Other entries for this device", 14, "TextPrimary");
+            foreach (var other in node.OtherEntries) Text(Remembered.Line(other), 13, "TextSecondary");
+            Text("Windows keeps one for each port a device without a serial number has been plugged into, each with its own settings and COM number. To remove old ones: Device Manager › View › Show hidden devices, then uninstall the grayed-out entries.", 12, "TextMuted");
+        }
         var evidence = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
         var notes = new List<string> { node.LocationEvidence };
         notes.Add("Name source: " + node.NameSource + ".");
@@ -367,6 +373,8 @@ public partial class MainWindow : Window
         if (node.Kind == "Device") notes.Add(node.TypeEvidence);
         if (node.InterfaceFunctions.Count > 0) notes.Add("Reported functions: " + string.Join(", ", node.InterfaceFunctions));
         if (node.HidUsages.Count > 0) notes.Add("HID collections: " + string.Join(", ", node.HidUsages) + ".");
+        if (node.ComPort.Length > 0) notes.Add($"Serial port: Windows calls it {node.ComPort}.");
+        foreach (var other in node.OtherEntries) notes.Add($"Other entry: {other.Entry.InstanceId}, {Remembered.Line(other)}.");
         notes.AddRange(Billboard.Evidence(node));
         notes.AddRange(UsbC.Socket(snapshot, node).Select(f => $"{f.Feature}: {f.Text}"));
         if (host) notes.AddRange(UsbC.Computer(snapshot));

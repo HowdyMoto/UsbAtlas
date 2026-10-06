@@ -20,7 +20,9 @@ internal static class Program
                                  anything now, the likely cause and what to do. Start here.
                                  --min note|warning|error leaves out less severe ones.
           tree                   The topology as an indented tree: path, name, kind, link rate, polling
-                                 rate, power, VID:PID and issues. --ports lists every empty port.
+                                 rate, power, VID:PID and issues. --ports lists every empty port; --hidden
+                                 also lists devices Windows remembers that aren't connected, where each was,
+                                 its COM number and when it was last connected.
           show <target>          Everything about one node: identity, driver, link, socket, power,
                                  bandwidth, power saving, the chain to the host, its neighbors, its issues
                                  explained, and the evidence behind them.
@@ -125,7 +127,7 @@ internal static class Program
                     return Reports.HealthCode(s);
                 }
                 case "tree":
-                    Print(Reports.Tree(Session.Open(o), o.Has("ports"))); return 0;
+                    Print(Reports.Tree(Session.Open(o), o.Has("ports"), o.Has("hidden"))); return 0;
                 case "show":
                 {
                     var s = Session.Open(o);

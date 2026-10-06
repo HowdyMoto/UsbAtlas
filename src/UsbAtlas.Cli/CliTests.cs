@@ -101,6 +101,22 @@ internal static class CliTests
         Check(show["node"]!["hub"]!["transactionTranslators"]!.ToString().Contains("single TT") && show["children"]!.AsArray().Count == 4 && show["siblings"]!.AsArray().Count > 0 && show["upstream"]!.AsArray().Count == 1, "show includes the hub, its children, its siblings and the chain to the host.");
         Check(show["issues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Over power budget"), "show explains the node's issues.");
         Check(TextOut.Render(show).Contains("transactionTranslators: Share one link · single TT"), "show renders as key: value text.");
+        // Remembered devices: show lists a device's other entries, tree --hidden lists them all, and redaction
+        // hides their serials and keeps the analysis.
+        var remembering = DemoData.Create();
+        var mouse = remembering.Nodes.First(n => n.Name == "Wireless mouse receiver");
+        mouse.VendorId = "046D"; mouse.ProductId = "C52B"; mouse.InstanceId = @"USB\VID_046D&PID_C52B\5&1&0&4";
+        remembering.Remembered = [new() { InstanceId = @"USB\VID_046D&PID_C52B\5&1&0&2", Name = "USB Composite Device", VendorId = "046D", ProductId = "C52B", LocationInfo = "Port_#0002.Hub_#0001", LastConnected = new DateTime(2026, 9, 1, 12, 0, 0) },
+            new() { InstanceId = @"USB\VID_1234&PID_0001\SECRETSERIAL99", Name = "Old drive", VendorId = "1234", ProductId = "0001" }];
+        UsbAtlas.Remembered.Analyze(remembering);
+        var rs = new Session(remembering, "demo");
+        Check(Reports.Show(rs, mouse)["node"]!["otherEntries"]![0]!["lastConnected"]!.ToString() == "2026-09-01 12:00", "show lists a device's other entries with when each was last connected.");
+        var hiddenTree = TextOut.Render(Reports.Tree(rs, false, hidden: true));
+        Check(hiddenTree.Contains("Remembered, not connected: 2") && hiddenTree.Contains("Port_#0002.Hub_#0001 (on a hub not connected now) · USB Composite Device · 046D:C52B") && !TextOut.Render(Reports.Tree(rs, false)).Contains("Remembered"),
+            "tree --hidden lists remembered devices, and only with --hidden.");
+        var redactedMemory = Session.Redact(remembering);
+        Check(!Json.Write(Reports.Tree(new Session(redactedMemory, "demo"), false, hidden: true)).Contains("SECRETSERIAL99") && redactedMemory.Nodes.First(n => n.Name == "Wireless mouse receiver").OtherEntries.Count == 1,
+            "Redaction hides a remembered device's serial and keeps each device's other entries.");
         Check(show["node"]!["link"]!["typicalBestTransfer"]!.ToString() == "about 40 MB/s for a fast drive; typical, not measured"
             && Reports.Show(s, s.Resolve("Portable SSD"))["node"]!["link"]!["typicalBestTransfer"]!.ToString().StartsWith("about 450 MB/s"), "show says what a fast drive moves at best over the link, as typical rather than measured.");
         Check(UsbBudgets.BestTransfer(null) == "" && UsbBudgets.BestTransfer(1.5) == "", "No typical transfer for an unknown rate or low speed.");

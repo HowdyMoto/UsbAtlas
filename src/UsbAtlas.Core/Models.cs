@@ -94,6 +94,16 @@ public sealed class UsbNode
     // Descriptors as read, only when a scan is asked to keep them.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RawDescriptors? Raw { get; set; }
+    // The COM number Windows gave a serial port this device has, such as COM5, and where Windows places the
+    // device (its location path, PCIROOT(0)#…#USBROOT(0)#USB(1)), which places remembered entries on the map.
+    public string ComPort { get; set; } = "";
+    public string LocationPath { get; set; } = "";
+    // Other entries Windows keeps for this device on other ports, placed on the map, and what they break:
+    // COM number changed or Remembered on other ports (Remembered.cs). Worked out when analyzed.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<(RememberedDevice Entry, string Place)> OtherEntries { get; set; } = [];
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string RememberedIssue { get; set; } = "";
     public bool SpeedLimited { get; set; }
     // A high-speed hub's transaction translators, from its bDeviceProtocol: Single (one for all ports),
     // Per port, Not reported, or None for devices and hubs that aren't running at high speed.
@@ -177,6 +187,9 @@ public sealed class Snapshot
     public List<string> Diagnostics { get; set; } = [];
     // The device containers USB devices belong to, with the names Windows gives them.
     public List<DeviceContainer> Containers { get; set; } = [];
+    // USB devices Windows remembers but that aren't connected now. Null when not read: a snapshot saved
+    // before they were, or Linux.
+    public List<RememberedDevice>? Remembered { get; set; }
     // The computer's USB4 host routers and the USB4 devices, such as docks, connected through them, by name,
     // and whether a USB-C connector manager (UCSI) runs its USB-C ports (UsbC.cs). Null when not read: a
     // snapshot saved before they were, or Linux.

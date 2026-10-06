@@ -12,7 +12,7 @@ public sealed class UsbScanner
     private readonly Dictionary<string, (string Name, string Manufacturer, string InstanceId)> names = new(StringComparer.OrdinalIgnoreCase);
     // Every present devnode by instance ID: its parent, its driver service and, for a HID collection, its
     // usages; its name, driver key and any Device Manager problem code.
-    internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0, string ContainerId = "");
+    internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0, string ContainerId = "", string LocationPath = "");
     private readonly Dictionary<string, DevNode> devices = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> hidUsages = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
@@ -92,6 +92,8 @@ public sealed class UsbScanner
         snapshot.Containers = [.. Containers.Read(snapshot.Nodes.Select(n => n.ContainerId)).Values];
         Containers.Analyze(snapshot);
         PortMap.Analyze(snapshot);
+        ReadRemembered();
+        Remembered.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
         try
@@ -417,7 +419,9 @@ public sealed class UsbScanner
                 var usages = instance.StartsWith(@"HID\", StringComparison.OrdinalIgnoreCase) ? DeviceIdentity.ReadHidUsages(MultiProperty(set, ref d, 1)) : [];
                 // DN_HAS_PROBLEM: Device Manager shows the problem code on the device's General tab.
                 int problem = Native.CM_Get_DevNode_Status(out var devStatus, out var code, d.DevInst, 0) == 0 && (devStatus & 0x400) != 0 ? (int)code : 0;
-                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem, ContainerProperty(set, ref d));
+                // SPDRP_LOCATION_PATHS: the first is PCIROOT(0)#…#USBROOT(0)#USB(1), which places remembered entries.
+                string location = instance.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase) ? MultiProperty(set, ref d, 35).FirstOrDefault() ?? "" : "";
+                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem, ContainerProperty(set, ref d), location);
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }
@@ -427,6 +431,67 @@ public sealed class UsbScanner
                 if (!hidUsages.TryGetValue(owner, out var list)) hidUsages[owner] = list = [];
                 list.AddRange(node.Usages.Except(list).ToList());
             }
+    }
+    // USB devices Windows remembers but that aren't connected, and the COM number of every serial port, connected
+    // or not, on the USB device it belongs to. Everything not present is read from its stored properties.
+    private void ReadRemembered()
+    {
+        var all = new Dictionary<string, DevNode>(devices, StringComparer.OrdinalIgnoreCase);
+        var entries = new List<RememberedDevice>();
+        // DIGCF_ALLCLASSES without DIGCF_PRESENT: every devnode Windows has, connected or not.
+        var set = Native.SetupDiGetClassDevsNoGuid(IntPtr.Zero, null, IntPtr.Zero, 4);
+        if (set == new IntPtr(-1)) return;
+        try
+        {
+            for (uint i = 0; ; i++)
+            {
+                var d = new Native.DeviceData { Size = Marshal.SizeOf<Native.DeviceData>() };
+                if (!Native.SetupDiEnumDeviceInfo(set, i, ref d)) break;
+                var buffer = new StringBuilder(512);
+                var instance = Native.SetupDiGetDeviceInstanceId(set, ref d, buffer, buffer.Capacity, out _) ? buffer.ToString() : "";
+                if (instance.Length == 0 || devices.ContainsKey(instance)) continue;
+                bool usb = IsUsbDevice(instance);
+                var name = Property(set, ref d, 12) ?? Property(set, ref d, 0) ?? "";
+                // Only USB devices, their functions and serial ports matter here.
+                if (!instance.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase) && Remembered.ComOf(name).Length == 0) continue;
+                all[instance] = new(StringDevProperty(set, ref d, DevicePropertiesCategory, 8), "", [], name);
+                if (!usb || Remembered.VidPid(instance) is not var (vid, pid)) continue;
+                entries.Add(new RememberedDevice
+                {
+                    InstanceId = instance, Name = name, VendorId = vid, ProductId = pid,
+                    LocationInfo = Property(set, ref d, 13) ?? "", LocationPath = MultiProperty(set, ref d, 35).FirstOrDefault() ?? "",
+                    // DEVPKEY_Device_LastArrivalDate and LastRemovalDate.
+                    LastConnected = DateDevProperty(set, ref d, InstallCategory, 102), LastRemoved = DateDevProperty(set, ref d, InstallCategory, 103)
+                });
+            }
+        }
+        finally { Native.SetupDiDestroyDeviceInfoList(set); }
+        // A serial port names its COM number; it belongs to the USB device above it.
+        var coms = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (instance, node) in all)
+            if (Remembered.ComOf(node.Name) is { Length: > 0 } com && UsbOwner(node.Parent, all) is string owner) coms.TryAdd(owner, com);
+        foreach (var r in entries) r.ComPort = coms.GetValueOrDefault(r.InstanceId, "");
+        foreach (var n in snapshot.Nodes.Where(n => n.InstanceId.Length > 0))
+        {
+            n.LocationPath = devices.GetValueOrDefault(n.InstanceId)?.LocationPath ?? "";
+            n.ComPort = coms.GetValueOrDefault(n.InstanceId, "");
+        }
+        snapshot.Remembered = [.. entries.OrderBy(r => r.VendorId).ThenBy(r => r.ProductId).ThenByDescending(r => r.LastConnected)];
+    }
+    private static readonly Guid DevicePropertiesCategory = new("4340A6C5-93FA-4706-972C-7B648008A5A7"), InstallCategory = new("83DA6326-97A6-4088-9453-A1923F573B29");
+    private static string StringDevProperty(IntPtr set, ref Native.DeviceData d, Guid category, uint id)
+    {
+        var key = new Native.PropertyKey { Category = category, Id = id };
+        var bytes = new byte[1024];
+        // DEVPROP_TYPE_STRING.
+        return Native.SetupDiGetDeviceProperty(set, ref d, ref key, out uint type, bytes, (uint)bytes.Length, out uint needed, 0) && type == 0x12 ? Encoding.Unicode.GetString(bytes, 0, (int)Math.Min(needed, (uint)bytes.Length)).TrimEnd('\0') : "";
+    }
+    private static DateTime? DateDevProperty(IntPtr set, ref Native.DeviceData d, Guid category, uint id)
+    {
+        var key = new Native.PropertyKey { Category = category, Id = id };
+        var bytes = new byte[8];
+        // DEVPROP_TYPE_FILETIME.
+        return Native.SetupDiGetDeviceProperty(set, ref d, ref key, out uint type, bytes, 8, out _, 0) && type == 0x10 && BitConverter.ToInt64(bytes) is > 0 and var ft ? DateTime.FromFileTime(ft) : null;
     }
     // The USB device a devnode belongs to: itself, or the USB device above it through a composite device's
     // interfaces (…&MI_00) and HID collections. Anything else in between, such as a Bluetooth link, means

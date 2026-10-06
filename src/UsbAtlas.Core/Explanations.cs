@@ -159,6 +159,8 @@ internal static class Explanations
                 return DriverExplanation(n, noun);
             case Billboard.Failed or Billboard.NotEntered when n.Billboard != null:
                 return Billboard.Explain(n, issue);
+            case Remembered.ComChanged or Remembered.OtherPorts when n.OtherEntries.Count > 0:
+                return Remembered.Explain(n, issue);
             case Containers.SharedId:
                 return Containers.Explain(n);
             case LinuxProblems.NoDriver or LinuxProblems.NotAuthorized:
