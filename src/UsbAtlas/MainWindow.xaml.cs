@@ -279,6 +279,7 @@ public partial class MainWindow : Window
             Field("Path", pathLabels.GetValueOrDefault(node.Id, NotApplicable), PathHelp);
             Field("Port number", node.Port.ToString("00"), "The number Windows gives this port on its hub. A USB 3 socket has two, one for its USB 2 half and one for its USB 3 half.");
             Field("Port name", PortNameEditor(node), "Your own name for this socket. It stays with the hub port when the device in it changes.");
+            Field("Socket speed", SocketSpeedEditor(node), SocketSpeedHelp);
             Field("Port supports", node.Protocols, "The USB versions Windows says this port carries.");
             Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)), ConnectorHelp + (UsbC.Socket(snapshot, node).Count > 0
                 ? " Windows doesn't report whether a USB-C socket carries USB4 or Thunderbolt, DisplayPort, or what Power Delivery contract it has. Detection details says what is known." : ""));
