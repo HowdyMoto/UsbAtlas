@@ -94,6 +94,9 @@ public sealed class UsbNode
     // Descriptors as read, only when a scan is asked to keep them.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RawDescriptors? Raw { get; set; }
+    // For a 2.4 GHz receiver, the fast drive or video device on its hub whose noise can reach it (Interference.cs).
+    [System.Text.Json.Serialization.JsonIgnore]
+    public UsbNode? NoisyNeighbor { get; set; }
     public bool SpeedLimited { get; set; }
     // A high-speed hub's transaction translators, from its bDeviceProtocol: Single (one for all ports),
     // Per port, Not reported, or None for devices and hubs that aren't running at high speed.

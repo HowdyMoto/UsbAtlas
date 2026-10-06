@@ -224,6 +224,8 @@ enclosures. Flash drives, card readers and ordinary disk enclosures all report p
 storage, so their product names decide; a drive with an uninformative name is shown as
 generic storage. USB never says whether a disk is a hard drive or an SSD.
 
+**2.4 GHz receivers:** USB 3 ports, cables and busy drives give off radio noise around 2.4 GHz, so a wireless mouse or keyboard receiver, a controller or headset dongle, or a Bluetooth adapter right beside one can lose range or drop out. Wireless controllers, such as Bluetooth adapters, and input or audio devices whose names say receiver, dongle or wireless are taken to be receivers, as Detection details says, and search finds "2.4 GHz receiver". A receiver gets a note, **USB 3 nearby**, when a drive or video device on the same plug-in hub, or the other side of the same USB 3 hub, is linked at 5 Gb/s or faster, naming it and what to move. Nothing is measured, so it's a note. Sockets on the computer itself aren't compared, since Windows' port numbers don't follow their physical order.
+
 **Saved labels:** stored in `%LOCALAPPDATA%/UsbAtlas/device-labels.json`. A unique
 VID/PID/serial identity follows a device between ports. Devices without a unique
 serial use a port-path/VID/PID key: moving them requires a new label, and an

@@ -91,6 +91,7 @@ public sealed class UsbScanner
             node.ContainerId = devices.GetValueOrDefault(node.InstanceId)?.ContainerId ?? "";
         snapshot.Containers = [.. Containers.Read(snapshot.Nodes.Select(n => n.ContainerId)).Values];
         Containers.Analyze(snapshot);
+        Interference.Analyze(snapshot);
         PortMap.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);

@@ -75,6 +75,7 @@ internal sealed class LinuxUsbScanner(ISysfs sys)
         HubRelationships.Analyze(snapshot);
         HubRelationships.NoteReducedSpeed(snapshot);
         PortMap.Analyze(snapshot);
+        Interference.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         return snapshot;
     }

@@ -31,6 +31,8 @@ internal static class IssueRules
         if (n.Display != null) issues.Add((Displays.SeverityOf(n), Displays.NotShowing));
         // Unrelated hardware grouped as one device by Windows still works, so it's a note.
         if (n.ContainerIdShared) issues.Add((Severity.Note, Containers.SharedId));
+        // Radio noise isn't measured, so a receiver beside a fast drive is a note.
+        if (n.NoisyNeighbor != null) issues.Add((Severity.Note, Interference.Nearby));
         // Firmware describing a port wrongly changes nothing plugged into it, so each finding is a note.
         foreach (var finding in n.PortMapWarnings) issues.Add((Severity.Note, finding));
         // A nearly full link still fits everything on it, so it's a note; peaks that can't all fit are a warning.
