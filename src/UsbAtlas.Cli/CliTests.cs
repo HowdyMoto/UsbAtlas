@@ -99,6 +99,8 @@ internal static class CliTests
         var pciHost = DemoData.Create(); pciHost.Controllers[0].PciId = "1B21:2142";
         var pcie = Reports.Show(new Session(pciHost, "demo"), pciHost.Controllers[0])["node"]!["controller"]!;
         Check(pcie["pcieLink"]!["generation"]!.GetValue<int>() == 3 && pcie["pcieLink"]!["lanes"]!.GetValue<int>() == 4 && pcie["endpointsInUse"]!.GetValue<int>() > 0, "show reports a controller's PCIe link and endpoints in use.");
+        Check(host["node"]!["usbC"]!.AsArray().Any(l => l!.ToString().StartsWith("USB4 host router: USB4 host router")) && Reports.Show(s, s.Resolve("H01/01"))["node"]!["socket"]!["usbCFeatures"]!["Power Delivery"]!.ToString().StartsWith("Not reported"),
+            "show gives the computer's USB4 router and says what a USB-C socket doesn't report.");
         Check(host["node"]!["hub"]!["ports"]!.GetValue<int>() == 9 && host["children"]!.AsArray().Count == 9, "A merged host shows its root ports.");
 
         var budget = Reports.Budget(s, null);

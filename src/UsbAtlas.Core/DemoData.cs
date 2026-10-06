@@ -63,7 +63,7 @@ internal static class DemoData
         enclosure.PortConnectorIsTypeC = true;
         foreach (var n in root.Walk().Skip(1)) n.PortIsUserConnectable ??= true;
         // Windows' defaults: USB selective suspend on in the power plan, and every device allowed to be turned off.
-        var snapshot = new Snapshot { IsDemo = true, UsbSuspendPluggedIn = true, UsbSuspendOnBattery = true, OnBattery = false, Controllers = [new UsbNode { Id = "demo", Name = "USB xHCI host controller", Kind = "Controller", PcieGeneration = 3, PcieLanes = 4, PcieMaxGeneration = 3, PcieMaxLanes = 4, Children = [root], PowerSource = "System supplied", Location = "Host", LocationEvidence = "Demo host controller." }] };
+        var snapshot = new Snapshot { IsDemo = true, UsbSuspendPluggedIn = true, UsbSuspendOnBattery = true, OnBattery = false, Usb4HostRouters = ["USB4 host router"], Usb4Devices = [], UsbCConnectorManager = true, Controllers = [new UsbNode { Id = "demo", Name = "USB xHCI host controller", Kind = "Controller", PcieGeneration = 3, PcieLanes = 4, PcieMaxGeneration = 3, PcieMaxLanes = 4, Children = [root], PowerSource = "System supplied", Location = "Host", LocationEvidence = "Demo host controller." }] };
         foreach (var node in snapshot.Nodes)
         {
             node.NameSource = "Illustrative sample data";

@@ -15,7 +15,10 @@ namespace UsbAtlas.Cli;
 internal static class EventLog
 {
     private const string PnpConfiguration = "Microsoft-Windows-Kernel-PnP/Configuration";
-    private static readonly string[] UsbProviders = ["Microsoft-Windows-Kernel-PnP", "Microsoft-Windows-USB-USBHUB3", "Microsoft-Windows-USB-USBXHCI", "Microsoft-Windows-USB-UCX", "Microsoft-Windows-USB-USBPORT", "Microsoft-Windows-USB-USBHUB", "USBHUB3", "usbhub", "USBXHCI"];
+    // The USB-C connector manager's failures: the firmware's USB-C controller (UCSI) didn't answer a command.
+    // Only computers with UCSI have this log.
+    private const string Ucsi = "Microsoft-Windows-USB-UCMUCSICX/Operational";
+    private static readonly string[] UsbProviders = ["Microsoft-Windows-Kernel-PnP", "Microsoft-Windows-USB-USBHUB3", "Microsoft-Windows-USB-USBXHCI", "Microsoft-Windows-USB-UCX", "Microsoft-Windows-USB-USBPORT", "Microsoft-Windows-USB-USBHUB", "USBHUB3", "usbhub", "USBXHCI", "Microsoft-Windows-USB-USB4DeviceRouter-EventLogs"];
     // Graphics drivers' own providers, and Display, which logs a driver that stopped responding and recovered (4101).
     private static readonly string[] DisplayProviders = ["Display", "nvlddmkm", "amdkmdag", "amdwddmg", "igfx", "igfxn", "Microsoft-Windows-DxgKrnl"];
     private static readonly Regex Graphics = new(@"nvlddmkm|NVIDIA|amdkmdag|amdwddmg|\bAMD\b|Radeon|igfx|Intel\(R\)[^;]*Graphics|Display", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -35,6 +38,7 @@ internal static class EventLog
         // Each query has its own cap, so a busy log can't push the others' events out of the window.
         entries.AddRange(Read(PnpConfiguration, $"*[System[{recent}]]", problems, Keep));
         entries.AddRange(Read("System", $"*[System[Provider[{Names(UsbProviders)}] and {recent}]]", problems, Keep));
+        entries.AddRange(Read(Ucsi, $"*[System[{recent}]]", problems, Keep, optional: true));
         if (!usbOnly)
         {
             entries.AddRange(Read("System", $"*[System[Provider[{Names(DisplayProviders)}] and {recent}]]", problems, Keep));
@@ -51,7 +55,7 @@ internal static class EventLog
         var byInstance = s.Snapshot.Nodes.Where(n => n.InstanceId.Length > 0).GroupBy(n => n.InstanceId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         var report = Reports.Header(s, "events");
         report["window"] = $"last {Window(since)}";
-        report["note"] = "Kernel-PnP 400 and 410 are normal setup and start events; 411 means a device failed to start, 219 a driver failed to load, 420/430 removal or a device needing more setup. Display events cover monitors and graphics adapters coming and going and graphics drivers being installed, disabled or reset (Display 4101: a driver stopped responding and recovered). Restart events name the program that restarted the computer (User32 1074), or a restart nothing asked for (Kernel-Power 41). The path is where a USB device is now, when it's connected." + (usbOnly ? " Showing USB events only." : "");
+        report["note"] = "Kernel-PnP 400 and 410 are normal setup and start events; 411 means a device failed to start, 219 a driver failed to load, 420/430 removal or a device needing more setup. UCMUCSICX events mean the computer's USB-C controller firmware (UCSI) failed a command, which can stop charging, video or role swaps over USB-C. Display events cover monitors and graphics adapters coming and going and graphics drivers being installed, disabled or reset (Display 4101: a driver stopped responding and recovered). Restart events name the program that restarted the computer (User32 1074), or a restart nothing asked for (Kernel-Power 41). The path is where a USB device is now, when it's connected." + (usbOnly ? " Showing USB events only." : "");
         if (problems.Count > 0) report["logDiagnostics"] = J.Arr(problems.Select(p => (JsonNode)p));
         report["events"] = J.Arr(shown.Select(e =>
         {
@@ -106,13 +110,15 @@ internal static class EventLog
         || text.Contains(@"HID\", StringComparison.OrdinalIgnoreCase) || text.Contains(@"USBSTOR\", StringComparison.OrdinalIgnoreCase);
 
     private delegate (string Category, string Instance)? Classifier(string provider, int id, List<(string Name, string Value)> data);
-    private static List<Entry> Read(string channel, string query, List<string> problems, Classifier keep)
+    // An optional log that isn't on this computer, such as UCSI's on a desktop without USB-C, isn't a problem.
+    private static List<Entry> Read(string channel, string query, List<string> problems, Classifier keep, bool optional = false)
     {
         var result = new List<Entry>();
         var handle = EvtQuery(IntPtr.Zero, channel, query, 0x1 | 0x200);
         if (handle == IntPtr.Zero)
         {
             int error = Marshal.GetLastWin32Error();
+            if (optional && error is 15007 or 2) return result;
             if (!problems.Any(p => p.StartsWith(channel + ":", StringComparison.Ordinal))) problems.Add($"{channel}: " + (error == 5 ? "access denied; this log needs administrator rights here." : error is 15007 or 2 ? "log not found." : new System.ComponentModel.Win32Exception(error).Message));
             return result;
         }
