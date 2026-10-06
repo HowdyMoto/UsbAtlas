@@ -108,6 +108,19 @@ public partial class MainWindow
             show!.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
             Check(selected == monitor, "Show hub must select the hub.");
 
+            // Properties explains every row it shows, for each kind of node, and every tree entry explains itself.
+            foreach (var node in new[] { snapshot.Controllers[0], monitor, monitor.Children[0], snapshot.Nodes.First(n => n.Id == "demo/root/7") })
+            {
+                SelectNode(node); UpdateLayout();
+                foreach (var row in Details.Children.OfType<Grid>().Where(g => Equals(g.Tag, "field")))
+                {
+                    var label = row.Children.OfType<TextBlock>().First();
+                    Check(label.ToolTip is string { Length: > 0 }, $"The Properties row “{label.Text}” for {node.Kind} must explain itself on hover.");
+                }
+            }
+            foreach (var item in VisualDescendants(DeviceTree).OfType<TreeViewItem>())
+                Check(item.ToolTip is string { Length: > 0 }, $"Every device tree entry must explain itself on hover ({item.Header}).");
+
             // The legend names the stub and every card color.
             UpdateLayout();
             var legendText = string.Join(" ", VisualDescendants(SocketLegend).OfType<TextBlock>().Select(t => t.Text));

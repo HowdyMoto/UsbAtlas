@@ -112,6 +112,7 @@ internal static class EventLog
     private static bool UsbRelated(string text) => text.Contains(@"USB\", StringComparison.OrdinalIgnoreCase) || text.Contains("VID_", StringComparison.OrdinalIgnoreCase)
         || text.Contains(@"HID\", StringComparison.OrdinalIgnoreCase) || text.Contains(@"USBSTOR\", StringComparison.OrdinalIgnoreCase);
 
+    internal const int ReadCap = 20000;
     private delegate (string Category, string Instance)? Classifier(string provider, int id, List<(string Name, string Value)> data);
     // An optional log that isn't on this computer, such as UCSI's on a desktop without USB-C, isn't a problem.
     private static List<Entry> Read(string channel, string query, List<string> problems, Classifier keep, bool optional = false)
@@ -129,8 +130,9 @@ internal static class EventLog
         try
         {
             var events = new IntPtr[64];
-            // The Configuration log records every device set up, so the scan is capped.
-            for (int scanned = 0; scanned < 20000 && EvtNext(handle, events.Length, events, 2000, 0, out int returned);)
+            // The Configuration log records every device set up, so the scan is capped, newest first, and says so.
+            int scanned = 0;
+            for (; scanned < ReadCap && EvtNext(handle, events.Length, events, 2000, 0, out int returned);)
             {
                 for (int i = 0; i < returned; i++)
                 {
@@ -139,6 +141,7 @@ internal static class EventLog
                 }
                 scanned += returned;
             }
+            if (scanned >= ReadCap) problems.Add($"{channel}: read the newest {ReadCap:N0} matching events and stopped, so older history isn't shown. A shorter --since covers the window completely.");
         }
         finally
         {
