@@ -822,6 +822,20 @@ public partial class MainWindow
             Check(RefreshButton.ToolTip is StackPanel tip && tip.Children.OfType<TextBlock>().First().Text.Contains("auto"), "Refresh's tooltip must say auto-refresh is on.");
             item = RefreshMenu().Items.OfType<MenuItem>().Single(); item.IsChecked = false; item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Check(!autoRefresh && AutoRefreshDot.Visibility == Visibility.Collapsed, "Turning auto-refresh off must clear the dot.");
+            // The item is a themed toggle switch, not WPF's light check box: outlined and left when off, accent and right when on.
+            foreach (bool on in new[] { false, true })
+            {
+                SetAutoRefresh(on);
+                var menu = RefreshMenu(); menu.IsOpen = true; menu.UpdateLayout();
+                var toggle = menu.Items.OfType<MenuItem>().Single(); toggle.ApplyTemplate();
+                var track = (Border)toggle.Template.FindName("Track", toggle); var thumb = (System.Windows.Shapes.Ellipse)toggle.Template.FindName("Thumb", toggle);
+                bool drawn = track.Visibility == Visibility.Visible && thumb.HorizontalAlignment == (on ? HorizontalAlignment.Right : HorizontalAlignment.Left)
+                    && track.Background == (on ? Brush("Accent") : Brushes.Transparent) && thumb.Fill == Brush(on ? "OnAccent" : "TextMuted") && menu.Background == Brush("Surface");
+                { var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)Math.Ceiling(menu.ActualWidth), (int)Math.Ceiling(menu.ActualHeight), 96, 96, PixelFormats.Pbgra32); bitmap.Render(menu); var png = new System.Windows.Media.Imaging.PngBitmapEncoder(); png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap)); using var stream = System.IO.File.Create($"refresh-menu-{(on ? "on" : "off")}-preview.png"); png.Save(stream); }
+                menu.IsOpen = false;
+                Check(drawn, $"Auto-refresh must be a themed toggle switch, {(on ? "on: accent track, thumb right" : "off: outlined track, thumb left")}.");
+            }
+            SetAutoRefresh(false);
         }
         finally { SetAutoRefresh(wasOn); }
         // Demo refresh completes immediately, exercising the shortest possible scan.
