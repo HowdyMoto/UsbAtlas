@@ -10,6 +10,7 @@ internal static class SelfTests
         Check(UsbScanner.Bcd(0x0104) == "1.04" && UsbScanner.Bcd(0x0210) == "2.10" && UsbScanner.Bcd(0x1A0F) == "1A.0F", "Versions and revisions read as binary-coded decimal.");
         Check(Topology.SearchText(new UsbNode { DeviceRevision = "1.04" }, null).Contains("rev 1.04"), "Search finds a device by its revision.");
         BillboardTests(Check);
+        ContainerTests(Check);
         Check(UsbScanner.DecodeSpeed(2, 1).Item2 == 5000, "EX V2 must override legacy high-speed reporting.");
         Check(UsbScanner.DecodeSpeed(2, 4).Item2 == null, "SuperSpeedPlus must not pretend to know exact lane rate.");
         Check(UsbScanner.DecodeSpeed(0, 0).Item2 == 1.5, "Low-speed decoding.");
@@ -536,6 +537,41 @@ internal static class SelfTests
         return d;
     }
     private static byte[] Bos(params byte[][] caps) { var body = caps.SelectMany(c => c).ToArray(); return [5, 15, .. BitConverter.GetBytes((ushort)(5 + body.Length)), (byte)caps.Length, .. body]; }
+
+    private static void ContainerTests(Action<bool, string> Check)
+    {
+        // A monitor: its hub is named from the USB ID database, and its HID and Billboard sit behind it.
+        const string monitorId = "{11111111-0000-0000-0000-000000000001}", realtek = "{20b9cde5-7039-e011-a935-0002a5d5c51b}";
+        var hid = new UsbNode { Id = "r/1/1", Kind = "Device", Name = "USB Input Device", NameSource = "Generic reported name", ContainerId = monitorId };
+        var bb = new UsbNode { Id = "r/1/2", Kind = "Device", Name = "Billboard", NameSource = "USB product / manufacturer descriptors", ContainerId = monitorId };
+        var monitorHub = new UsbNode { Id = "r/1", Kind = "Hub", Name = "Realtek RTS5411 Hub", LookupProduct = "RTS5411 Hub", NameSource = "USB ID lookup", ContainerId = monitorId, Children = [hid, bb] };
+        // Two physical USB 3 hubs, each seen as a USB 2 side and a USB 3 side, whose firmware gives both the same Container ID.
+        UsbNode Side(string id, bool usb2, string companion) => new() { Id = id, Kind = "Hub", Name = "Realtek USB Hub", NameSource = "USB ID lookup", ContainerId = realtek, IsUsb2Companion = usb2, CompanionHubId = companion };
+        var a2 = Side("r/2", true, "r/3"); var a3 = Side("r/3", false, "r/2"); var b2 = Side("r/4", true, "r/5"); var b3 = Side("r/5", false, "r/4");
+        var builtIn = new UsbNode { Id = "r/6", Kind = "Device", Name = "Webcam", ContainerId = "{00000000-0000-0000-ffff-ffffffffffff}" };
+        var builtIn2 = new UsbNode { Id = "r/7", Kind = "Device", Name = "Fingerprint reader", ContainerId = "{00000000-0000-0000-ffff-ffffffffffff}" };
+        var snapshot = new Snapshot
+        {
+            Controllers = [new UsbNode { Id = "c", Kind = "Controller", Children = [new UsbNode { Id = "r", Kind = "Root hub", Children = [monitorHub, a2, a3, b2, b3, builtIn, builtIn2] }] }],
+            Containers = [new DeviceContainer { Id = monitorId, Name = "DELL U2723QE", Model = "DELL U2723QE" }, new DeviceContainer { Id = realtek, Name = "USB3.2 Hub", Model = "USB3.2 Hub" }]
+        };
+        Containers.Analyze(snapshot); Containers.Analyze(snapshot);
+        Check(monitorHub.Name == "Realtek RTS5411 Hub in DELL U2723QE" && monitorHub.NameSource == "USB ID lookup and device container" && hid.Name == "USB Input Device in DELL U2723QE" && bb.Name == "Billboard",
+            "Chip-named and generic members are named after their product once; a device that names itself keeps its name.");
+        Check(Containers.PartOf(snapshot, hid) == "DELL U2723QE" && Containers.Of(snapshot, monitorHub)!.Value.Others.Count == 2 && IssueRules.For(monitorHub).Count == 0,
+            "Members of one product show what they're part of.");
+        Check(!a2.ContainerIdShared && a3.ContainerIdShared && b3.ContainerIdShared && IssueRules.For(a3).Contains((Severity.Note, Containers.SharedId)) && a2.Name == "Realtek USB Hub",
+            "Two physical hubs with one Container ID are flagged once each, on their USB 3 side, and aren't renamed.");
+        Check(Containers.SharingWith(snapshot, a3).SequenceEqual([b3]) && Containers.SharingWith(snapshot, a2).SequenceEqual([b3]) && Containers.PartOf(snapshot, a2) == "ID shared with 1 other",
+            "A hub's own other side isn't unrelated hardware.");
+        Check(Containers.Explain(a3).Cause.Contains("same Container ID") && Containers.Explain(a3).Affects.StartsWith("No:"), "The explanation says it's harmless and comes from firmware.");
+        Check(!builtIn.ContainerIdShared && Containers.Of(snapshot, builtIn) == null && Containers.PartOf(snapshot, builtIn) == "", "The computer's own container groups nothing.");
+        // One hub's two sides alone are one unit, and a generic container name names nothing.
+        snapshot.Controllers[0].Children[0].Children.RemoveAll(n => n == b2 || n == b3);
+        Containers.Analyze(snapshot);
+        Check(!a3.ContainerIdShared && Containers.Of(snapshot, a2)!.Value.Product == "" && a2.Name == "Realtek USB Hub", "A USB 3 hub's two sides are one product.");
+        Check(Topology.SearchText(monitorHub, null).Contains("DELL U2723QE"), "Search finds devices by their container's name.");
+    }
 
     private static void BillboardTests(Action<bool, string> Check)
     {

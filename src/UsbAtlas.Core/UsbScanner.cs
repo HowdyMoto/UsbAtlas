@@ -12,7 +12,7 @@ public sealed class UsbScanner
     private readonly Dictionary<string, (string Name, string Manufacturer, string InstanceId)> names = new(StringComparer.OrdinalIgnoreCase);
     // Every present devnode by instance ID: its parent, its driver service and, for a HID collection, its
     // usages; its name, driver key and any Device Manager problem code.
-    internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0);
+    internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0, string ContainerId = "");
     private readonly Dictionary<string, DevNode> devices = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> hidUsages = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
@@ -80,6 +80,10 @@ public sealed class UsbScanner
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         HubRelationships.Analyze(snapshot);
         HubRelationships.NoteReducedSpeed(snapshot);
+        foreach (var node in snapshot.Nodes.Where(n => n.Kind is "Device" or "Hub" && n.InstanceId.Length > 0))
+            node.ContainerId = devices.GetValueOrDefault(node.InstanceId)?.ContainerId ?? "";
+        snapshot.Containers = [.. Containers.Read(snapshot.Nodes.Select(n => n.ContainerId)).Values];
+        Containers.Analyze(snapshot);
         PortMap.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
@@ -283,6 +287,13 @@ public sealed class UsbScanner
     internal static bool DescriptorRead(byte[] connectionInfo) => connectionInfo[4] == 18 && connectionInfo[5] == 1;
     // A device qualifier is 10 bytes, type 6, naming a USB version of 2.0 or later.
     internal static bool HighSpeedQualifier(byte[]? qualifier) => qualifier is { Length: >= 10 } q && q[0] == 10 && q[1] == 6 && BitConverter.ToUInt16(q, 2) >= 0x0200;
+    // DEVPKEY_Device_ContainerId, a DEVPROP_TYPE_GUID.
+    private static string ContainerProperty(IntPtr set, ref Native.DeviceData d)
+    {
+        var key = new Native.PropertyKey { Category = new("8C7ED206-3F8A-4827-B3AB-AE9E1FAEFC6C"), Id = 2 };
+        var bytes = new byte[16];
+        return Native.SetupDiGetDeviceProperty(set, ref d, ref key, out uint type, bytes, (uint)bytes.Length, out _, 0) && type == 0x0D ? Containers.Normalize(new Guid(bytes)) : "";
+    }
     private static readonly Guid PciDeviceProperties = new("3AB22E31-8264-4B4E-9AF5-A8D2D8E33E62");
     private static int? PciProperty(IntPtr set, ref Native.DeviceData d, uint id)
     {
@@ -381,7 +392,7 @@ public sealed class UsbScanner
                 var usages = instance.StartsWith(@"HID\", StringComparison.OrdinalIgnoreCase) ? DeviceIdentity.ReadHidUsages(MultiProperty(set, ref d, 1)) : [];
                 // DN_HAS_PROBLEM: Device Manager shows the problem code on the device's General tab.
                 int problem = Native.CM_Get_DevNode_Status(out var devStatus, out var code, d.DevInst, 0) == 0 && (devStatus & 0x400) != 0 ? (int)code : 0;
-                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem);
+                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem, ContainerProperty(set, ref d));
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }

@@ -157,6 +157,8 @@ internal static class Explanations
                 return DriverExplanation(n, noun);
             case Billboard.Failed or Billboard.NotEntered when n.Billboard != null:
                 return Billboard.Explain(n, issue);
+            case Containers.SharedId:
+                return Containers.Explain(n);
             case string finding when PortMap.IsFinding(finding):
                 return PortMapExplanation(finding);
             case PowerSaving.Warning:

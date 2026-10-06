@@ -179,6 +179,14 @@ internal static class Reports
         if (n.DriverService.Length > 0 || n.DriverVersion.Length > 0 || n.DriverProblems.Count > 0)
             node["driver"] = J.Obj(("service", J.S(n.DriverService)), ("version", J.S(n.DriverVersion)), ("date", J.S(n.DriverDate)), ("provider", J.S(n.DriverProvider)), ("inf", J.S(n.DriverInf)),
                 ("problems", J.Some(n.DriverProblems.Select(p => (JsonNode)J.Obj(("code", p.Code), ("meaning", p.Meaning), ("instanceId", p.InstanceId), ("name", J.S(p.Name)))))));
+        if (n.ContainerId.Length > 0 && !Containers.IsRoot(n.ContainerId))
+        {
+            var c = s.Snapshot.Containers.FirstOrDefault(x => x.Id.Equals(n.ContainerId, StringComparison.OrdinalIgnoreCase));
+            var part = Containers.Of(s.Snapshot, n);
+            node["container"] = J.Obj(("id", n.ContainerId), ("name", J.S(c?.Name)), ("manufacturer", J.S(c?.Manufacturer)), ("model", J.S(c?.Model)),
+                ("partOf", J.S(part?.Product)), ("sameProduct", part is { } p ? J.Some(p.Others.Select(o => (JsonNode)J.Obj(("path", s.PathOf(o)), ("name", Topology.ShortName(o))))) : null),
+                ("sharedWithUnrelated", J.Some(Containers.SharingWith(s.Snapshot, n).Select(o => (JsonNode)J.Obj(("path", s.PathOf(o)), ("name", Topology.ShortName(o)))))));
+        }
         if (n.Billboard is BillboardInfo b)
             node["billboard"] = J.Obj(("version", b.Version), ("vconnPower", b.VconnPower), ("preferredMode", b.PreferredMode),
                 ("insufficientPower", b.InsufficientPower ? true : null), ("powerDeliveryFailed", b.PowerDeliveryFailed ? true : null), ("additionalInfoUrl", J.S(b.AdditionalInfoUrl)),

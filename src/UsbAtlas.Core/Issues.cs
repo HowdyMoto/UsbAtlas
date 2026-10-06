@@ -27,6 +27,8 @@ internal static class IssueRules
         // A USB-C alternate mode that failed loses what it carries, such as the picture; one never asked for may be intended.
         if (Billboard.FailedModes(n).Count > 0) issues.Add((Severity.Warning, Billboard.Failed));
         else if (Billboard.NoneEntered(n)) issues.Add((Severity.Note, Billboard.NotEntered));
+        // Unrelated hardware grouped as one device by Windows still works, so it's a note.
+        if (n.ContainerIdShared) issues.Add((Severity.Note, Containers.SharedId));
         // Firmware describing a port wrongly changes nothing plugged into it, so each finding is a note.
         foreach (var finding in n.PortMapWarnings) issues.Add((Severity.Note, finding));
         // A nearly full link still fits everything on it, so it's a note; peaks that can't all fit are a warning.

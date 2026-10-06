@@ -143,6 +143,16 @@ each name came from, along with the original USB strings, Windows name and looku
 adapters it is usually the firmware version, the first thing their makers' support asks for. Search finds
 it as “rev 1.04”, and `diff` and `watch` report a device whose revision changed, as a firmware update does.
 
+**Device containers:** Windows groups the USB devices of one product, such as a monitor's hub, audio and
+Billboard, into a device container, by the Container ID the device reports or by where it sits. Properties'
+**Part of** row names the product, from the container's model name or your label on its top device, and
+Detection details lists the rest of it; `show` reports the same. A hub or device named from the USB ID
+database inside a container with a specific name is named after it, such as “Realtek RTS5411 Hub in DELL
+U2723QE”, and search finds devices by their container's name. When separate pieces of hardware report the
+same Container ID, which comes from firmware that gives every unit one ID, the top of each gets a
+**Container ID shared** note: everything works, but Windows' settings show them as one device. A USB 3 hub's
+two sides are one piece of hardware and aren't flagged.
+
 **Game controllers:** wheels, pedals, shifters, handbrakes, button boxes, joysticks and
 game pads are recognized by the HID collections Windows lists for them (a Joystick, Game
 pad, Multi-axis controller, Simulation controls or Game controls collection is how games
