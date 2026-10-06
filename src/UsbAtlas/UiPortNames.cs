@@ -22,6 +22,39 @@ public partial class MainWindow
         value => deviceLabels.TrySetPort(port, snapshot, value, out var error) ? null : error,
         value => { Draw(); ShowDetails(); StatusText.Text = value.Trim().Length == 0 ? "Port name removed." : "Port name saved."; });
 
+    // A socket's speed can be set when it has a USB 3 half: Windows doesn't report a port's top rate, so a
+    // 10 Gb/s port is drawn as a 5 Gb/s one until a device links that fast. The setting belongs to the
+    // socket, so it covers both halves, and a device that links faster still wins (DeviceIdentity.ClassifySocket).
+    private const string SocketSpeedHelp = "How fast this socket is, when the board's labels or manual say what Windows can't report: a 10 Gb/s port is drawn as 5 Gb/s until a device links that fast. Saved with port names, for both halves of the socket; a device that links faster still counts.";
+    internal const string SocketSpeedTag = "socket-speed";
+    private static readonly (string Label, double? Mbps)[] SocketSpeeds = [("As detected", null), ("5 Gb/s", 5000), ("10 Gb/s or faster", 10000)];
+    private bool CanRateSocket(UsbNode node) => CanNamePort(node) && snapshot.Nodes.Any(n => (n.Id == node.Id || n.Id == node.CompanionId) && n.Protocols.Contains("USB 3.x"));
+    private static string SocketSpeedChoice(double? mbps) => SocketSpeeds.Last(s => s.Mbps == null || mbps >= s.Mbps).Label;
+
+    // The row keeps a button of the same height for every node, so the inspector's rows stay in place; it is
+    // disabled where there is no socket speed to set.
+    private FrameworkElement SocketSpeedEditor(UsbNode node)
+    {
+        bool can = CanRateSocket(node);
+        var button = new Button { Content = !can ? "Not applicable" : node.SocketRatedMbps is double rated ? SocketSpeedChoice(rated) + " · Edit" : "As detected · Set…", IsEnabled = can, Padding = new Thickness(5, 1, 5, 1), HorizontalAlignment = HorizontalAlignment.Left, Tag = SocketSpeedTag,
+            ToolTip = can ? "Tell USB Atlas how fast this socket is, from the board's labels or manual, when Windows can't report it" : "Only a socket with a USB 3 half has a speed to set." };
+        if (!can) return button;
+        var menu = new ContextMenu { Background = Brush("Surface"), Foreground = Brush("TextPrimary"), BorderBrush = Brush("Border"), PlacementTarget = button, Placement = PlacementMode.Bottom };
+        foreach (var (label, mbps) in SocketSpeeds)
+        {
+            var item = new MenuItem { Header = label, IsCheckable = true, IsChecked = node.SocketRatedMbps == mbps, Tag = mbps };
+            item.Click += (_, _) => SetSocketSpeed(node, mbps);
+            menu.Items.Add(item);
+        }
+        button.Click += (_, _) => menu.IsOpen = true;
+        return button;
+    }
+    private void SetSocketSpeed(UsbNode port, double? mbps)
+    {
+        if (!deviceLabels.TrySetSocketSpeed(port, snapshot, mbps, out var error)) { StatusText.Text = error; return; }
+        Draw(); ShowDetails(); StatusText.Text = mbps == null ? "Socket speed setting removed." : $"Socket speed set to {SocketSpeedChoice(mbps)}.";
+    }
+
     private void EditDeviceName(UsbNode node, FrameworkElement target)
     {
         if (!CanNameDevice(node)) return;

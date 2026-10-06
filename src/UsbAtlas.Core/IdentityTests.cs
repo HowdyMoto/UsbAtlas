@@ -64,6 +64,19 @@ internal static class IdentityTests
             snapshot.IsDemo = false; node.Serial = "duplicate";
             snapshot.Controllers.Add(new UsbNode { Kind = node.Kind, VendorId = node.VendorId, ProductId = node.ProductId, Serial = node.Serial, Id = "other" });
             Check(!DeviceLabels.FollowsDevice(node, snapshot), "Duplicate serials must use port-scoped labels.");
+            // A socket's speed is saved for both halves, survives a reload, which draws the sockets again, and clears from either half.
+            var usb2Half = new UsbNode { Id = "host/root/1", Kind = "Empty port", Port = 1, Protocols = "USB 2.0", PortIsUserConnectable = true, CompanionId = "host/root/5" };
+            var usb3Half = new UsbNode { Id = "host/root/5", Kind = "Empty port", Port = 5, Protocols = "USB 3.x", PortIsUserConnectable = true, CompanionId = "host/root/1" };
+            var sockets = new Snapshot { Controllers = [new UsbNode { Id = "host", Kind = "Controller", Children = [new UsbNode { Id = "host/root", Kind = "Root hub", Children = [usb2Half, usb3Half] }] }] };
+            labels = new DeviceLabels(file);
+            Check(labels.TrySetSocketSpeed(usb3Half, sockets, 10000, out _) && usb2Half.SocketRatedMbps == 10000 && usb2Half.SocketSpeed == "≥10 Gb/s" && usb3Half.SocketSpeed == "≥10 Gb/s", "Setting a socket's speed must rate both halves and draw them again.");
+            usb2Half.SocketRatedMbps = null; usb3Half.SocketRatedMbps = null; new DeviceLabels(file).Apply(sockets);
+            Check(usb3Half.SocketRatedMbps == 10000 && usb3Half.SocketSpeed == "≥10 Gb/s", "A socket's speed must survive a reload.");
+            Check(!labels.TrySetSocketSpeed(usb3Half, sockets, 20000, out var rateError) && rateError.Length > 0 && usb3Half.SocketRatedMbps == 10000, "Only 5 Gb/s and 10 Gb/s can be set.");
+            Check(labels.TrySetSocketSpeed(usb2Half, sockets, null, out _) && usb3Half.SocketRatedMbps == null && usb3Half.SocketSpeed == "≥5 Gb/s", "Clearing the speed from the other half must clear the socket.");
+            sockets.IsDemo = true; Check(labels.TrySetSocketSpeed(usb3Half, sockets, 5000, out _) && usb3Half.SocketSpeed == "5 Gb/s", "Sample sockets take a speed of their own.");
+            sockets.IsDemo = false; labels.Apply(sockets);
+            Check(usb3Half.SocketRatedMbps == null && usb3Half.SocketSpeed == "≥5 Gb/s", "Sample socket speeds must not leak into hardware.");
             File.WriteAllText(file, "invalid json"); labels = new DeviceLabels(file);
             Check(!labels.TrySet(node, snapshot, "replacement", out _) && File.ReadAllText(file) == "invalid json", "Malformed label data must not be silently overwritten.");
             var blocked = new DeviceLabels(Path.Combine(folder, "missing", "labels.json"));

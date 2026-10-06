@@ -417,6 +417,17 @@ internal static class SelfTests
         usb3.Kind = "Device"; usb3.Speed = "SuperSpeedPlus · 10 Gb/s or higher";
         DeviceIdentity.ClassifySockets(host);
         Check(usb2.SocketSpeed == "≥10 Gb/s" && usb3.SocketSpeed == "≥10 Gb/s", "A device linked at SuperSpeedPlus proves the whole socket carries 10 Gb/s.");
+        // A speed the user set stands in for the top rate Windows can't report, on both halves, until a device links faster.
+        usb3.Kind = "Empty port"; usb3.Speed = "Not reported"; usb2.SocketRatedMbps = 10000;
+        DeviceIdentity.ClassifySockets(host);
+        Check(usb2.SocketSpeed == "≥10 Gb/s" && usb3.SocketSpeed == "≥10 Gb/s" && usb3.SocketEvidence.Contains("You set this socket's speed to 10 Gb/s or faster"), "A socket set to 10 Gb/s on either half is 10 Gb/s on both.");
+        usb2.SocketRatedMbps = 5000; DeviceIdentity.ClassifySockets(host);
+        Check(usb3.SocketSpeed == "5 Gb/s" && usb3.SocketEvidence.Contains("speed to 5 Gb/s;"), "A socket set to 5 Gb/s is capped at 5 Gb/s.");
+        usb3.Kind = "Device"; usb3.Speed = "SuperSpeedPlus · 10 Gb/s or higher"; DeviceIdentity.ClassifySockets(host);
+        Check(usb3.SocketSpeed == "≥10 Gb/s" && usb3.SocketEvidence.Contains("faster than the 5 Gb/s you set"), "A device linked at 10 Gb/s beats a 5 Gb/s setting and says so.");
+        lone.SocketRatedMbps = 10000; DeviceIdentity.ClassifySockets(host);
+        Check(lone.SocketSpeed == "USB 2.0", "A speed setting can't give a USB 2 socket a USB 3 half.");
+        usb2.SocketRatedMbps = null; lone.SocketRatedMbps = null;
         // A plug-in hub's own SuperSpeedPlus support sets its sockets' speed; a host's root ports stay open-ended.
         var port = new UsbNode { Id = "h/1", Kind = "Empty port", Protocols = "USB 3.x", PortIsUserConnectable = true, PortConnectorIsTypeC = false };
         DeviceIdentity.ClassifySocket([(port, new UsbNode { Kind = "Hub", SuperSpeedPlusCapable = true })]);
