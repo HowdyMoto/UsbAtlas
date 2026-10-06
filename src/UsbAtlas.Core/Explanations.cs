@@ -232,9 +232,13 @@ internal static class Explanations
     }).ToList();
 
     // A slow hub that slows nothing plugged into it is worth knowing, not a warning, and so is a built-in
-    // connection, which there's no way to change.
+    // connection, which there's no way to change, and a device whose speed costs nothing.
     internal static Severity SpeedSeverity(UsbNode n) =>
-        n.Kind == "Hub" && HeldBack(n).Count == 0 || n.Connector == "Internal" ? Severity.Note : Severity.Warning;
+        n.Kind == "Hub" && HeldBack(n).Count == 0 || n.Connector == "Internal" || SpeedCostsNothing(n) ? Severity.Note : Severity.Warning;
+    // A Billboard device only reports which USB-C alternate modes worked, a few bytes when asked, so how fast
+    // it links changes nothing. Billboard chips in USB-C docks and adapters often claim USB 2's high speed
+    // (they answer for a device qualifier) but link at full speed.
+    internal static bool SpeedCostsNothing(UsbNode n) => n.Kind == "Device" && n.DeviceType == "Billboard";
 
     // The empty or failed USB 3 half of the socket a hub's USB 2 side uses, where its USB 3 side should
     // be. Windows lists it as just another port; the hub's speed explanation says why and what to do.
@@ -279,7 +283,8 @@ internal static class Explanations
         string what = $"This {noun} is connected at {now}, though it supports {supports}.";
 
         string affects;
-        if (!hub) affects = $"Yes: its transfers are limited to {limit}.";
+        if (SpeedCostsNothing(n)) affects = $"No: a Billboard device only reports which USB-C display modes worked, a few bytes at a time, so {limit} costs nothing. Billboard chips in USB-C docks and adapters often claim USB 2's high speed but link at full speed.";
+        else if (!hub) affects = $"Yes: its transfers are limited to {limit}.";
         else if (HeldBack(n) is { Count: > 0 } held)
             affects = $"Yes: {Kinds(held)} {(held.Count == 1 ? "supports" : "support")} a faster link but {(held.Count == 1 ? "is" : "are")} slowed to {limit} through this hub.";
         else
@@ -308,6 +313,13 @@ internal static class Explanations
             return ("It's built in and wired this way inside the computer or enclosure, so there's nothing to change.", []);
         if (n.Usb3SideFailed)
             return ("Its USB 3 side tried to connect and failed; the other half of its socket shows the error.", [seat, cableStep]);
+        // A Billboard inside it reporting DisplayPort entered says the connection is carrying a picture, which can
+        // take all four of the cable's fast lanes: the USB 3 side has nowhere to connect, by design. A hub can't
+        // tell Windows its socket is USB-C, so this is the only sign of it on a dock behind another hub.
+        if (n.Usb3SideMissing && DisplayPortEntered(n) is UsbNode display)
+            return ($"This connection is carrying a picture: {Topology.ShortName(display)} inside it reports DisplayPort entered, and DisplayPort can take all four of the cable's fast lanes, leaving USB 2 for everything else.",
+                ["That's normal while it shows a picture. Some displays and docks have a setting that gives two of the lanes back to USB 3, at a cost in resolution or refresh rate.",
+                 "If it shouldn't be carrying a picture, check the cable and plug: use a cable rated 5 Gb/s or faster."]);
         if (n.Usb3SideMissing)
             return usbC
                 ? ("Its USB-C connection isn't carrying USB 3.",
@@ -346,6 +358,9 @@ internal static class Explanations
             _ => ($"The port supports {(usb2 ? "USB 3" : "10 Gb/s")}, so the cable or the plug is the likely cause.", [seat, cableStep])
         };
     }
+
+    // A Billboard at or behind this node that reports DisplayPort entered.
+    internal static UsbNode? DisplayPortEntered(UsbNode n) => n.Walk().FirstOrDefault(d => d.Billboard?.Modes.Any(m => m.Svid.Equals("FF01", StringComparison.OrdinalIgnoreCase) && m.State == "Entered") == true);
 
     // Devices by what they are, as in "your keyboard, mouse and 1 other device": shorter than product names,
     // and what people call them. A device you named keeps its name, and so does a lone device of unknown kind.

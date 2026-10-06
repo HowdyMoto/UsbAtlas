@@ -40,6 +40,20 @@ internal static class SelfTests
         oldHub.HighSpeedCapable = null;
         Check(Explanations.Speed(stuck, [new() { Kind = "Root hub" }, new UsbNode { Id = "hs", Kind = "Hub", LinkMbps = 480 }, stuck]).Cause.StartsWith("Its connection couldn't hold USB 2's high speed"),
             "Behind a high-speed hub, a 12 Mb/s link means the connection couldn't hold high speed.");
+        // A USB-C dock's Billboard that claims high speed but links at full speed loses nothing.
+        var billboard = new UsbNode { Id = "fs/1/2", Kind = "Device", Name = "GsCooLink USB BillBoard", DeviceType = "Billboard", LinkMbps = 12, HighSpeedCapable = true, SocketSpeed = "USB 2.0" };
+        Check(HubRelationships.ReducedSpeed(billboard) && Explanations.SpeedSeverity(billboard) == Severity.Note
+            && Explanations.Speed(billboard, [new() { Kind = "Root hub" }, new UsbNode { Id = "hs", Kind = "Hub", LinkMbps = 480 }, billboard]).Affects.StartsWith("No: a Billboard device"),
+            "A Billboard at 12 Mb/s is a note: its speed costs nothing.");
+        // A dock behind another hub whose Billboard reports DisplayPort entered: its USB 3 side has no lanes left.
+        var dockBillboard = new UsbNode { Id = "d/1/4/2", Kind = "Device", Name = "GsCooLink USB BillBoard", DeviceType = "Billboard", Billboard = new() { Modes = [new() { Svid = "FF01", Name = "DisplayPort", State = "Entered" }] } };
+        var dock = new UsbNode { Id = "d/1", Kind = "Hub", Name = "GenesysLogic USB2.1 Hub", LinkMbps = 480, UsbVersion = "USB 2.10", SpeedLimited = true, Usb3SideMissing = true, Connector = "USB-A",
+            Children = [new UsbNode { Id = "d/1/4", Kind = "Hub", LinkMbps = 480, Children = [dockBillboard] }] };
+        var dockSpeed = Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]);
+        Check(dockSpeed.Cause.Contains("carrying a picture") && dockSpeed.Cause.Contains("DisplayPort entered") && !dockSpeed.Steps!.Any(x => x.StartsWith("Make sure the plug")),
+            "A dock showing a picture over DisplayPort explains its missing USB 3 side by the lanes the picture takes, not the cable.");
+        dockBillboard.Billboard.Modes[0].State = "Failed";
+        Check(Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]).Cause.StartsWith("Its USB 3 connection didn't come up"), "Without DisplayPort entered, the cable is the likely cause.");
         stuck.HighSpeedCapable = false;
         Check(!HubRelationships.ReducedSpeed(stuck) && !HubRelationships.ReducedSpeed(new UsbNode { Kind = "Device", LinkMbps = 12 }), "A full-speed-only device at 12 Mb/s is where it belongs.");
         // A controller's PCIe link is shared by everything on its ports.
