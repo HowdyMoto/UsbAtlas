@@ -273,6 +273,7 @@ public partial class MainWindow : Window
             Section("Port");
             Field("Path", pathLabels.GetValueOrDefault(node.Id, NotApplicable), PathHelp);
             Field("Port number", node.Port.ToString("00"));
+            Field("Hubs above", HubDepth.Summary(node), "Hubs between the computer and this port, not counting the computer's own. USB allows five in a row; docks, monitors and keyboards often have hubs inside.");
             Field("Port name", PortNameEditor(node));
             Field("Port supports", node.Protocols);
             Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)), UsbC.Socket(snapshot, node).Count > 0

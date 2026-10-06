@@ -73,6 +73,7 @@ internal static class DemoData
         DeviceIdentity.ClassifySockets(snapshot);
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         PortMap.Analyze(snapshot);
+        HubDepth.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         PowerSaving.Analyze(snapshot);
         return snapshot;

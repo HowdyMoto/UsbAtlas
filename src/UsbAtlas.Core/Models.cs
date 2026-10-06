@@ -94,6 +94,8 @@ public sealed class UsbNode
     // Descriptors as read, only when a scan is asked to keep them.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RawDescriptors? Raw { get; set; }
+    // Hubs between the computer and this node, not counting the root hub or the node itself (HubDepth).
+    public int HubsAbove { get; set; }
     public bool SpeedLimited { get; set; }
     // A high-speed hub's transaction translators, from its bDeviceProtocol: Single (one for all ports),
     // Per port, Not reported, or None for devices and hubs that aren't running at high speed.
