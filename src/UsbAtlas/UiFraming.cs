@@ -82,7 +82,6 @@ public partial class MainWindow
     {
         if (focusedBranch != null) { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; }
         OverviewClick(this, new RoutedEventArgs());
-        UpdateGraphHint();
     }
     private void FrameSelectionPath()
     {
@@ -99,19 +98,30 @@ public partial class MainWindow
         var center = fitAll >= ReadableScale ? new Point(Graph.Width / 2, Graph.Height / 2) : new Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
         GraphScroll.ScrollToHorizontalOffset(Math.Max(0, center.X * scale - GraphScroll.ViewportWidth / 2));
         GraphScroll.ScrollToVerticalOffset(Math.Max(0, center.Y * scale - GraphScroll.ViewportHeight / 2));
-        GraphScroll.UpdateLayout(); RevealSelection(); UpdateGraphHint();
+        GraphScroll.UpdateLayout(); RevealSelection();
     }
     private void GraphScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         // The view controls float in the canvas's corner, clear of whichever scroll bars show.
         ViewControls.Margin = new Thickness(0, 0, GraphScroll.ActualWidth - GraphScroll.ViewportWidth + 12, GraphScroll.ActualHeight - GraphScroll.ViewportHeight + 12);
-        UpdateGraphHint();
     }
-    private void UpdateGraphHint()
+    // The view controls are glyphs, so each tooltip is a few words and its shortcut, drawn as a key.
+    internal const string ShortcutKeyTag = "shortcut-key";
+    private static FrameworkElement ShortcutTip(string action, string keys)
     {
-        if (GraphHint == null || GraphScroll == null) return;
-        bool overflow = Graph.Width * GraphScale.ScaleX > GraphScroll.ViewportWidth + 2 || Graph.Height * GraphScale.ScaleY > GraphScroll.ViewportHeight + 2;
-        GraphHint.Text = focusedBranch != null ? "Other branches & sockets hidden · Wheel to zoom" : overflow ? "More offscreen · Fit all (Shift+1) · Wheel to zoom" : "Drag to pan · Wheel to zoom · Arrows to navigate · Shift+2 finds the selection";
-        GraphHint.ToolTip = (focusedBranch != null ? "Focused branch. Other branches and sockets are hidden. Use Show all branches to restore them. " : "") + (overflow ? "More topology extends offscreen. " : "Visible branches fit. ") + "Drag to pan; wheel to zoom; Tab and arrow keys to navigate. Shift+0 shows full cards at 100%, Shift+1 fits everything, and Shift+2 centers the selection.";
+        var key = new TextBlock { Text = keys, FontFamily = (System.Windows.Media.FontFamily)Application.Current.FindResource("MonoFont"), FontSize = 11, FontWeight = FontWeights.SemiBold };
+        key.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimary");
+        var cap = new Border { Child = key, Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(5, 0, 5, 1), CornerRadius = new CornerRadius(3), BorderThickness = new Thickness(1), VerticalAlignment = VerticalAlignment.Center, Tag = ShortcutKeyTag };
+        cap.SetResourceReference(Border.BackgroundProperty, "Hover"); cap.SetResourceReference(Border.BorderBrushProperty, "Border");
+        return new StackPanel { Orientation = Orientation.Horizontal, Children = { new TextBlock { Text = action, VerticalAlignment = VerticalAlignment.Center }, cap } };
+    }
+    private void ShowViewTips()
+    {
+        HorizontalLayoutButton.ToolTip = ShortcutTip("Horizontal layout", "Shift+L");
+        VerticalLayoutButton.ToolTip = ShortcutTip("Vertical layout", "Shift+L");
+        FindSelectionButton.ToolTip = ShortcutTip("Find selection", "Shift+2");
+        FitAllButton.ToolTip = ShortcutTip("Fit all", "Shift+1");
+        ZoomInButton.ToolTip = ShortcutTip("Zoom in", "Ctrl+=");
+        ZoomOutButton.ToolTip = ShortcutTip("Zoom out", "Ctrl+−");
     }
 }

@@ -30,14 +30,14 @@ public partial class MainWindow : Window
     public MainWindow(bool demo, bool render, bool verifyUi = false, bool? horizontal = null)
     {
         InitializeComponent(); this.demo = demo; this.render = render;
-        var searchGlyph = NodeVisuals.Symbol("search", Theme.Brush("TextMuted"), 16);
-        ((System.Windows.Shapes.Path)((Canvas)searchGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextMuted");
+        var searchGlyph = NodeVisuals.Symbol("search", Theme.Brush("TextSecondary"), 16);
+        ((System.Windows.Shapes.Path)((Canvas)searchGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextSecondary");
         SearchIcon.Content = searchGlyph;
         var copyGlyph = NodeVisuals.Symbol("content_copy", Brush("TextPrimary"), 14);
         ((System.Windows.Shapes.Path)((Canvas)copyGlyph.Child).Children[0]).SetResourceReference(Shape.FillProperty, "TextPrimary");
         CopyDetailsIcon.Content = copyGlyph;
         horizontalTree = horizontal ?? SavedLayoutIsHorizontal();
-        ShowLayoutChoice();
+        ShowLayoutChoice(); ShowViewTips(); ShowRefreshTips();
         ThemeButton.Content = Theme.IsDark ? "Light mode" : "Dark mode";
         Loaded += async (_, _) =>
         {
@@ -49,7 +49,7 @@ public partial class MainWindow : Window
             }
             if (render) await RenderPreview();
         };
-        timer.Tick += async (_, _) => { if (AutoRefresh.IsChecked == true && !demo && !busy) await Refresh(); };
+        timer.Tick += async (_, _) => { if (autoRefresh && !demo && !busy) await Refresh(); };
         searchTimer.Tick += (_, _) => ApplySearch();
         SourceInitialized += (_, _) => WatchDevices();
         SizeChanged += (_, e) => { if (e.WidthChanged) FoldTreeForRoom(e.NewSize.Width); };
@@ -121,6 +121,7 @@ public partial class MainWindow : Window
     {
         // Framing shortcuts, as in design tools; typing in the search box or a label editor keeps its characters.
         if (Keyboard.Modifiers == ModifierKeys.Shift && Keyboard.FocusedElement is not TextBox && FramingShortcut(e.Key)) { e.Handled = true; return; }
+        if (Keyboard.Modifiers == ModifierKeys.Control && Keyboard.FocusedElement is not TextBox && ZoomShortcut(e.Key)) { e.Handled = true; return; }
         if (e.Key != Key.F5 || Keyboard.Modifiers != ModifierKeys.None) return;
         e.Handled = true;
         if (!e.IsRepeat) await Refresh();
@@ -479,6 +480,17 @@ public partial class MainWindow : Window
             case Key.D0 or Key.NumPad0: ActualSizeClick(this, new RoutedEventArgs()); return true;
             case Key.D1 or Key.NumPad1: OverviewClick(this, new RoutedEventArgs()); return true;
             case Key.D2 or Key.NumPad2: LocateClick(this, new RoutedEventArgs()); return true;
+            case Key.L: LayoutChoiceClick(horizontalTree ? VerticalLayoutButton : HorizontalLayoutButton, new RoutedEventArgs()); return true;
+            default: return false;
+        }
+    }
+    // Ctrl+= and Ctrl+− zoom by a step around the view's center, as the + and − buttons do.
+    private bool ZoomShortcut(Key key)
+    {
+        switch (key)
+        {
+            case Key.OemPlus or Key.Add: ZoomIn(this, new RoutedEventArgs()); return true;
+            case Key.OemMinus or Key.Subtract: ZoomOut(this, new RoutedEventArgs()); return true;
             default: return false;
         }
     }
@@ -511,11 +523,35 @@ public partial class MainWindow : Window
         GraphScroll.UpdateLayout();
     }
     private async void RefreshClick(object sender, RoutedEventArgs e) => await Refresh();
+    // Auto-refresh lives with Refresh: the chevron beside it opens a menu that turns it on and off, and a dot
+    // on Refresh says it's on.
+    private bool autoRefresh;
+    private const string AutoRefreshItem = "Auto-refresh every 10 s";
+    private ContextMenu RefreshMenu()
+    {
+        var menu = new ContextMenu { Background = Brush("Surface"), Foreground = Brush("TextPrimary"), BorderBrush = Brush("Border"), PlacementTarget = RefreshMenuButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        var item = new MenuItem { Header = AutoRefreshItem, IsCheckable = true, IsChecked = autoRefresh };
+        item.Click += (_, _) => SetAutoRefresh(item.IsChecked);
+        menu.Items.Add(item);
+        return menu;
+    }
+    private void RefreshMenuClick(object sender, RoutedEventArgs e) => RefreshMenu().IsOpen = true;
+    private void SetAutoRefresh(bool on)
+    {
+        autoRefresh = on;
+        AutoRefreshDot.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        ShowRefreshTips();
+    }
+    private void ShowRefreshTips()
+    {
+        RefreshButton.ToolTip = ShortcutTip(autoRefresh ? "Refresh · auto on" : "Refresh", "F5");
+        RefreshMenuButton.ToolTip = "Auto-refresh";
+    }
     private void SearchChanged(object sender, TextChangedEventArgs e) { searchTimer.Stop(); searchTimer.Start(); }
     // Search stays centered in the title bar, narrowing rather than running under the buttons on either side.
     private void TitleBarSizeChanged(object sender, SizeChangedEventArgs e) =>
         SearchBox.Width = Math.Clamp(TitleBar.ActualWidth - 2 * Math.Max(TitleLeft.ActualWidth, TitleRight.ActualWidth) - 32, 160, 340);
-    private void SetZoom(double value) { readableView = overviewView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; ZoomLabel.Text = $"{value:P0}"; }
+    private void SetZoom(double value) { readableView = overviewView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; }
     private void ZoomIn(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX * 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
     private void ZoomOut(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX / 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
     private void FitClick(object sender, RoutedEventArgs e)
@@ -715,7 +751,7 @@ public partial class MainWindow : Window
         SetOrientation(!horizontalTree);
         Check(selected?.Id == selection && folded.SetEquals(collapsed), "Changing direction lost selection or folded branches.");
         var (on, off) = horizontalTree ? (HorizontalLayoutButton, VerticalLayoutButton) : (VerticalLayoutButton, HorizontalLayoutButton);
-        Check(on.Background == Brush("SelectionStrong") && on.FontWeight == FontWeights.SemiBold && off.Background == Brush("Surface") && off.FontWeight == FontWeights.Normal, "The layout control must mark the current layout and only it.");
+        Check(on.Background == Brush("SelectionStrong") && on.BorderBrush == Brush("Accent") && off.Background is SolidColorBrush { Color.A: 0 } && off.BorderBrush is SolidColorBrush { Color.A: 0 }, "The layout control must mark the current layout and only it.");
         var switched = cards.Values.ToList();
         for (int i = 0; i < switched.Count; i++)
             for (int j = i + 1; j < switched.Count; j++)
