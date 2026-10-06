@@ -97,6 +97,9 @@ internal static class Reports
         return string.Join(" · ", parts);
     }
 
+    // The hub whose USB 3 side belongs on this empty or failed port, by path.
+    private static string? HalfOf(Session s, UsbNode port) => HubRelationships.MissingUsb3HubFor(port, s.Snapshot) is UsbNode hub ? s.PathOf(hub) : null;
+
     internal static JsonObject Tree(Session s, bool ports)
     {
         JsonObject Node(UsbNode n)
@@ -104,11 +107,13 @@ internal static class Reports
             var children = (Topology.MergedRoot(n) ?? n).Children;
             var o = J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("figures", J.S(Figures(n))),
                 ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)),
-                ("issues", J.Some(IssuesOf(s, n).Select(i => (JsonNode)$"{i.Severity.ToString().ToLowerInvariant()}: {i.Text}"))));
+                ("issues", J.Some(IssuesOf(s, n).Select(i => (JsonNode)$"{i.Severity.ToString().ToLowerInvariant()}: {i.Text}"))),
+                ("usb3HalfOf", HalfOf(s, n)));
             var shown = children.Where(c => ports || c.Kind != "Empty port").OrderBy(c => c.Port).ToList();
             if (shown.Count > 0) o["children"] = J.Arr(shown.Select(c => (JsonNode)Node(c)));
-            var empty = children.Where(c => c.Kind == "Empty port").OrderBy(c => c.Port).Select(c => c.Port).ToList();
-            if (!ports && empty.Count > 0) o["emptyPorts"] = J.Arr(empty.Select(p => (JsonNode)p.ToString("00")));
+            var empty = children.Where(c => c.Kind == "Empty port").OrderBy(c => c.Port).ToList();
+            // An empty port isn't always idle: it may be where a hub's USB 3 side should have connected.
+            if (!ports && empty.Count > 0) o["emptyPorts"] = J.Arr(empty.Select(p => (JsonNode)(p.Port.ToString("00") + (HalfOf(s, p) is string hub ? $" (USB 3 half of {hub}'s socket, not connected)" : ""))));
             return o;
         }
         var report = Header(s, "tree");
@@ -194,6 +199,13 @@ internal static class Reports
         if (n.QuickReconnects > 0)
             node["reconnects"] = J.Obj(("count", n.QuickReconnects), ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))));
         report["node"] = node;
+        // An empty socket half where a hub's USB 3 side should be explains that first, as the app does.
+        if (HubRelationships.MissingUsb3HubFor(n, s.Snapshot) is UsbNode lost)
+        {
+            var e = Explanations.MissingUsb3Half(lost, s.Chain(lost));
+            report["usb3HalfOf"] = J.Obj(("hub", s.PathOf(lost)), ("name", Topology.ShortName(lost)), ("severity", Explanations.SpeedSeverity(lost).ToString().ToLowerInvariant()),
+                ("what", e.What), ("affects", J.S(e.Affects)), ("cause", J.S(e.Cause)), ("steps", J.Some((e.Steps ?? []).Select(x => (JsonNode)x))));
+        }
         report["upstream"] = J.Arr(chain.SkipLast(1).Select(c => (JsonNode)J.Obj(("path", s.PathOf(c)), ("name", Topology.ShortName(c)), ("kind", Topology.Label(c)), ("figures", J.S(Figures(c))))));
         if (parent != null)
             report["siblings"] = J.Arr((Topology.MergedRoot(parent) ?? parent).Children.Where(c => c != n && c.Kind != "Empty port").OrderBy(c => c.Port)
@@ -201,7 +213,7 @@ internal static class Reports
         var children = (Topology.MergedRoot(n) ?? n).Children;
         if (children.Count > 0)
             report["children"] = J.Arr(children.OrderBy(c => c.Port).Select(c => (JsonNode)(c.Kind == "Empty port"
-                ? J.Obj(("path", s.PathOf(c)), ("kind", "Empty port"), ("connector", c.Connector), ("socketSpeed", c.SocketSpeed))
+                ? J.Obj(("path", s.PathOf(c)), ("kind", "Empty port"), ("connector", c.Connector), ("socketSpeed", c.SocketSpeed), ("usb3HalfOf", HalfOf(s, c)))
                 : J.Obj(("path", s.PathOf(c)), ("name", Topology.ShortName(c)), ("kind", Topology.Label(c)), ("figures", J.S(Figures(c)))))));
         report["issues"] = J.Arr(IssuesOf(s, n).Select(i => (JsonNode)Explain(s, i.Severity, i.Text, i.Node, false)));
         report["notes"] = J.Some(n.Notes.Select(x => (JsonNode)x));

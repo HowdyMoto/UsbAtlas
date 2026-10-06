@@ -58,7 +58,8 @@ internal static class TextOut
             foreach (var key in new[] { "figures", "vidPid" }) if (n[key] is JsonNode v) parts.Add(Str(v));
             if (n["portName"] is JsonNode port) parts.Add($"port “{Str(port)}”");
             string line = $"{new string(' ', depth * 2)}{Str(n["path"])} {Str(n["name"])} — {string.Join(" · ", parts)}";
-            if (n["emptyPorts"] is JsonArray empty) line += $" · empty ports {string.Join(",", empty.Select(Str))}";
+            if (n["emptyPorts"] is JsonArray empty) line += $" · empty ports {string.Join(", ", empty.Select(Str))}";
+            if (n["usb3HalfOf"] is JsonNode hub) line += $"  [USB 3 half of {Str(hub)}'s socket: its USB 3 side should connect here but didn't]";
             if (n["issues"] is JsonArray issues) line += "  [" + string.Join("; ", issues.Select(Str)) + "]";
             sb.AppendLine(line);
             foreach (var c in n["children"]?.AsArray() ?? []) Line(c!.AsObject(), depth + 1);

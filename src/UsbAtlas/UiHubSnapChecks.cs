@@ -31,6 +31,7 @@ public partial class MainWindow
             foreach (var level in new[] { CardDetail.Compact, CardDetail.Full })
             {
                 detail = level; Draw(); UpdateLayout();
+                CheckCanvasExplains($"linked hub stages, {level} cards");
                 if (hubs.Any(h => Math.Abs(cards[h.Id].Point.Y - cards[hubs[0].Id].Point.Y) > .01) || cards[hubs[2].Id].Point.X <= cards[hubs[1].Id].Point.X) throw new Exception($"Linked stages must sit side by side in {level} cards.");
                 VerifyWireRouting();
                 // The stages sit close together, with room only for the links between them, and every stage's

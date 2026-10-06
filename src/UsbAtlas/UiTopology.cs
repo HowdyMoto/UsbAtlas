@@ -325,7 +325,7 @@ public partial class MainWindow
             if (hit is FrameworkElement { Tag: UsbNode n }) { focusId = n.Id; break; }
         PrepareGraph(); PrepareFocus(); PrepareMerges();
         UpdateDeviceTree();
-        Graph.Children.Clear(); meterSegments.Clear(); partRing = null; cards.Clear(); wires.Clear(); wireRoutes.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear();
+        Graph.Children.Clear(); meterSegments.Clear(); partRing = null; cards.Clear(); wires.Clear(); wireHits.Clear(); wireRoutes.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear();
         var roots = snapshot.Controllers.Where(n => Visible(n) && (focusedIds == null || focusedIds.Contains(n.Id))).ToList();
         const double margin = 16, controllerGap = 24;
         var layouts = ArrangeLayouts(roots);
@@ -451,6 +451,8 @@ public partial class MainWindow
             double cross = (horizontalTree ? y : x) + PortOffset(node, port)!.Value;
             // The port's socket with its number on the tongue: cavity filled when in use, hollow when empty.
             string companion = port.CompanionId.Length > 0 && pathLabels.TryGetValue(port.CompanionId, out var other) ? $"\nShares this socket with port {other}." : "";
+            if (HubRelationships.MissingUsb3HubFor(port, snapshot) is UsbNode lostHub)
+                companion += "\n\n" + Explanations.MissingUsb3Half(lostHub, FindPath(lostHub.Id)).What + " Click for what to do.";
             var button = new Button { Content = NodeVisuals.SocketNumber(port), Tag = port, Width = SocketWidth, Height = SocketHeight, Padding = new Thickness(0), Template = NodeVisuals.SocketTemplate(port, socketParts.GetValueOrDefault(port.Id), horizontalTree), Cursor = Cursors.Hand, ToolTip = $"Logical port {port.Port}{(port.PortLabel.Length > 0 ? " · " + port.PortLabel : "")} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{NodeVisuals.SocketLabel(port)} socket\n{port.SocketEvidence}{companion}" };
             // A merged hub's socket halves share a number, so it shows once, on the first half.
             if (socketParts.GetValueOrDefault(port.Id) == NodeVisuals.SocketPart.Second && SocketPartner(port)?.Port == port.Port) ((TextBlock)button.Content).Text = "";
@@ -484,20 +486,38 @@ public partial class MainWindow
         foreach (var child in children) Place(child, left + child.X, top + child.Y);
         AddMissingUsb3Stubs(children);
     }
-    // A hub whose USB 3 side didn't connect shows the missing connection: a short dashed amber stub on
-    // the empty USB 3 half of its socket, shorter than the drop where connections turn.
+    // A hub whose USB 3 side didn't connect shows the missing connection: a short dashed stub on the empty
+    // USB 3 half of its socket, shorter than the drop where connections turn. Its ink follows the hub's own
+    // connection: amber when the slow link holds something back, gray when nothing is slowed yet.
     private void AddMissingUsb3Stubs(List<TopologyLayout.Item> children)
     {
         foreach (var child in children.Where(c => c.Node.Usb3SideMissing && portAnchors.ContainsKey(c.Node.CompanionId)))
         {
             var at = portAnchors[child.Node.CompanionId];
             var stub = new System.Windows.Shapes.Line { X1 = at.X, Y1 = at.Y, X2 = at.X + (horizontalTree ? TopologyLayout.Stub - 3 : 0), Y2 = at.Y + (horizontalTree ? 0 : TopologyLayout.Stub - 3),
-                Stroke = Brush("Warning"), StrokeThickness = NodeVisuals.WireWidth(new UsbNode { LinkMbps = 5000 }), StrokeDashArray = [1.5, 1], IsHitTestVisible = false, Tag = MissingUsb3Tag };
+                Stroke = Brush(NodeVisuals.WireInk(child.Node)), StrokeThickness = NodeVisuals.WireWidth(new UsbNode { LinkMbps = 5000 }), StrokeDashArray = NodeVisuals.StubDashes(), IsHitTestVisible = false, Tag = MissingUsb3Tag };
             System.Windows.Automation.AutomationProperties.SetName(stub, $"{child.Node.DisplayName}'s USB 3 side isn't connected");
             Graph.Children.Add(stub);
+            var hub = child.Node;
+            var hit = new System.Windows.Shapes.Line { X1 = stub.X1, Y1 = stub.Y1, X2 = stub.X2, Y2 = stub.Y2, Stroke = Brushes.Transparent, StrokeThickness = HitWidth, Tag = hub, Uid = MissingUsb3HitUid, Cursor = Cursors.Hand,
+                ToolTip = $"{NodeVisuals.ShortName(hub)}'s USB 3 side isn't connected.\n\n{Explanations.MissingUsb3Half(hub, FindPath(hub.Id)).What}\n\nThe short dashed line marks the missing connection: {(NodeVisuals.WireInk(hub) == "Warning" ? "amber because it slows something plugged in now" : "gray because nothing plugged in is slowed by it yet")}. Click for what to do." };
+            System.Windows.Automation.AutomationProperties.SetName(hit, $"{hub.DisplayName}'s USB 3 side isn't connected");
+            ExplainOnHover(hit, hub.Id);
+            hit.MouseLeftButtonDown += (_, e) => { OpenExplanation(hub, Explanations.SpeedLabel(hub)); e.Handled = true; };
+            Graph.Children.Add(hit);
         }
     }
     private const string MissingUsb3Tag = "missing-usb3";
+    // Thin marks are hard to point at, so each has an invisible, wider twin that carries its explanation.
+    // The twin is tagged with its node, so pressing on it selects instead of panning.
+    private const double HitWidth = 10;
+    private const string MissingUsb3HitUid = "missing-usb3-hit", WireHitUid = "wire-hit";
+    private readonly Dictionary<string, System.Windows.Shapes.Path> wireHits = [];
+    private void ExplainOnHover(FrameworkElement hit, string ringId)
+    {
+        hit.MouseEnter += (_, _) => ShowPart(ringId, true, true);
+        hit.MouseLeave += (_, _) => ShowPart(ringId, false, true);
+    }
     // One connection per child, or two for a merged hub, which meet the two halves of its card's entry
     // edge in the order of their ports; without sockets, the USB 2 side's comes first.
     private List<(UsbNode Node, Rect Card, Point? Anchor)> Entries(List<TopologyLayout.Item> children, double left, double top)
@@ -574,6 +594,13 @@ public partial class MainWindow
     {
         var wire = new System.Windows.Shapes.Path { Data = RoundedRoute(route, 6), Stroke = Brush(NodeVisuals.WireInk(node)), StrokeThickness = NodeVisuals.WireWidth(node), StrokeDashArray = NodeVisuals.WireDashes(node), Tag = node, IsHitTestVisible = false };
         Graph.Children.Add(wire); wires[node.Id] = wire; wireRoutes[node.Id] = route;
+        var parent = nodeParents.GetValueOrDefault(node.Id);
+        string from = parent == null ? "its host" : $"{NodeVisuals.ShortName(DrawnAs(parent))} port {node.Port:00}";
+        var hit = new System.Windows.Shapes.Path { Data = wire.Data, Stroke = Brushes.Transparent, StrokeThickness = HitWidth, Tag = node, Uid = WireHitUid, Cursor = Cursors.Hand, ToolTip = Explanations.LinkHelp(node, from) };
+        System.Windows.Automation.AutomationProperties.SetName(hit, $"Connection to {node.DisplayName}");
+        ExplainOnHover(hit, node.Id);
+        hit.MouseLeftButtonDown += (_, e) => { SelectNode(node); e.Handled = true; };
+        Graph.Children.Add(hit); wireHits[node.Id] = hit;
     }
     // Softened corners make orthogonal routes read as cables.
     private static PathGeometry RoundedRoute(List<Point> route, double radius)
@@ -625,12 +652,13 @@ public partial class MainWindow
         PanTransform.X -= delta.X; PanTransform.Y -= delta.Y;
         GraphScroll.UpdateLayout();
     }
+    private const string PulseTag = "pulse";
     // A fading ring draws the eye to a card revealed from the tree or a newly connected device.
     private void Pulse(UsbNode node, double seconds = 0.9)
     {
         if (GraphBounds(node) is not Rect area) return;
         area.Inflate(6, 6);
-        var ring = new Border { Width = area.Width, Height = area.Height, CornerRadius = new CornerRadius(10), BorderBrush = Brush("Accent"), BorderThickness = new Thickness(3), IsHitTestVisible = false };
+        var ring = new Border { Width = area.Width, Height = area.Height, CornerRadius = new CornerRadius(10), BorderBrush = Brush("Accent"), BorderThickness = new Thickness(3), IsHitTestVisible = false, Tag = PulseTag };
         Canvas.SetLeft(ring, area.X); Canvas.SetTop(ring, area.Y); Panel.SetZIndex(ring, 3);
         Graph.Children.Add(ring);
         var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0, TimeSpan.FromSeconds(seconds)) { BeginTime = TimeSpan.FromMilliseconds(200), EasingFunction = new System.Windows.Media.Animation.QuadraticEase() };

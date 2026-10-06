@@ -67,10 +67,10 @@ public partial class MainWindow
             Draw(); SelectNode(monitor); UpdateLayout();
             Check(Issues(monitor).Contains((Severity.Note, "Running at USB 2")), "A hub that slows nothing plugged into it must be a calm note.");
             Check(VisualDescendants(cards[monitor.Id].Card).OfType<Border>().Any(b => b.Background == Brush("NoteSurface")), "The note must use the calm badge on the card.");
-            // The missing USB 3 side shows on the canvas: a dashed amber stub on the empty half of its socket.
+            // The missing USB 3 side shows on the canvas: a dashed stub on the empty half of its socket, in its connection's ink.
             var stub = Graph.Children.OfType<System.Windows.Shapes.Line>().SingleOrDefault(l => Equals(l.Tag, MissingUsb3Tag));
-            Check(stub != null && (new Point(stub.X1, stub.Y1) - portAnchors["demo/root/7"]).Length < 0.01 && stub.Stroke == Brush("Warning") && stub.StrokeDashArray.Count > 0
-                && new Vector(stub.X2 - stub.X1, stub.Y2 - stub.Y1).Length < TopologyLayout.Stub, "A hub whose USB 3 side didn't connect must show a short dashed amber stub on the empty USB 3 half of its socket.");
+            Check(stub != null && (new Point(stub.X1, stub.Y1) - portAnchors["demo/root/7"]).Length < 0.01 && stub.Stroke == Brush(NodeVisuals.WireInk(monitor)) && stub.StrokeDashArray.Count > 0
+                && new Vector(stub.X2 - stub.X1, stub.Y2 - stub.Y1).Length < TopologyLayout.Stub, "A hub whose USB 3 side didn't connect must show a short dashed stub on the empty USB 3 half of its socket, in its connection's ink.");
             var text = ExplanationText("Running at USB 2");
             Check(text.Contains("connected at USB 2 (480 Mb/s)") && text.Contains("Does it affect you?") && text.Contains("Not right now") && text.Contains("USB-C Prioritization") && text.Contains("charging cables"),
                 "The explanation must say what is happening, that nothing is affected, and the likely USB-C causes.");

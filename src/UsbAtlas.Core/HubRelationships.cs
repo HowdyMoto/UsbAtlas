@@ -63,6 +63,10 @@ internal static class HubRelationships
             node.Usb3SideFailed = node.Usb3SideMissing && companion!.Kind == "Unavailable";
         }
     }
+    // The hub whose USB 3 side belongs on this port: the empty, or failed, USB 3 half of the socket that
+    // hub's USB 2 side is plugged into.
+    internal static UsbNode? MissingUsb3HubFor(UsbNode port, Snapshot snapshot) => port.Kind is "Empty port" or "Unavailable"
+        ? snapshot.Nodes.FirstOrDefault(h => h.Usb3SideMissing && h.CompanionId == port.Id) : null;
     internal static string CardLabel(UsbNode node) => node.CompanionHubId.Length > 0
         ? node.IsUsb2Companion ? "USB 2 side · paired hub" : "USB 3 side · paired hub"
         : node.Kind == "Hub" && node.PortIsUserConnectable == false ? "Built-in hub" : "";

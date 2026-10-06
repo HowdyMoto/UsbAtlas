@@ -71,7 +71,18 @@ internal static class CliTests
 
         var tree = Reports.Tree(s, false);
         string text = TextOut.Render(tree);
-        Check(text.Contains("H01/01 Studio desktop hub — Plug-in hub · 5 Gb/s") && text.Contains("empty ports 03,04"), "The tree shows each hub with its figures and summarizes empty ports.");
+        Check(text.Contains("H01/01 Studio desktop hub — Plug-in hub · 5 Gb/s") && text.Contains("empty ports 03, 04"), "The tree shows each hub with its figures and summarizes empty ports.");
+        // A hub whose USB 3 side didn't connect: the empty USB 3 half of its socket says whose it is.
+        var missing = DemoData.Create();
+        var monitor = missing.Nodes.First(n => n.Id == "demo/root/5");
+        monitor.SpeedLimited = true; monitor.Connector = "USB-C"; monitor.CompanionId = "demo/root/7";
+        HubRelationships.Analyze(missing);
+        var ms = new Session(missing, "demo");
+        var half = Reports.Show(ms, ms.Resolve("H01/07"))["usb3HalfOf"];
+        Check(half?["hub"]?.ToString() == "H01/05" && half["what"]!.ToString().Contains("USB 3 half of the socket") && half["steps"] != null, "show on the empty USB 3 half names the hub and explains it.");
+        Check(TextOut.Render(Reports.Tree(ms, true)).Contains("H01/07 Available port 7 — Empty port  [USB 3 half of H01/05's socket") && TextOut.Render(Reports.Tree(ms, false)).Contains("07 (USB 3 half of H01/05's socket, not connected)"),
+            "The tree marks the empty USB 3 half, with and without --ports.");
+        Check(Reports.Show(ms, ms.Resolve("H01"))["children"]!.AsArray().Any(c => c!["usb3HalfOf"]?.ToString() == "H01/05"), "A host's empty port lists whose USB 3 half it is.");
         Check(text.Contains("H01/09 Direct-drive wheel base — Game controller · 12 Mb/s · 1000 Hz"), "Game controllers show their polling rate.");
         Check(TextOut.Render(Reports.Tree(s, true)).Contains("H01/01/03 Available port 3 — Empty port"), "--ports lists every empty port.");
 

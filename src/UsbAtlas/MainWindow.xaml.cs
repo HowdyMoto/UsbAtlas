@@ -44,7 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyEverythingExplains(); File.WriteAllText("ui-test.txt", "UI checks passed: everything on the graph explains itself on hover or click, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -138,18 +138,19 @@ public partial class MainWindow : Window
         badge.Cursor = Cursors.Hand;
         badge.Focusable = true;
         System.Windows.Automation.AutomationProperties.SetName(badge, "Explain " + issue);
-        void Explain()
-        {
-            // A badge asks what the issue means, so its explanation opens whole.
-            openExplanations.Add(issue);
-            SelectNode(node);
-            if (InspectorPanel.Visibility != Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
-            UpdateLayout();
-            Details.Children.OfType<FrameworkElement>().FirstOrDefault(x => Equals(x.Tag, "warning:" + issue))?.BringIntoView();
-        }
-        badge.Click += (_, e) => { Explain(); e.Handled = true; };
+        badge.Click += (_, e) => { OpenExplanation(node, issue); e.Handled = true; };
         badge.ToolTip = this.Explain(node, issue).What + " Click to see what to do.";
         return badge;
+    }
+    // Selects the node and opens what an issue means whole, as asking about it does: from its badge, or a
+    // mark on the canvas that stands for it.
+    private void OpenExplanation(UsbNode node, string issue)
+    {
+        openExplanations.Add(issue);
+        SelectNode(node);
+        if (InspectorPanel.Visibility != Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
+        UpdateLayout();
+        Details.Children.OfType<FrameworkElement>().FirstOrDefault(x => Equals(x.Tag, "warning:" + issue))?.BringIntoView();
     }
     private void CopyDetailsClick(object sender, RoutedEventArgs e)
     {
@@ -203,6 +204,15 @@ public partial class MainWindow : Window
         Details.Children.Add(status);
         var issues = Issues(node);
         foreach (var (severity, issue) in issues) AddExplanation(node, severity, issue, issues.Count > 1);
+        if (HubRelationships.MissingUsb3HubFor(node, snapshot) is UsbNode lostHub)
+        {
+            string title = $"USB 3 side of {NodeVisuals.ShortName(lostHub)} not connected";
+            AddExplanation(node, Explanations.SpeedSeverity(lostHub), title, true, Explanations.MissingUsb3Half(lostHub, FindPath(lostHub.Id)));
+            var show = new Button { Content = "Show " + NodeVisuals.ShortName(lostHub), Padding = new Thickness(8, 3, 8, 3), Margin = new Thickness(0, -4, 0, 10), HorizontalAlignment = HorizontalAlignment.Left, Tag = ShowLostHubTag,
+                ToolTip = "Select the hub whose USB 3 side belongs on this half of the socket." };
+            show.Click += (_, _) => OpenExplanation(lostHub, Explanations.SpeedLabel(lostHub));
+            Details.Children.Add(show);
+        }
         AddHubSnapControls(node);
 
 
@@ -394,9 +404,11 @@ public partial class MainWindow : Window
     // anything now, and what to do. Severity sets how much shows before the rows: a note affects nothing
     // now, so it is one line until opened; a warning says what is happening and whether it affects you,
     // with what to do a click away; an error is shown whole. With several issues each panel names its own.
-    private void AddExplanation(UsbNode node, Severity severity, string issue, bool named)
+    private const string ShowLostHubTag = "show-lost-hub";
+    // An explanation that isn't one of the node's issues, such as what an empty socket half is for, is given.
+    private void AddExplanation(UsbNode node, Severity severity, string issue, bool named, Explanations.Explanation? given = null)
     {
-        var e = Explain(node, issue);
+        var e = given ?? Explain(node, issue);
         bool open = severity == Severity.Error || openExplanations.Contains(issue);
         var body = new StackPanel();
         var more = new StackPanel { Tag = ExplanationMoreTag };
