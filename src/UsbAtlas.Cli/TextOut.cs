@@ -86,14 +86,17 @@ internal static class TextOut
     private static string Events(JsonObject r)
     {
         var events = r["events"]!.AsArray();
-        var sb = new StringBuilder($"{Source(r)} · {events.Count} USB event{(events.Count == 1 ? "" : "s")} in the {Str(r["window"])}, newest first\n");
+        var sb = new StringBuilder($"{Source(r)} · {events.Count} event{(events.Count == 1 ? "" : "s")} in the {Str(r["window"])}, newest first\n");
         foreach (var d in r["logDiagnostics"]?.AsArray() ?? []) sb.AppendLine("Log: " + Str(d));
         sb.AppendLine(Str(r["note"]));
         foreach (var e in events)
         {
             var o = e!.AsObject();
-            string where = o["path"] is JsonNode path ? $"{Str(path)} {Str(o["name"])}" : o["instanceId"] is JsonNode id ? Str(id) + " (not connected now)" : "";
-            sb.AppendLine($"{Str(o["time"])} {Str(o["level"]),-8} {Str(o["source"])}  {where}".TrimEnd());
+            bool usb = Str(o["category"]) is "usb" or "";
+            string where = o["path"] is JsonNode path ? $"{Str(path)} {Str(o["name"])}"
+                : o["name"] is JsonNode name ? Str(name) + (o["instanceId"] is JsonNode named ? $" ({Str(named)})" : "")
+                : o["instanceId"] is JsonNode id ? Str(id) + (usb ? " (not connected now)" : "") : "";
+            sb.AppendLine($"{Str(o["time"])} {Str(o["level"]),-8} {Str(o["category"]),-8} {Str(o["source"])}  {where}".TrimEnd());
             if (o["message"] is JsonNode message) sb.AppendLine("    " + Str(message));
         }
         return sb.ToString();

@@ -31,8 +31,10 @@ internal static class Program
           displays               Graphics adapters and whether each has a driver, every monitor Windows has
                                  known with the adapter it was last shown through, and USB-C displays whose
                                  USB is connected but whose picture isn't. Start here when a monitor is dark.
-          events                 Recent USB events from the Windows logs. --since 24h (default), --max 100,
-                                 --errors for critical, error and warning events only.
+          events                 Recent events from the Windows logs: USB devices and drivers, displays and
+                                 graphics drivers (installed, disabled, reset), and restarts a program
+                                 started. --since 24h (default), --max 100, --errors for critical, error and
+                                 warning events only, --usb-only for USB events only.
           watch                  Report devices connecting, disconnecting and changing as it happens, and
                                  devices that drop and come back. When the computer sleeps and wakes, it
                                  reports what didn't come back or came back slower. --for 60s (default; 0
@@ -145,7 +147,7 @@ internal static class Program
                 {
                     if (!OperatingSystem.IsWindows()) throw new CliException("events reads the Windows event logs. On Linux, the kernel's USB messages are in journalctl -k.");
                     var s = Session.Open(o);
-                    Print(EventLog.Report(s, o.Duration("since", TimeSpan.FromHours(24)), o.Int("max", 100, 1, 10000), o.Has("errors"), o.Has("redact"))); return 0;
+                    Print(EventLog.Report(s, o.Duration("since", TimeSpan.FromHours(24)), o.Int("max", 100, 1, 10000), o.Has("errors"), o.Has("redact"), o.Has("usb-only"))); return 0;
                 }
                 case "scan":
                 {

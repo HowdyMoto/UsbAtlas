@@ -34,6 +34,7 @@ internal static class CliTests
         McpTests();
         CommandTests();
         DisplayTests();
+        EventTests();
     }
 
     private static void OptionTests()
@@ -607,6 +608,28 @@ internal static class CliTests
             Check(Session.LoadFile(file).Gpus.Count == 0, "Older snapshots without display information load.");
         }
         finally { File.Delete(file); }
+    }
+
+    // Events as that morning's logs recorded them: a driver updater disabling the NVIDIA driver and
+    // restarting the computer, around USB and monitor events.
+    private static void EventTests()
+    {
+        const string gpu = @"PCI\VEN_10DE&DEV_2D19&SUBSYS_800417AA&REV_A1\276A548B0C2DB04800";
+        var gpus = new HashSet<string>([gpu], StringComparer.OrdinalIgnoreCase);
+        (string, string)? Of(string provider, int id, params (string, string)[] data) => EventLog.Classify(provider, id, [.. data], gpus);
+        Check(Of("User32", 1074, ("param1", @"C:\ProgramData\NVIDIA Corporation\NVIDIA App\UpdateFramework\setup.exe")) == (EventLog.Restart, "")
+            && Of("Microsoft-Windows-Kernel-Power", 41, ("BugcheckCode", "0")) == (EventLog.Restart, ""), "A restart a program started, and one nothing asked for, are restarts.");
+        Check(Of("Service Control Manager", 7040, ("param1", "nvlddmkm"), ("param2", "demand start"), ("param3", "disabled")) == (EventLog.Display, "")
+            && Of("Service Control Manager", 7040, ("param1", "Background Intelligent Transfer Service")) == null, "Service changes count only when they're about graphics.");
+        Check(Of("Microsoft-Windows-WindowsUpdateClient", 19, ("updateTitle", "NVIDIA - Display - 32.0.15.9144")) == (EventLog.Display, "")
+            && Of("Microsoft-Windows-WindowsUpdateClient", 19, ("updateTitle", "Security Intelligence Update for Microsoft Defender")) == null, "Windows Update installs count only when they're graphics drivers.");
+        Check(Of("Microsoft-Windows-Kernel-PnP", 400, ("DeviceInstanceId", @"DISPLAY\DELA0F4\5&1AC5154C&0&UID405762")) == (EventLog.Display, @"DISPLAY\DELA0F4\5&1AC5154C&0&UID405762")
+            && Of("Microsoft-Windows-Kernel-PnP", 411, ("DeviceInstanceId", gpu.ToLowerInvariant())) == (EventLog.Display, gpu.ToLowerInvariant()), "Monitors and graphics adapters coming and going are display events.");
+        Check(Of("Microsoft-Windows-Kernel-PnP", 400, ("DeviceInstanceId", @"USB\VID_0451&PID_8442\MSFT20E30108613F47")) == (EventLog.Usb, @"USB\VID_0451&PID_8442\MSFT20E30108613F47")
+            && Of("Microsoft-Windows-USB-USBHUB3", 196, ("fid_UsbDevice", "draining")) == (EventLog.Usb, "") && Of("Display", 4101, ("param1", "nvlddmkm")) == (EventLog.Display, ""),
+            "USB events stay USB, and a display driver that stopped responding is a display event.");
+        Check(Of("Microsoft-Windows-Kernel-PnP", 400, ("DeviceInstanceId", @"PCI\VEN_8086&DEV_1234\3&1")) == null && Of("Some-Provider", 1) == null, "Anything else is left out.");
+        Check(Run("events", "--demo", "--usb-only", "--max", "1").Code is 0 or 3 && Options.Parse(["events", "--usb-only"]).Has("usb-only"), "events takes --usb-only.");
     }
 
     private static void CommandTests()
