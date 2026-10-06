@@ -1,5 +1,5 @@
 <Window x:Class="UsbAtlas.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="USB Atlas" Width="1500" Height="940" MinWidth="1050" MinHeight="650" Background="{DynamicResource WindowSurface}" FontFamily="{StaticResource UiFont}" FontSize="13" WindowStartupLocation="CenterScreen" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" PreviewKeyDown="WindowKeyDown">
+ Title="USB Atlas" Icon="pack://application:,,,/Assets/AppIcon.ico" Width="1500" Height="940" MinWidth="1050" MinHeight="650" Background="{DynamicResource WindowSurface}" FontFamily="{StaticResource UiFont}" FontSize="13" WindowStartupLocation="CenterScreen" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" PreviewKeyDown="WindowKeyDown">
  <Grid>
   <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition/><RowDefinition Height="30"/></Grid.RowDefinitions>
   <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="16,0">
