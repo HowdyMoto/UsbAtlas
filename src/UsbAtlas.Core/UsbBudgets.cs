@@ -142,6 +142,19 @@ internal static class UsbBudgets
         return (percent is > 0 and < 1 ? "<1" : $"{Math.Round(percent):0}") + "% of " + Rate(capacity);
     }
 
+    // What a fast drive typically moves at best over a link, after protocol overhead: the figure to compare a
+    // measured copy or benchmark with, since the link rate itself is never reached. Empty when the rate isn't
+    // known or isn't one a drive uses. These are typical figures, not measurements of this link.
+    internal static string BestTransfer(double? linkMbps) => linkMbps switch
+    {
+        12 => "about 1 MB/s",
+        480 => "about 40 MB/s",
+        5000 => "about 450 MB/s",
+        10000 => "about 1 GB/s",
+        20000 => "about 2 GB/s",
+        _ => ""
+    };
+
     internal static string Rate(double mbps) => mbps switch
     {
         0 => "0 Mb/s",

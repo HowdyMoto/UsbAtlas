@@ -92,6 +92,9 @@ internal static class CliTests
         Check(show["node"]!["hub"]!["transactionTranslators"]!.ToString().Contains("single TT") && show["children"]!.AsArray().Count == 4 && show["siblings"]!.AsArray().Count > 0 && show["upstream"]!.AsArray().Count == 1, "show includes the hub, its children, its siblings and the chain to the host.");
         Check(show["issues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Over power budget"), "show explains the node's issues.");
         Check(TextOut.Render(show).Contains("transactionTranslators: Share one link · single TT"), "show renders as key: value text.");
+        Check(show["node"]!["link"]!["typicalBestTransfer"]!.ToString() == "about 40 MB/s for a fast drive; typical, not measured"
+            && Reports.Show(s, s.Resolve("Portable SSD"))["node"]!["link"]!["typicalBestTransfer"]!.ToString().StartsWith("about 450 MB/s"), "show says what a fast drive moves at best over the link, as typical rather than measured.");
+        Check(UsbBudgets.BestTransfer(null) == "" && UsbBudgets.BestTransfer(1.5) == "", "No typical transfer for an unknown rate or low speed.");
         var host = Reports.Show(s, s.Resolve("H01"));
         var pciHost = DemoData.Create(); pciHost.Controllers[0].PciId = "1B21:2142";
         var pcie = Reports.Show(new Session(pciHost, "demo"), pciHost.Controllers[0])["node"]!["controller"]!;

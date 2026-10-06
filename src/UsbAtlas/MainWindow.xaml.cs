@@ -233,7 +233,8 @@ public partial class MainWindow : Window
             }
             string unread = node.Kind == "Unavailable" ? "Unknown" : NotApplicable;
             Metric(NodeVisuals.Metric.Link, attached ? (ShortSpeed(node) == "Rate unknown" ? "Unknown" : ShortSpeed(node)) : unread, "Link speed", 0,
-                "The signaling rate negotiated when the device connected. Everything upstream on the same path shares it; it is not a measured speed.");
+                "The signaling rate negotiated when the device connected. Everything upstream on the same path shares it; it is not a measured speed."
+                + (UsbBudgets.BestTransfer(node.LinkMbps) is { Length: > 0 } best ? $" A fast drive on this link moves {best} at best; copy a large file or run a disk benchmark to see what it really does." : ""));
             Metric(NodeVisuals.Metric.Reserved, attached ? (node.ReservedMbps is double reserved ? UsbBudgets.Rate(reserved) : "Unknown") : unread, "Reserved", 1,
                 "Bus time held for this device's open interrupt and isochronous pipes, such as audio, video and input. Bulk transfers, such as storage, reserve nothing and share what is left.");
             // A third of the panel is too narrow for the card's "External + 100 mA", so its parts are split
