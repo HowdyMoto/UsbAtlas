@@ -75,18 +75,22 @@ public partial class MainWindow
             };
             var fixes = Triage.FixFirst(snapshot);
             if (fixes.Count > 0) lines.Add(Text("FIX FIRST", 11, "TextMuted", FontWeights.SemiBold));
-            foreach (var f in fixes)
+            // Each fix leads with its issue as a status badge, as in the app, then where it is and what to do.
+            var fixLines = fixes.Select(f =>
             {
                 string where = NodeVisuals.ShortName(CardNode(f.Node));
-                var line = Text($"{f.Issue} · {where} — {f.Fix}", 12, "TextSecondary", FontWeights.Normal);
-                line.SetForegroundBrush(Brush(NodeVisuals.StatusColor(f.Severity)), 0, f.Issue.Length);
-                line.SetFontWeight(FontWeights.SemiBold, 0, f.Issue.Length + 3 + where.Length);
-                lines.Add(line);
-            }
+                var badge = NodeVisuals.StatusBadge(f.Severity, f.Issue);
+                badge.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); badge.Arrange(new Rect(badge.DesiredSize)); badge.UpdateLayout();
+                var line = Text($"{where} — {f.Fix}", 12, "TextSecondary", FontWeights.Normal);
+                line.SetForegroundBrush(Brush("TextPrimary"), 0, where.Length);
+                line.SetFontWeight(FontWeights.SemiBold, 0, where.Length);
+                return (Badge: (FrameworkElement)badge, Text: line);
+            }).ToList();
             double width = Math.Max(Graph.Width, SocketLegend.ActualWidth);
             foreach (var text in lines) text.MaxTextWidth = Math.Max(width, 480);
+            foreach (var (badge, text) in fixLines) text.MaxTextWidth = Math.Max(width, 480) - badge.ActualWidth - 7;
             width = Math.Max(width, lines.Max(l => l.WidthIncludingTrailingWhitespace));
-            double header = lines.Sum(l => l.Height + 4);
+            double header = lines.Sum(l => l.Height + 4) + fixLines.Sum(f => Math.Max(f.Badge.ActualHeight, f.Text.Height) + 6);
             double height = pad + header + gap + Graph.Height + gap + SocketLegend.ActualHeight + pad;
             width += 2 * pad;
 
@@ -96,6 +100,13 @@ public partial class MainWindow
                 dc.DrawRectangle(Brush("CanvasSurface"), null, new Rect(0, 0, width, height));
                 double y = pad;
                 foreach (var text in lines) { dc.DrawText(text, new Point(pad, y)); y += text.Height + 4; }
+                foreach (var (badge, text) in fixLines)
+                {
+                    double row = Math.Max(badge.ActualHeight, text.Height);
+                    dc.DrawRectangle(Painted(badge, badge.ActualWidth, badge.ActualHeight), null, new Rect(pad, y + (row - badge.ActualHeight) / 2, badge.ActualWidth, badge.ActualHeight));
+                    dc.DrawText(text, new Point(pad + badge.ActualWidth + 7, y + (row - text.Height) / 2));
+                    y += row + 6;
+                }
                 y += gap;
                 dc.DrawRectangle(Painted(Graph, Graph.Width, Graph.Height), null, new Rect(pad, y, Graph.Width, Graph.Height));
                 y += Graph.Height + gap;

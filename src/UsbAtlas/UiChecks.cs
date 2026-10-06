@@ -509,6 +509,19 @@ public partial class MainWindow
         }
         static double Contrast(Color a, Color b) { double x = Luminance(a), y = Luminance(b); return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05); }
         var categories = NodeVisuals.Categories;
+        // No hue on the canvas means two things (#26): selection is at least 25° in OKLab hue from every category
+        // ink, socket color and status color; error red stays clearly apart from the 10 Gb/s tongue's red; and
+        // port numbers keep 4.5:1 on every tongue.
+        foreach (bool dark in new[] { false, true })
+        {
+            string theme = dark ? "dark" : "light";
+            var accent = Theme.Of("Accent", dark);
+            foreach (var other in categories.Concat(["SocketSuperSpeed", "SocketSuperSpeedPlus", "Warning", "Error"]))
+                Check(HueGap(accent, Theme.Of(other, dark)) >= 25, $"Selection's teal is only {HueGap(accent, Theme.Of(other, dark)):0}° from {other} in {theme} mode; it needs 25°.");
+            Check(OkDistance(Theme.Of("Error", dark), Theme.Of("SocketSuperSpeedPlus", dark)) >= 12, $"Error red is too close to the 10 Gb/s tongue's red in {theme} mode.");
+            foreach (var tongue in new[] { "SocketUsb2", "SocketSuperSpeed", "SocketSuperSpeedPlus", "SocketUnknown" })
+                Check(Contrast(Theme.Of("OnSocket", dark), Theme.Of(tongue, dark)) >= 4.5, $"Port numbers on {tongue} have under 4.5:1 in {theme} mode.");
+        }
         foreach (bool dark in new[] { false, true })
             for (int i = 0; i < categories.Length; i++)
             {
@@ -519,17 +532,26 @@ public partial class MainWindow
             }
     }
 
-    // Warning and error colors appear only as semibold text beside a status glyph, every issue on a
-    // card has its badge, and no role color can be mistaken for a status color.
+    // Warning and error colors appear only as semibold text beside a status glyph, error text also on its
+    // tinted surface, every issue on a card has its badge, and no role color can be mistaken for a status color.
     private void VerifyStatusStyling()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         static bool IsGlyph(DependencyObject d) => d is FrameworkElement { Tag: NodeVisuals.StatusGlyphTag };
         var status = new[] { Brush("Warning"), Brush("Error") };
-        var roots = cards.Values.Select(c => (DependencyObject)c.Card).Append(Details).Append(DeviceTree).Append(IssuesButton);
+        var roots = cards.Values.Select(c => (DependencyObject)c.Card).Append(Details).Append(DeviceTree).Append(IssuesButton).Append(FixFirstList);
         foreach (var text in roots.SelectMany(VisualDescendants).OfType<TextBlock>().Where(t => status.Append(Brush("Note")).Contains(t.Foreground)))
             Check(text.FontWeight == FontWeights.SemiBold && text.Parent is Panel row && row.Children.Cast<DependencyObject>().Any(IsGlyph),
                 $"\"{text.Text}\" uses a note, warning or error color without the status glyph and weight.");
+        // Red alone never says error: error text sits on the error tint, in a badge or a button that wears it.
+        bool OnErrorTint(DependencyObject d)
+        {
+            for (var at = VisualTreeHelper.GetParent(d); at != null; at = VisualTreeHelper.GetParent(at))
+                if (at is Border { Background: var b } && b == Brush("ErrorSurface") || at is Control { Background: var c } && c == Brush("ErrorSurface")) return true;
+            return false;
+        }
+        foreach (var text in roots.SelectMany(VisualDescendants).OfType<TextBlock>().Where(t => t.Foreground == Brush("Error")))
+            Check(OnErrorTint(text), $"\"{text.Text}\" is in the error color without the error tint behind it.");
         foreach (var (id, item) in cards)
         {
             var node = (UsbNode)item.Card.Tag;
@@ -540,6 +562,23 @@ public partial class MainWindow
         static double Distance(Brush a, Brush b) { var (x, y) = (((SolidColorBrush)a).Color, ((SolidColorBrush)b).Color); return Math.Sqrt(Math.Pow(x.R - y.R, 2) + Math.Pow(x.G - y.G, 2) + Math.Pow(x.B - y.B, 2)); }
         foreach (var category in NodeVisuals.Categories)
             foreach (var severity in status) Check(Distance(Brush(category), severity) > 100, $"{category} is too close to a warning or error color.");
+    }
+
+    // Perceptual color: OKLab lightness and the two opponent axes, so hue and distance match what people see.
+    private static (double L, double A, double B) OkLab(Color c)
+    {
+        static double Linear(byte v) { double s = v / 255.0; return s <= 0.04045 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4); }
+        double r = Linear(c.R), g = Linear(c.G), b = Linear(c.B);
+        double l = Math.Cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b), m = Math.Cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b), s = Math.Cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+        return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s);
+    }
+    // How far apart two colors are, on a 0-100 scale, and how far apart their hues are in degrees.
+    private static double OkDistance(Color x, Color y) { var (a, b) = (OkLab(x), OkLab(y)); return 100 * Math.Sqrt(Math.Pow(a.L - b.L, 2) + Math.Pow(a.A - b.A, 2) + Math.Pow(a.B - b.B, 2)); }
+    private static double HueGap(Color x, Color y)
+    {
+        static double Hue(Color c) { var (_, a, b) = OkLab(c); return (Math.Atan2(b, a) * 180 / Math.PI + 360) % 360; }
+        double gap = Math.Abs(Hue(x) - Hue(y)) % 360;
+        return Math.Min(gap, 360 - gap);
     }
 
     // Cards mark link rate, reserved bandwidth and requested power with their glyphs, power problems
