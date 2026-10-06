@@ -232,8 +232,35 @@ public partial class MainWindow
         // A far row's connections leave its edge 10 apart, so a vertical one widens for many children.
         if (detail == CardDetail.Far) return horizontalTree ? FarWidth : Math.Max(FarWidth, Children(n).Count * 10 + 20);
         double card = detail == CardDetail.Compact ? CompactWidth : CardWidth;
+        // Laid out from the left, a tree is shallow and tall, so width is the spare dimension: a card widens
+        // for its name, by up to 100 px, before the name has to wrap or be shortened.
+        if (horizontalTree) card = Math.Clamp(NameWidth(n) + TitleChrome(n) + 2, card, card + 100);
         return horizontalTree ? card + (EdgePorts(n).Count > 0 ? SocketWidth + 6 : 0) : Math.Max(card, EdgePorts(n).Count * SocketPitch + 20);
     }
+    // A card's name at its title size, measured once per drawing pass.
+    private readonly Dictionary<string, double> nameWidths = [];
+    private double NameWidth(UsbNode n)
+    {
+        if (nameWidths.TryGetValue(n.Id, out var width)) return width;
+        var text = new FormattedText(NodeVisuals.ShortName(n), System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+            new Typeface((FontFamily)FindResource("UiFont"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), 14, Brushes.Black, 1);
+        return nameWidths[n.Id] = text.WidthIncludingTrailingWhitespace;
+    }
+    // Everything on a title row besides the name: border, padding, icon, fold button and the worst issue's glyph.
+    private double TitleChrome(UsbNode n) => 2 + 20 + 27 + (HasFold(n) ? 28 : 0)
+        + (detail != CardDetail.Full && (n.Kind is "Controller" or "Root hub" ? OtherIssues(n) : CardIssues(n)).Count > 0 ? 19 : 0);
+    // A full card's name wraps onto a second line, once its card can't widen enough, before it's shortened: the title row is
+    // as wide as the card's content, less the icon, the fold button and the worst issue's glyph. Compact
+    // and far cards keep to one line, so wrapping never makes Fit all fall back to a simpler level.
+    private const double TitleHeight = 22, TitleLine = 18;
+    private bool HasFold(UsbNode n) => Sides(MergedRoot(n) ?? n).SelectMany(s => s.Children).Any(c => c.Kind != "Empty port");
+    private int TitleLines(UsbNode n)
+    {
+        if (detail != CardDetail.Full) return 1;
+        double room = WidthFor(n) - (horizontalTree && EdgePorts(n).Count > 0 ? SocketWidth + 6 : 0) - TitleChrome(n);
+        return NameWidth(n) > room ? 2 : 1;
+    }
+    private double TitleRowHeight(UsbNode n) => TitleHeight + (TitleLines(n) - 1) * TitleLine;
     // Card height from its rows: the name, a custom label's detected name, the figures line (taller when
     // its warnings wrap) or a host's summary, the bandwidth meter, other warnings, the card sharing its
     // sockets, and the socket strip.
@@ -242,11 +269,11 @@ public partial class MainWindow
         if (detail == CardDetail.Far) return horizontalTree ? Math.Max(FarHeight, Children(n).Count * 10 + 2) : FarHeight;
         if (detail == CardDetail.Compact)
         {
-            double compact = 2 + 8 + 22 + 8 + (n.Kind is "Controller" or "Root hub" ? 20 : CardFigures(n).Parts.Count > 0 ? 17 : 0);
+            double compact = 2 + 8 + TitleRowHeight(n) + 8 + (n.Kind is "Controller" or "Root hub" ? 20 : CardFigures(n).Parts.Count > 0 ? 17 : 0);
             int sockets = EdgePorts(n).Count;
             return sockets == 0 ? compact : horizontalTree ? Math.Max(compact, sockets * SocketStep + 12) : compact + 6 + SocketHeight;
         }
-        double height = 2 + 8 + 22 + 8;
+        double height = 2 + 8 + TitleRowHeight(n) + 8;
         if (n.UserLabel.Length > 0) height += 16;
         if (HubRelationships.CardLabel(n).Length > 0) height += 19;
         height += n.Kind is "Controller" or "Root hub" ? 20 : RowHeight(n, CardFigures(n));
@@ -274,7 +301,7 @@ public partial class MainWindow
     private void PrepareGraph()
     {
         appliedQuery = Search.Text.Trim();
-        pathLabels.Clear(); visibleIds.Clear(); matches.Clear(); edgePortCache.Clear(); mergedHosts.Clear(); nodeParents.Clear(); socketParts.Clear();
+        pathLabels.Clear(); visibleIds.Clear(); matches.Clear(); edgePortCache.Clear(); nameWidths.Clear(); mergedHosts.Clear(); nodeParents.Clear(); socketParts.Clear();
         foreach (var controller in snapshot.Controllers) if (MergedRoot(controller) is UsbNode root) mergedHosts[root.Id] = controller;
         // A merged root hub shares its controller's path, so root ports read H01/03.
         void Visit(UsbNode n, string path)
@@ -352,23 +379,24 @@ public partial class MainWindow
         // The name leads: icon, shortened name and fold button on one line. Type and location are in
         // the tooltip, tree and inspector; the color already says what a device does.
         bool far = detail == CardDetail.Far;
-        var title = new DockPanel { Height = far ? 20 : 22 };
-        var icon = NodeVisuals.Icon(node, far ? 16 : 20); icon.Margin = new Thickness(0, 0, far ? 6 : 7, 0);
+        int lines = TitleLines(node); var align = lines > 1 ? VerticalAlignment.Top : VerticalAlignment.Center;
+        var title = new DockPanel { Height = far ? 20 : TitleRowHeight(node) };
+        var icon = NodeVisuals.Icon(node, far ? 16 : 20); icon.Margin = new Thickness(0, 0, far ? 6 : 7, 0); icon.VerticalAlignment = align;
         DockPanel.SetDock(icon, Dock.Left); title.Children.Add(icon);
         // A far row has no room for a fold button; double-clicking it still folds the branch.
-        if (!far && Sides(MergedRoot(node) ?? node).SelectMany(s => s.Children).Any(c => c.Kind != "Empty port"))
+        if (!far && HasFold(node))
         {
-            var fold = new Button { Content = folded.Contains(node.Id) && appliedQuery.Length == 0 ? "+" : "−", Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, ToolTip = "Expand / collapse branch", IsEnabled = appliedQuery.Length == 0 };
+            var fold = new Button { Content = folded.Contains(node.Id) && appliedQuery.Length == 0 ? "+" : "−", Padding = new Thickness(5, 0, 5, 0), Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = align, ToolTip = "Expand / collapse branch", IsEnabled = appliedQuery.Length == 0 };
             fold.Click += (_, e) => { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); e.Handled = true; };
             DockPanel.SetDock(fold, Dock.Right); title.Children.Add(fold);
         }
         // Below full detail, the worst issue's glyph stands in for the badges.
         if (detail != CardDetail.Full && (host ? OtherIssues(node) : CardIssues(node)) is { Count: > 0 } worst)
         {
-            var glyph = NodeVisuals.StatusGlyph(worst.Max(i => i.Severity)); glyph.Margin = new Thickness(6, 0, 0, 0); glyph.VerticalAlignment = VerticalAlignment.Center;
+            var glyph = NodeVisuals.StatusGlyph(worst.Max(i => i.Severity)); glyph.Margin = new Thickness(6, lines > 1 ? 2 : 0, 0, 0); glyph.VerticalAlignment = align;
             glyph.ToolTip = string.Join(" · ", worst.Select(i => i.Text)); DockPanel.SetDock(glyph, Dock.Right); title.Children.Add(glyph);
         }
-        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName + (CanNameDevice(node) ? "\nDouble-click to rename" : "") };
+        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = lines > 1 ? TextWrapping.Wrap : TextWrapping.NoWrap, LineHeight = TitleLine, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, MaxHeight = lines * TitleLine, VerticalAlignment = align, ToolTip = node.DisplayName + (CanNameDevice(node) ? "\nDouble-click to rename" : "") };
         // Double-clicking the name renames; double-clicking elsewhere on the card still folds its branch.
         name.MouseLeftButtonDown += (_, e) => { if (e.ClickCount == 2 && CanNameDevice(node)) { EditDeviceName(node, name); e.Handled = true; } };
         title.Children.Add(name);
