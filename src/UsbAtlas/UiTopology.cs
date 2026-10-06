@@ -478,8 +478,30 @@ public partial class MainWindow
             }
         }
         var children = layout.Children;
-        // One connection per child, or two for a merged hub, which meet the two halves of its card's entry
-        // edge in the order of their ports; without sockets, the USB 2 side's comes first.
+        var entries = Entries(children, left, top);
+        var routes = TopologyLayout.Route(bounds, entries.Select(e => e.Anchor).ToList(), entries.Select(e => e.Card).ToList(), horizontalTree);
+        for (int i = 0; i < entries.Count; i++) AddWire(entries[i].Node, routes[i]);
+        foreach (var child in children) Place(child, left + child.X, top + child.Y);
+        AddMissingUsb3Stubs(children);
+    }
+    // A hub whose USB 3 side didn't connect shows the missing connection: a short dashed amber stub on
+    // the empty USB 3 half of its socket, shorter than the drop where connections turn.
+    private void AddMissingUsb3Stubs(List<TopologyLayout.Item> children)
+    {
+        foreach (var child in children.Where(c => c.Node.Usb3SideMissing && portAnchors.ContainsKey(c.Node.CompanionId)))
+        {
+            var at = portAnchors[child.Node.CompanionId];
+            var stub = new System.Windows.Shapes.Line { X1 = at.X, Y1 = at.Y, X2 = at.X + (horizontalTree ? TopologyLayout.Stub - 3 : 0), Y2 = at.Y + (horizontalTree ? 0 : TopologyLayout.Stub - 3),
+                Stroke = Brush("Warning"), StrokeThickness = NodeVisuals.WireWidth(new UsbNode { LinkMbps = 5000 }), StrokeDashArray = [1.5, 1], IsHitTestVisible = false, Tag = MissingUsb3Tag };
+            System.Windows.Automation.AutomationProperties.SetName(stub, $"{child.Node.DisplayName}'s USB 3 side isn't connected");
+            Graph.Children.Add(stub);
+        }
+    }
+    private const string MissingUsb3Tag = "missing-usb3";
+    // One connection per child, or two for a merged hub, which meet the two halves of its card's entry
+    // edge in the order of their ports; without sockets, the USB 2 side's comes first.
+    private List<(UsbNode Node, Rect Card, Point? Anchor)> Entries(List<TopologyLayout.Item> children, double left, double top)
+    {
         Point? Anchor(UsbNode n) => portAnchors.TryGetValue(n.Id, out var anchor) ? anchor : null;
         var entries = new List<(UsbNode Node, Rect Card, Point? Anchor)>();
         foreach (var child in children)
@@ -493,32 +515,8 @@ public partial class MainWindow
             entries.Add(sideFirst ? (side, nearHalf, Anchor(side)) : (child.Node, nearHalf, Anchor(child.Node)));
             entries.Add(sideFirst ? (child.Node, farHalf, Anchor(child.Node)) : (side, farHalf, Anchor(side)));
         }
-        var routes = layout.SnappedColumn ? entries.Select((entry, i) =>
-        {
-            var start = entry.Anchor!.Value;
-            double laneY = y + HeightFor(node) + 32 + (entries.Count - i) * 8;
-            double laneX = left + layout.Width - 8 - (entries.Count - 1 - i) * 8;
-            double entryY = entry.Card.Y + entry.Card.Height / 2;
-            return new List<Point> { start, new(start.X, laneY), new(laneX, laneY), new(laneX, entryY), new(entry.Card.Right, entryY) };
-        }).ToList() : TopologyLayout.Route(bounds, entries.Select(e => e.Anchor).ToList(), entries.Select(e => e.Card).ToList(), horizontalTree);
-        for (int i = 0; i < entries.Count; i++)
-        {
-            if (layout.SnappedColumn) snappedWires.Add(entries[i].Node.Id);
-            AddWire(entries[i].Node, routes[i]);
-        }
-        foreach (var child in children) Place(child, left + child.X, top + child.Y);
-        // A hub whose USB 3 side didn't connect shows the missing connection: a short dashed amber stub on
-        // the empty USB 3 half of its socket, shorter than the drop where connections turn.
-        foreach (var child in children.Where(c => c.Node.Usb3SideMissing && portAnchors.ContainsKey(c.Node.CompanionId)))
-        {
-            var at = portAnchors[child.Node.CompanionId];
-            var stub = new System.Windows.Shapes.Line { X1 = at.X, Y1 = at.Y, X2 = at.X + (horizontalTree ? TopologyLayout.Stub - 3 : 0), Y2 = at.Y + (horizontalTree ? 0 : TopologyLayout.Stub - 3),
-                Stroke = Brush("Warning"), StrokeThickness = NodeVisuals.WireWidth(new UsbNode { LinkMbps = 5000 }), StrokeDashArray = [1.5, 1], IsHitTestVisible = false, Tag = MissingUsb3Tag };
-            System.Windows.Automation.AutomationProperties.SetName(stub, $"{child.Node.DisplayName}'s USB 3 side isn't connected");
-            Graph.Children.Add(stub);
-        }
+        return entries;
     }
-    private const string MissingUsb3Tag = "missing-usb3";
     // A full card's rows under its name: the paired-hub label, the detected name under a custom label, the
     // figures with the warnings that qualify them (or a host's summary), the meter, other warnings and the
     // card that holds the other halves of its sockets.
