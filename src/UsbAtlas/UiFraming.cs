@@ -101,7 +101,12 @@ public partial class MainWindow
         GraphScroll.ScrollToVerticalOffset(Math.Max(0, center.Y * scale - GraphScroll.ViewportHeight / 2));
         GraphScroll.UpdateLayout(); RevealSelection(); UpdateGraphHint();
     }
-    private void GraphScrollChanged(object sender, ScrollChangedEventArgs e) => UpdateGraphHint();
+    private void GraphScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        // The view controls float in the canvas's corner, clear of whichever scroll bars show.
+        ViewControls.Margin = new Thickness(0, 0, GraphScroll.ActualWidth - GraphScroll.ViewportWidth + 12, GraphScroll.ActualHeight - GraphScroll.ViewportHeight + 12);
+        UpdateGraphHint();
+    }
     private void UpdateGraphHint()
     {
         if (GraphHint == null || GraphScroll == null) return;
