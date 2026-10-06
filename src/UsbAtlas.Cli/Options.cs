@@ -8,7 +8,7 @@ internal sealed class CliException(string message) : Exception(message);
 // or one given as --name=value.
 internal sealed class Options
 {
-    private static readonly HashSet<string> Flags = new(StringComparer.OrdinalIgnoreCase) { "json", "demo", "redact", "ports", "errors", "help", "verbose", "raw", "devices" };
+    private static readonly HashSet<string> Flags = new(StringComparer.OrdinalIgnoreCase) { "json", "demo", "redact", "ports", "errors", "help", "verbose", "raw", "devices", "trace" };
     private static readonly HashSet<string> Valued = new(StringComparer.OrdinalIgnoreCase) { "format", "input", "out", "min", "for", "since", "max" };
     private readonly Dictionary<string, string> named = new(StringComparer.OrdinalIgnoreCase);
     internal string Command { get; private set; } = "";

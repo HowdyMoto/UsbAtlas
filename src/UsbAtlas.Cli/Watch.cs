@@ -49,6 +49,7 @@ internal static class Watch
         };
         var registrations = new List<IntPtr>();
         IntPtr powerRegistration = IntPtr.Zero;
+        EtwSession? etw = null;
         try
         {
             // DEVICE_NOTIFY_CALLBACK. Watching goes on without sleep tracking if Windows refuses.
@@ -73,6 +74,14 @@ internal static class Watch
             // Issues already announced, so a device that leaves and returns with one doesn't announce it again.
             var reported = Diff.IssueKeys(current);
             var start = DateTime.Now;
+            // --trace adds the hub driver's own account of each change, placed by the latest scan.
+            UsbTrace? trace = null;
+            if (o.Has("trace"))
+            {
+                trace = new UsbTrace(() => current);
+                etw = UsbTrace.Start();
+                etw.Read(e => { if (trace.Interpret(e, verbose) is JsonObject line) emit(line); });
+            }
             emit(J.Obj(("time", Time(start)), ("event", "watching"), ("for", duration == TimeSpan.Zero ? "until stopped" : $"{duration.TotalSeconds:0} s"),
                 ("devices", current.Snapshot.Nodes.Count(n => n.Kind == "Device")), ("hubs", current.Snapshot.Nodes.Count(n => n.Kind == "Hub")),
                 ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()), ("tracksSleep", powerRegistration != IntPtr.Zero)));
@@ -124,6 +133,7 @@ internal static class Watch
                     current = next;
                 }
             }
+            if (trace != null) { etw!.Dispose(); etw = null; emit(trace.Summary(start, current)); }
             var unstable = current.Listed.Where(n => n.QuickReconnects > 0).ToList();
             return J.Obj(("time", Time(DateTime.Now)), ("event", "summary"), ("watchedSeconds", Math.Round((DateTime.Now - start).TotalSeconds)),
                 ("rescans", rescans), ("changes", changes),
@@ -134,6 +144,7 @@ internal static class Watch
         }
         finally
         {
+            etw?.Dispose();
             foreach (var handle in registrations) CM_Unregister_Notification(handle);
             if (powerRegistration != IntPtr.Zero) PowerUnregisterSuspendResumeNotification(powerRegistration);
             GC.KeepAlive(callback); GC.KeepAlive(powerCallback);
@@ -188,6 +199,8 @@ internal static class Watch
                 var issues = e["issues"]!;
                 string span = e["for"]?.ToString() == "until stopped" ? "until stopped" : $"for {e["for"]}";
                 return $"{time} watching {span} · {Count(e["devices"], "device")}, {Count(e["hubs"], "hub")} · {Count(issues["errors"], "error")}, {Count(issues["warnings"], "warning")}, {Count(issues["notes"], "note")}{(e["tracksSleep"]?.GetValue<bool>() == false ? " · Windows refused sleep notifications, so sleep isn't tracked" : "")}. Plug, unplug or wiggle now.\n";
+            case "usb" or "trace-start" or "trace-summary":
+                return UsbTrace.Text(e);
             case "arrival" or "removal":
                 return $"{time} {e["event"],-8} {e["instanceId"]}\n";
             case "change":

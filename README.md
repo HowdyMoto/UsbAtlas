@@ -52,7 +52,8 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 | `budget [<target>]` | Bandwidth and power arithmetic with its inputs: reserved and peak bandwidth against each link's capacity, shared transaction translators, and bus-powered hubs' current against the specification. |
 | `raw <target>` | The node's descriptors, decoded field by field with their hex: device, configuration, interfaces, endpoints, BOS capabilities (LPM, SuperSpeedPlus lane speeds), hub descriptor (power switching and overcurrent protection, per port or ganged), connection and connector flags, and a SuperSpeedPlus link's lane speed and lane count. |
 | `events` | Recent USB history from the Windows event logs: devices set up, failing to start (Kernel-PnP 411) or removed, and drivers that failed to load, placed in the topology when still connected. |
-| `watch` | Devices connecting, disconnecting, moving and changing as it happens, and devices that drop and come back; run it while replugging or wiggling a cable. When the computer sleeps and wakes, it reports what didn't come back or came back on a slower link. `--for 0` runs until Ctrl+C, and `--out FILE` also appends each event to a file as a line of JSON, for soak tests. |
+| `watch` | Devices connecting, disconnecting, moving and changing as it happens, and devices that drop and come back; run it while replugging or wiggling a cable. When the computer sleeps and wakes, it reports what didn't come back or came back on a slower link. `--for 0` runs until Ctrl+C, and `--out FILE` also appends each event to a file as a line of JSON, for soak tests. `--trace` adds the hub driver's own events, as `trace` reports them. |
+| `trace` | Why a link dropped or came up slow, from Windows' USB hub driver itself: connections, port and warm resets, USB 3 links that failed (config errors, SS.Inactive, compliance mode), overcurrent, enumeration retries and failures, descriptors Windows rejected, SuperSpeed devices that came up on the USB 2 bus, U1/U2 refused, and USB-C alternate modes, each placed on the topology, then a count per port. See **Hub driver events** below. |
 | `scan`, `diff` | Save a snapshot, change something, and see what changed: devices moved, links renegotiated, issues appearing or resolved. |
 | `map` | This machine's port map as a JSON file: each host controller's ports as the firmware describes them to Windows, and what is wired in. |
 | `check [<map>]` | Pass or fail: the firmware's port map has no contradictions and, given a map from a known-good unit, this machine matches it. |
@@ -64,6 +65,17 @@ A target is a path such as `H01/04/02` (host 1, port 4, port 2, as `tree` shows 
 ```powershell
 claude mcp add usb-atlas -- "C:\path\to\usbatlas-cli.exe" mcp
 ```
+
+### Hub driver events
+
+`trace` records what Windows' USB 3 hub driver (USBHUB3, which also runs the USB 2 ports of xHCI controllers) logs through Event Tracing for Windows, the events Device Manager and the event logs never show. It starts a real-time session on the driver's error, enumeration and rundown events, reads them with the Windows trace-decoding API (no packages), and places each one on the topology: the driver's rundown names each hub's and device's controller and port path, and a device being set up is placed at the port being set up. Each port's status changes are decoded from the hub's `wPortStatus` and `wPortChange`, so a USB 3 link that drops to SS.Inactive or compliance mode, a link that couldn't be trained, a warm reset or overcurrent reads as what it is. Routine resumes, resets and set-up steps appear with `--verbose`, which also prints each event's fields. At the end it counts each port's events, busiest first.
+
+```powershell
+usbatlas-cli trace --for 60s          # replug or wiggle the device meanwhile
+usbatlas-cli watch --trace --for 0    # changes and the hub driver's account of them, until Ctrl+C
+```
+
+Starting an event session needs administrator rights or membership in the Performance Log Users group; `trace` says so when it can't, and the rest of USB Atlas still needs neither. The events come from USBHUB3; hubs and controllers run by older drivers (USBHUB, USBPORT) log nothing here.
 
 ### Checking a board's port map
 
