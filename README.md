@@ -66,6 +66,18 @@ A target is a path such as `H01/04/02` (host 1, port 4, port 2, as `tree` shows 
 claude mcp add usb-atlas -- "C:\path\to\usbatlas-cli.exe" mcp
 ```
 
+### Linux
+
+The command line also runs on Linux, reading sysfs (`/sys/bus/usb/devices` and the controllers' PCI devices) with no root access needed. It fills the same snapshot, so `issues`, `tree`, `show`, `find`, `budget`, `raw`, `scan`, `diff`, `map`, `check` and `mcp` work as on Windows, and snapshots from either system load in the other. Build it with:
+
+```sh
+dotnet publish src/UsbAtlas.Cli -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true   # or linux-arm64
+```
+
+Each USB bus is a host, as `lsusb -t` numbers them, so `H01/03` is bus 1, port 3: an xHCI controller's USB 2 and USB 3 ports are two buses that share its PCI device, its PCIe link and its endpoints. Ports come from `usbN-portM`: whether they can be plugged into (`connect_type`), the other half of their socket (`peer`) and USB-C (`connector`), so socket pairing, hub pairing and the port-map checks work as on Windows. Devices bring their link rate and lanes, descriptors, interfaces and the endpoints of each interface's current setting, which give polling rates and reserved bandwidth, and the kernel's count of overcurrent events per port is in Detection details. Two findings are Linux's own: **No driver bound** (a warning: a device with standard functions that no kernel driver claimed) and **Not authorized** (a note: a device USBGuard or a similar policy blocked).
+
+Linux doesn't report some of what Windows does: power-saving settings, driver versions and problem codes, Billboard capabilities (the BOS descriptor isn't in sysfs), device containers, whether a 12 Mb/s device supports high speed, and whether a USB 3 hub's USB 2 side is missing its USB 3 side. `events` and `trace` read Windows' own logs and tracing, so they refuse on Linux (the kernel's USB messages are in `journalctl -k`), and `watch` rescans every second instead of waiting for notifications, without tracking sleep. Some explanations still name Windows, since they were written for it. The scanner is tested against fixture sysfs trees on every self-test; it hasn't yet run on real Linux hardware.
+
 ### Hub driver events
 
 `trace` records what Windows' USB 3 hub driver (USBHUB3, which also runs the USB 2 ports of xHCI controllers) logs through Event Tracing for Windows, the events Device Manager and the event logs never show. It starts a real-time session on the driver's error, enumeration and rundown events, reads them with the Windows trace-decoding API (no packages), and places each one on the topology: the driver's rundown names each hub's and device's controller and port path, and a device being set up is placed at the port being set up. Each port's status changes are decoded from the hub's `wPortStatus` and `wPortChange`, so a USB 3 link that drops to SS.Inactive or compliance mode, a link that couldn't be trained, a warm reset or overcurrent reads as what it is. Routine resumes, resets and set-up steps appear with `--verbose`, which also prints each event's fields. At the end it counts each port's events, busiest first.

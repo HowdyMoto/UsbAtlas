@@ -138,6 +138,7 @@ internal static class Program
                 }
                 case "events":
                 {
+                    if (!OperatingSystem.IsWindows()) throw new CliException("events reads the Windows event logs. On Linux, the kernel's USB messages are in journalctl -k.");
                     var s = Session.Open(o);
                     Print(EventLog.Report(s, o.Duration("since", TimeSpan.FromHours(24)), o.Int("max", 100, 1, 10000), o.Has("errors"), o.Has("redact"))); return 0;
                 }

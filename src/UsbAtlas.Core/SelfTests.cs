@@ -11,6 +11,7 @@ internal static class SelfTests
         Check(Topology.SearchText(new UsbNode { DeviceRevision = "1.04" }, null).Contains("rev 1.04"), "Search finds a device by its revision.");
         BillboardTests(Check);
         ContainerTests(Check);
+        LinuxTests(Check);
         Check(UsbScanner.DecodeSpeed(2, 1).Item2 == 5000, "EX V2 must override legacy high-speed reporting.");
         Check(UsbScanner.DecodeSpeed(2, 4).Item2 == null, "SuperSpeedPlus must not pretend to know exact lane rate.");
         Check(UsbScanner.DecodeSpeed(0, 0).Item2 == 1.5, "Low-speed decoding.");
@@ -537,6 +538,98 @@ internal static class SelfTests
         return d;
     }
     private static byte[] Bos(params byte[][] caps) { var body = caps.SelectMany(c => c).ToArray(); return [5, 15, .. BitConverter.GetBytes((ushort)(5 + body.Length)), (byte)caps.Length, .. body]; }
+
+    // A laptop's sysfs as Linux lays it out: an Intel xHCI controller's USB 2 bus (usb1) and USB 3 bus (usb2),
+    // a USB 3 hub on a USB-C socket seen on both buses, a keyboard on its USB 2 side, a 10 Gb/s enclosure on
+    // its USB 3 side, a USB 3 flash drive stuck at USB 2, a built-in webcam, and an HID device with no driver.
+    internal static FakeSysfs LinuxLaptop()
+    {
+        var fs = new FakeSysfs();
+        const string D = "bus/usb/devices", Pci = "bus/pci/devices/0000:00:14.0";
+        foreach (var (file, value) in new[] { ("vendor", "0x8086"), ("device", "0xa36d"), ("subsystem_vendor", "0x17aa"), ("subsystem_device", "0x2292"), ("revision", "0x10") }) fs.Files[$"{Pci}/{file}"] = value;
+        fs.Links[$"{Pci}/driver"] = "../../../bus/pci/drivers/xhci_hcd";
+        void Device(string name, Dictionary<string, string> attributes, byte[]? descriptors = null)
+        {
+            foreach (var (k, v) in attributes) fs.Files[$"{D}/{name}/{k}"] = v + "\n";
+            if (descriptors != null) fs.Binary[$"{D}/{name}/descriptors"] = descriptors;
+        }
+        void Interface(string name, int cls, string? driver, params (string Ep, string Attributes, string Packet, string Interval)[] endpoints)
+        {
+            fs.Files[$"{D}/{name}/bInterfaceClass"] = cls.ToString("x2");
+            if (driver != null) fs.Links[$"{D}/{name}/driver"] = "../../../../bus/usb/drivers/" + driver;
+            foreach (var (ep, attributes, packet, interval) in endpoints)
+                foreach (var (k, v) in new[] { ("bEndpointAddress", ep), ("bmAttributes", attributes), ("wMaxPacketSize", packet), ("bInterval", interval) }) fs.Files[$"{D}/{name}/ep_{ep}/{k}"] = v;
+        }
+        void Port(string hubInterface, string port, string connect, string? peer = null, bool typeC = false)
+        {
+            fs.Files[$"{D}/{hubInterface}/{port}/connect_type"] = connect;
+            if (peer != null) fs.Links[$"{D}/{hubInterface}/{port}/peer"] = peer;
+            if (typeC) fs.Links[$"{D}/{hubInterface}/{port}/connector"] = "../../../../../../../port1-connector";
+        }
+        // A HID keyboard's configuration: one interface, a HID descriptor and an interrupt IN endpoint every 10 ms.
+        byte[] keyboard = [18, 1, 0x00, 0x02, 0, 0, 0, 8, 0x6D, 0x04, 0x1C, 0xC3, 0x04, 0x01, 1, 2, 0, 1,
+            9, 2, 34, 0, 1, 1, 0, 0xA0, 50, 9, 4, 0, 0, 1, 3, 1, 1, 0, 9, 0x21, 0x11, 1, 0, 1, 0x22, 65, 0, 7, 5, 0x81, 3, 8, 0, 10];
+        foreach (var (bus, version, ports) in new[] { (1, "2.00", 4), (2, "3.10", 2) })
+        {
+            fs.Links[$"{D}/usb{bus}"] = $"../../../devices/pci0000:00/0000:00:14.0/usb{bus}";
+            Device($"usb{bus}", new() { ["version"] = " " + version, ["maxchild"] = ports.ToString(), ["product"] = "xHCI Host Controller", ["bDeviceClass"] = "09", ["speed"] = bus == 1 ? "480" : "5000" });
+            fs.Files[$"{D}/{bus}-0:1.0/bInterfaceClass"] = "09";
+        }
+        Port("1-0:1.0", "usb1-port1", "hotplug", "../../usb2/2-0:1.0/usb2-port1");
+        Port("1-0:1.0", "usb1-port2", "hotplug", "../../usb2/2-0:1.0/usb2-port2", typeC: true);
+        Port("1-0:1.0", "usb1-port3", "hardwired");
+        Port("1-0:1.0", "usb1-port4", "not used");
+        Port("2-0:1.0", "usb2-port1", "hotplug", "../../usb1/1-0:1.0/usb1-port1");
+        Port("2-0:1.0", "usb2-port2", "hotplug", "../../usb1/1-0:1.0/usb1-port2", typeC: true);
+        // A USB 3 flash drive linked at 480 Mb/s.
+        Device("1-1", new() { ["idVendor"] = "0781", ["idProduct"] = "5583", ["bcdDevice"] = "0100", ["version"] = " 3.20", ["speed"] = "480", ["bDeviceClass"] = "00", ["product"] = "Ultra Fit", ["manufacturer"] = "SanDisk", ["bMaxPower"] = "224mA", ["bmAttributes"] = "80", ["serial"] = "4C530001" });
+        Interface("1-1:1.0", 8, "usb-storage");
+        // The USB 3 hub's USB 2 side, with one TT, and its USB 3 side; their ports name each other.
+        Device("1-2", new() { ["idVendor"] = "0bda", ["idProduct"] = "5411", ["bcdDevice"] = "0002", ["version"] = " 2.10", ["speed"] = "480", ["bDeviceClass"] = "09", ["bDeviceProtocol"] = "01", ["maxchild"] = "2", ["bmAttributes"] = "e0", ["bMaxPower"] = "0mA" });
+        Interface("1-2:1.0", 9, "hub");
+        Device("2-2", new() { ["idVendor"] = "0bda", ["idProduct"] = "0411", ["bcdDevice"] = "0002", ["version"] = " 3.20", ["speed"] = "5000", ["bDeviceClass"] = "09", ["bDeviceProtocol"] = "03", ["maxchild"] = "2", ["bmAttributes"] = "e0", ["bMaxPower"] = "0mA" });
+        Interface("2-2:1.0", 9, "hub");
+        for (int p = 1; p <= 2; p++) { Port("1-2:1.0", $"1-2-port{p}", "hotplug", $"../../2-2/2-2:1.0/2-2-port{p}"); Port("2-2:1.0", $"2-2-port{p}", "hotplug", $"../../1-2/1-2:1.0/1-2-port{p}"); }
+        Device("1-2.1", new() { ["idVendor"] = "046d", ["idProduct"] = "c31c", ["bcdDevice"] = "6401", ["version"] = " 2.00", ["speed"] = "12", ["bDeviceClass"] = "00", ["product"] = "USB Keyboard", ["manufacturer"] = "Logitech", ["bMaxPower"] = "100mA", ["bmAttributes"] = "a0", ["bConfigurationValue"] = "1" }, keyboard);
+        Interface("1-2.1:1.0", 3, "usbhid", ("81", "03", "0008", "0a"));
+        // An HID device no driver claimed.
+        Device("1-2.2", new() { ["idVendor"] = "1234", ["idProduct"] = "5678", ["version"] = " 2.00", ["speed"] = "12", ["bDeviceClass"] = "00", ["product"] = "Macro Pad", ["bMaxPower"] = "100mA", ["bmAttributes"] = "80" });
+        Interface("1-2.2:1.0", 3, null);
+        Device("2-2.2", new() { ["idVendor"] = "0bda", ["idProduct"] = "9210", ["bcdDevice"] = "2001", ["version"] = " 3.20", ["speed"] = "10000", ["rx_lanes"] = "1", ["bDeviceClass"] = "00", ["product"] = "RTL9210 NVMe", ["manufacturer"] = "Realtek", ["bMaxPower"] = "896mA", ["bmAttributes"] = "80" });
+        Interface("2-2.2:1.0", 8, "uas");
+        // A built-in webcam on a hardwired port.
+        Device("1-3", new() { ["idVendor"] = "5986", ["idProduct"] = "2113", ["version"] = " 2.01", ["speed"] = "480", ["bDeviceClass"] = "ef", ["product"] = "Integrated Camera", ["bMaxPower"] = "500mA", ["bmAttributes"] = "80" });
+        Interface("1-3:1.0", 14, "uvcvideo");
+        return fs;
+    }
+
+    private static void LinuxTests(Action<bool, string> Check)
+    {
+        var s = new LinuxUsbScanner(LinuxLaptop()) { CaptureRaw = true }.Scan();
+        var paths = Topology.PathLabels(s);
+        UsbNode At(string path) => s.Nodes.First(n => paths[n.Id] == path);
+        Check(s.Controllers.Count == 2 && s.Controllers[0].Name == "Intel xHCI Host Controller · bus 1" && s.Controllers[1].PciId == "8086:A36D" && s.Controllers[0].PciAddress == "00:14.0"
+            && s.Controllers[0].PciSubsystem == "17AA:2292" && s.Controllers[0].DriverService == "xhci_hcd", "Each bus is a host named after its controller's PCI device.");
+        var drive = At("H01/01");
+        Check(drive.Name == "SanDisk Ultra Fit" && drive.LinkMbps == 480 && drive.SpeedLimited && IssueRules.For(drive).Any(i => i.Text == "Running at USB 2" && i.Severity == Severity.Warning)
+            && drive.DriverService == "usb-storage" && drive.DeviceRevision == "1.00" && drive.MaxPowerMa == 224, "A USB 3 drive at 480 Mb/s runs at USB 2, as on Windows.");
+        var root1 = s.Controllers[0].Children[0];
+        Check(root1.Children[0].CompanionId == "usb2/1" && s.Controllers[1].Children[0].Children[0].CompanionId == "usb1/1" && root1.Children[1].Connector == "USB-C"
+            && root1.Children[2].Connector == "Internal" && root1.Children[3].Kind == "Empty port", "Root ports pair through peer links, and USB-C and built-in ports are told apart.");
+        var hub2 = At("H01/02"); var hub3 = At("H02/02");
+        Check(hub2.CompanionHubId == hub3.Id && hub2.IsUsb2Companion && hub2.TransactionTranslators == "Single" && hub3.Children.Count == 2, "A USB 3 hub's two sides pair across the buses.");
+        var keyboard = At("H01/02/01");
+        Check(keyboard.DeviceType == "Keyboard" && keyboard.PollIntervalMs == 8 && keyboard.OpenPipes.Count == 1 && keyboard.DriverService == "usbhid" && keyboard.Raw?.Configuration.Length == 68,
+            "A keyboard's interrupt endpoint gives its polling rate, as on Windows.");
+        var pad = At("H01/02/02");
+        Check(pad.KernelProblem == LinuxProblems.NoDriver && IssueRules.For(pad).Contains((Severity.Warning, LinuxProblems.NoDriver)) && Explanations.For(pad, LinuxProblems.NoDriver, [pad]).Steps!.Any(x => x.Contains("lsmod")),
+            "An HID device no driver claimed is a warning explained in Linux terms.");
+        var ssd = At("H02/02/02");
+        Check(ssd.LinkMbps == 10000 && ssd.Speed == "SuperSpeedPlus · 10 Gb/s" && ssd.SuperSpeedPlusCapable == true && ssd.DeviceType == "External drive" && ssd.Children.Count == 0, "A 10 Gb/s enclosure reads its rate.");
+        Check(At("H01/03").Location == "Internal" && At("H01/03").DeviceType == "Camera / video" && s.Nodes.All(n => n.PortMapWarnings.Count == 0), "A hardwired webcam is internal, and the port map is consistent.");
+        Check(LinuxUsbScanner.Generation("8.0 GT/s PCIe") == 3 && LinuxUsbScanner.Speed("20000", 2).Speed == "SuperSpeedPlus · 20 Gb/s · 2 lanes" && LinuxUsbScanner.Speed("bogus", 1).Mbps == null, "PCIe and USB rates parse.");
+        Check(new LinuxUsbScanner(new FakeSysfs()).Scan().Diagnostics.Count == 1, "No buses is a diagnostic, not a crash.");
+    }
 
     private static void ContainerTests(Action<bool, string> Check)
     {

@@ -259,6 +259,7 @@ internal sealed class UsbTrace(Func<Session> session)
     internal static JsonObject Run(Options o, TimeSpan duration, bool verbose, Action<JsonObject> emit, CancellationToken cancel)
     {
         if (o.Has("demo") || o.Has("input")) throw new CliException("trace records live hardware; it can't trace --demo or --input.");
+        if (!OperatingSystem.IsWindows()) throw new CliException("trace records Windows' USB hub driver. On Linux, the kernel's USB messages are in journalctl -k.");
         var current = Session.Open(o);
         var trace = new UsbTrace(() => current);
         var start = DateTime.Now;

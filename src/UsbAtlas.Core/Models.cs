@@ -86,6 +86,8 @@ public sealed class UsbNode
     public string DriverInf { get; set; } = "";
     // Device Manager problem codes on the device or one of its functions (interfaces, HID collections).
     public List<DeviceProblem> DriverProblems { get; set; } = [];
+    // On Linux, what keeps the kernel from using the device: no driver bound, or not authorized.
+    public string KernelProblem { get; set; } = "";
     // Descriptors as read, only when a scan is asked to keep them.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RawDescriptors? Raw { get; set; }

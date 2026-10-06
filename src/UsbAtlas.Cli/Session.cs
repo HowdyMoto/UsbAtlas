@@ -52,7 +52,9 @@ internal sealed class Session
         else if (o.Has("demo")) { snapshot = DemoData.Create(); source = "demo"; }
         else
         {
-            snapshot = new UsbScanner { CaptureRaw = raw }.Scan(); source = "live";
+            try { snapshot = Scanner.ThisComputer(raw); }
+            catch (PlatformNotSupportedException ex) { throw new CliException(ex.Message + " Read a saved snapshot with --input FILE."); }
+            source = "live";
             var labels = new DeviceLabels();
             if (labels.LoadError != null) snapshot.Diagnostics.Add(labels.LoadError);
             else labels.Apply(snapshot);

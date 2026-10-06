@@ -159,6 +159,8 @@ internal static class Explanations
                 return Billboard.Explain(n, issue);
             case Containers.SharedId:
                 return Containers.Explain(n);
+            case LinuxProblems.NoDriver or LinuxProblems.NotAuthorized:
+                return LinuxProblems.Explain(n);
             case string finding when PortMap.IsFinding(finding):
                 return PortMapExplanation(finding);
             case PowerSaving.Warning:

@@ -23,6 +23,7 @@ internal static class Watch
     internal static JsonObject Run(Options o, TimeSpan duration, bool verbose, bool redact, Action<JsonObject> emit, CancellationToken cancel)
     {
         if (o.Has("demo") || o.Has("input")) throw new CliException("watch needs live hardware; it can't watch --demo or --input.");
+        if (!OperatingSystem.IsWindows()) return Poll(o, duration, redact, emit, cancel);
         var tracker = new ReconnectTracker();
         var events = new ConcurrentQueue<(DateTime At, bool Arrived, string Instance)>();
         using var signal = new SemaphoreSlim(0);
@@ -151,9 +152,36 @@ internal static class Watch
         }
     }
 
+    // Without Windows' device notifications, a rescan every second finds changes; sleep and quick drops
+    // between rescans go unseen.
+    private static JsonObject Poll(Options o, TimeSpan duration, bool redact, Action<JsonObject> emit, CancellationToken cancel)
+    {
+        if (o.Has("trace")) throw new CliException("--trace records Windows' USB hub driver. On Linux, the kernel's USB messages are in journalctl -k.");
+        var tracker = new ReconnectTracker();
+        var current = Scan(tracker, redact);
+        var reported = Diff.IssueKeys(current);
+        var start = DateTime.Now;
+        emit(J.Obj(("time", Time(start)), ("event", "watching"), ("for", duration == TimeSpan.Zero ? "until stopped" : $"{duration.TotalSeconds:0} s"),
+            ("devices", current.Snapshot.Nodes.Count(n => n.Kind == "Device")), ("hubs", current.Snapshot.Nodes.Count(n => n.Kind == "Hub")),
+            ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()), ("polls", true)));
+        DateTime deadline = duration == TimeSpan.Zero ? DateTime.MaxValue : start + duration;
+        int rescans = 0, changes = 0;
+        while (DateTime.Now < deadline && !cancel.WaitHandle.WaitOne(TimeSpan.FromSeconds(1)))
+        {
+            var next = Scan(tracker, redact); rescans++;
+            if (Diff.Empty(Diff.Compare(current, next))) continue;
+            next = ScanUntilSteady(current, () => { rescans++; return Scan(tracker, redact); }, () => !cancel.WaitHandle.WaitOne(Steady));
+            var diff = Diff.Compare(current, next, reported);
+            if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; emit(diff); }
+            current = next;
+        }
+        return J.Obj(("time", Time(DateTime.Now)), ("event", "summary"), ("watchedSeconds", Math.Round((DateTime.Now - start).TotalSeconds)), ("rescans", rescans), ("changes", changes),
+            ("unstable", new JsonArray()), ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()));
+    }
+
     private static Session Scan(ReconnectTracker tracker, bool redact)
     {
-        var snapshot = new UsbScanner().Scan();
+        var snapshot = Scanner.ThisComputer();
         var labels = new DeviceLabels();
         if (labels.LoadError == null) labels.Apply(snapshot);
         tracker.Apply(snapshot);
@@ -198,7 +226,7 @@ internal static class Watch
             case "watching":
                 var issues = e["issues"]!;
                 string span = e["for"]?.ToString() == "until stopped" ? "until stopped" : $"for {e["for"]}";
-                return $"{time} watching {span} · {Count(e["devices"], "device")}, {Count(e["hubs"], "hub")} · {Count(issues["errors"], "error")}, {Count(issues["warnings"], "warning")}, {Count(issues["notes"], "note")}{(e["tracksSleep"]?.GetValue<bool>() == false ? " · Windows refused sleep notifications, so sleep isn't tracked" : "")}. Plug, unplug or wiggle now.\n";
+                return $"{time} watching {span} · {Count(e["devices"], "device")}, {Count(e["hubs"], "hub")} · {Count(issues["errors"], "error")}, {Count(issues["warnings"], "warning")}, {Count(issues["notes"], "note")}{(e["polls"] != null ? " · rescanning every second" : e["tracksSleep"]?.GetValue<bool>() == false ? " · Windows refused sleep notifications, so sleep isn't tracked" : "")}. Plug, unplug or wiggle now.\n";
             case "usb" or "trace-start" or "trace-summary":
                 return UsbTrace.Text(e);
             case "arrival" or "removal":

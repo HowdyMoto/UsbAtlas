@@ -216,10 +216,14 @@ internal static class CliTests
             [@"PCI\VEN_1022&DEV_15B6\4&1"] = new("", "USBXHCI", [], "USB xHCI Compliant Host Controller", "", 10),
             [@"PCI\VEN_10DE&DEV_1234\4&2"] = new("", "nvlddmkm", [], "Display adapter", "", 43),
         };
-        var snap = new Snapshot();
-        Drivers.Apply(snap, devices);
-        Check(snap.Diagnostics.Count == 2 && snap.Diagnostics.Any(d => d.Contains("Code 43") && d.Contains("Descriptor Request Failed")) && snap.Diagnostics.Any(d => d.Contains("Code 10")),
-            "Unplaced USB problems become scan diagnostics, and other hardware's don't.");
+        // Drivers are read from the Windows registry.
+        if (OperatingSystem.IsWindows())
+        {
+            var snap = new Snapshot();
+            Drivers.Apply(snap, devices);
+            Check(snap.Diagnostics.Count == 2 && snap.Diagnostics.Any(d => d.Contains("Code 43") && d.Contains("Descriptor Request Failed")) && snap.Diagnostics.Any(d => d.Contains("Code 10")),
+                "Unplaced USB problems become scan diagnostics, and other hardware's don't.");
+        }
     }
 
     private static void FileTests()

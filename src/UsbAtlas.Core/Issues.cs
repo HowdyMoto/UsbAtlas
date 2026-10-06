@@ -17,6 +17,7 @@ internal static class IssueRules
         else if (n.Kind == "Unavailable") issues.Add((Severity.Error, UsbBudgets.IsPowerFault(n) || n.Status == "Insufficient bandwidth" ? n.Status : "Port error"));
         if (n.ScanIncomplete) issues.Add((Severity.Warning, "Scan incomplete"));
         if (Explanations.DriverProblemSeverity(n) is Severity problem) issues.Add((problem, Explanations.DriverProblem));
+        if (LinuxProblems.SeverityOf(n) is Severity kernel) issues.Add((kernel, n.KernelProblem));
         if (HubRelationships.ReducedSpeed(n)) issues.Add((Explanations.SpeedSeverity(n), Explanations.SpeedLabel(n)));
         foreach (var warning in n.PowerWarnings) issues.Add((Explanations.PowerSeverity(n, warning), warning));
         // A hub that drops takes everything behind it along, as switching a KVM, changing monitor inputs or

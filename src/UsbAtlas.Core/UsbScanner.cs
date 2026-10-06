@@ -20,6 +20,7 @@ public sealed class UsbScanner
     // Keep descriptor bytes on each node for deep diagnostics. Off for the app, which doesn't show them.
     public bool CaptureRaw { get; init; }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public Snapshot Scan()
     {
         snapshot = new(); visited.Clear(); names.Clear(); devices.Clear(); hidUsages.Clear();
@@ -314,13 +315,17 @@ public sealed class UsbScanner
         if (returned < 35 || speedClass > 3) return;
         int count = BitConverter.ToInt32(data, 27);
         if (count < 0 || 35 + count * 11 > Math.Min(returned, data.Length)) return;
+        ApplyOpenPipes(Enumerable.Range(0, count).Select(i => 35 + i * 11).Select(at => (data[at + 2], data[at + 3], BitConverter.ToUInt16(data, at + 4), data[at + 6])).ToList(), speedClass, endpoints, node);
+    }
+    // What a device's open pipes reserve, how often it's polled, and each pipe described, from their endpoint
+    // descriptors' address, attributes, packet size and interval.
+    internal static void ApplyOpenPipes(List<(byte Address, byte Attributes, ushort MaxPacket, byte Interval)> pipes, int speedClass, List<UsbBudgets.Endpoint> endpoints, UsbNode node)
+    {
+        if (speedClass > 3) return;
         double reserved = 0;
         (byte Address, byte Interval)? fastest = null;
-        for (int i = 0; i < count; i++)
+        foreach (var (address, attributes, maxPacket, interval) in pipes)
         {
-            int at = 35 + i * 11;
-            byte address = data[at + 2], attributes = data[at + 3], interval = data[at + 6];
-            ushort maxPacket = BitConverter.ToUInt16(data, at + 4);
             // SuperSpeed bytes per interval live in the companion descriptor of the matching alternate setting.
             int? perInterval = endpoints.FirstOrDefault(e => e.Address == address && e.Attributes == attributes && e.MaxPacket == maxPacket && e.Interval == interval)?.BytesPerInterval;
             reserved += UsbBudgets.PeriodicMbps(attributes, maxPacket, interval, speedClass, perInterval);
@@ -367,7 +372,7 @@ public sealed class UsbScanner
         }
     }
     private static string ConnectionStatus(int status) => status switch { 0 => "Empty", 1 => "Connected", 2 => "Enumeration failed", 3 => "General failure", 4 => "Overcurrent", 5 => "Insufficient power", 6 => "Insufficient bandwidth", 7 => "Hub nested too deeply", 8 => "Legacy hub", 9 => "Enumerating", 10 => "Resetting", _ => "Status " + status };
-    private static string ClassName(byte value) => value switch { 0 => "Defined by interfaces", 1 => "Audio", 2 => "Communications", 3 => "Human interface (HID)", 7 => "Printer", 8 => "Mass storage", 9 => "Hub", 14 => "Video", 0x11 => "Billboard", 0xE0 => "Wireless controller", 0xEF => "Composite / miscellaneous", 0xFF => "Vendor specific", _ => $"Class 0x{value:X2}" };
+    internal static string ClassName(byte value) => value switch { 0 => "Defined by interfaces", 1 => "Audio", 2 => "Communications", 3 => "Human interface (HID)", 7 => "Printer", 8 => "Mass storage", 9 => "Hub", 14 => "Video", 0x11 => "Billboard", 0xE0 => "Wireless controller", 0xEF => "Composite / miscellaneous", 0xFF => "Vendor specific", _ => $"Class 0x{value:X2}" };
 
     // Names every present device by driver key, and records each devnode's parent and service so HID
     // collections and power settings can be traced back to the USB device they belong to.

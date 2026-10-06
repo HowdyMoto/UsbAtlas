@@ -6,6 +6,7 @@ namespace UsbAtlas;
 // driver's class key. Read-only, and readable without administrator rights.
 internal static class Drivers
 {
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     internal static void Apply(Snapshot snapshot, IReadOnlyDictionary<string, UsbScanner.DevNode> devices)
     {
         // A problem on a composite device's interface or a HID collection belongs to the USB device above it.
@@ -38,6 +39,7 @@ internal static class Drivers
     private static readonly HashSet<string> UsbControllerServices = new(StringComparer.OrdinalIgnoreCase) { "USBXHCI", "usbehci", "usbohci", "usbuhci", "UsbHub3", "USBHUB", "Ucx01000" };
 
     // DriverVersion, DriverDate, ProviderName and InfPath live under the device's driver key.
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static void ReadPackage(UsbNode n, string driverKey)
     {
         try
