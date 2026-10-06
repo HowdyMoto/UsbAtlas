@@ -7,6 +7,11 @@ internal static class SelfTests
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         Check(UsbScanner.DecodePower(250, 0x0200) == 500, "USB 2 power units must be 2 mA.");
         Check(UsbScanner.DecodePower(112, 0x0300) == 896, "USB 3 power units must be 8 mA.");
+        Check(UsbScanner.Bcd(0x0104) == "1.04" && UsbScanner.Bcd(0x0210) == "2.10" && UsbScanner.Bcd(0x1A0F) == "1A.0F", "Versions and revisions read as binary-coded decimal.");
+        Check(Topology.SearchText(new UsbNode { DeviceRevision = "1.04" }, null).Contains("rev 1.04"), "Search finds a device by its revision.");
+        BillboardTests(Check);
+        ContainerTests(Check);
+        LinuxTests(Check);
         Check(UsbScanner.DecodeSpeed(2, 1).Item2 == 5000, "EX V2 must override legacy high-speed reporting.");
         Check(UsbScanner.DecodeSpeed(2, 4).Item2 == null, "SuperSpeedPlus must not pretend to know exact lane rate.");
         Check(UsbScanner.DecodeSpeed(0, 0).Item2 == 1.5, "Low-speed decoding.");
@@ -516,5 +521,184 @@ internal static class SelfTests
         for (int i = 0; i < 3; i++) { sleeper.Removed(id, t0.AddSeconds(300 + i * 10)); sleeper.Arrived(id, t0.AddSeconds(302 + i * 10)); }
         Check(Flagged(sleeper, id) == 3, "Drops well after a wake still count.");
         Check(ReconnectTracker.InstanceIdFromPath(@"\\?\USB#VID_0451&PID_8442#MSFT20E30108613F47#{f18a0e88-c30c-11d0-8815-00a0c906bed8}") == @"USB\VID_0451&PID_8442\MSFT20E30108613F47", "Hub interface paths name their instance too.");
+    }
+
+    // A Billboard capability: each mode's state in bmConfigured, its SVID and index, and the failure info
+    // that Billboard 1.0 doesn't have.
+    private static byte[] BillboardCapability(int[] states, ushort[] svids, byte failure = 0, bool version10 = false, ushort vconn = 0)
+    {
+        int start = version10 ? 42 : 44, n = svids.Length;
+        var d = new byte[start + 4 * n];
+        d[0] = (byte)d.Length; d[1] = 0x10; d[2] = 0x0D; d[3] = 5; d[4] = (byte)n;
+        BitConverter.GetBytes(vconn).CopyTo(d, 6);
+        for (int i = 0; i < n; i++) d[8 + i / 4] |= (byte)(states[i] << (2 * (i % 4)));
+        BitConverter.GetBytes((ushort)(version10 ? 0x0100 : 0x0121)).CopyTo(d, 40);
+        if (!version10) d[42] = failure;
+        for (int i = 0; i < n; i++) { BitConverter.GetBytes(svids[i]).CopyTo(d, start + 4 * i); d[start + 4 * i + 2] = (byte)i; d[start + 4 * i + 3] = (byte)(6 + i); }
+        return d;
+    }
+    private static byte[] Bos(params byte[][] caps) { var body = caps.SelectMany(c => c).ToArray(); return [5, 15, .. BitConverter.GetBytes((ushort)(5 + body.Length)), (byte)caps.Length, .. body]; }
+
+    // A laptop's sysfs as Linux lays it out: an Intel xHCI controller's USB 2 bus (usb1) and USB 3 bus (usb2),
+    // a USB 3 hub on a USB-C socket seen on both buses, a keyboard on its USB 2 side, a 10 Gb/s enclosure on
+    // its USB 3 side, a USB 3 flash drive stuck at USB 2, a built-in webcam, and an HID device with no driver.
+    internal static FakeSysfs LinuxLaptop()
+    {
+        var fs = new FakeSysfs();
+        const string D = "bus/usb/devices", Pci = "bus/pci/devices/0000:00:14.0";
+        foreach (var (file, value) in new[] { ("vendor", "0x8086"), ("device", "0xa36d"), ("subsystem_vendor", "0x17aa"), ("subsystem_device", "0x2292"), ("revision", "0x10") }) fs.Files[$"{Pci}/{file}"] = value;
+        fs.Links[$"{Pci}/driver"] = "../../../bus/pci/drivers/xhci_hcd";
+        void Device(string name, Dictionary<string, string> attributes, byte[]? descriptors = null)
+        {
+            foreach (var (k, v) in attributes) fs.Files[$"{D}/{name}/{k}"] = v + "\n";
+            if (descriptors != null) fs.Binary[$"{D}/{name}/descriptors"] = descriptors;
+        }
+        void Interface(string name, int cls, string? driver, params (string Ep, string Attributes, string Packet, string Interval)[] endpoints)
+        {
+            fs.Files[$"{D}/{name}/bInterfaceClass"] = cls.ToString("x2");
+            if (driver != null) fs.Links[$"{D}/{name}/driver"] = "../../../../bus/usb/drivers/" + driver;
+            foreach (var (ep, attributes, packet, interval) in endpoints)
+                foreach (var (k, v) in new[] { ("bEndpointAddress", ep), ("bmAttributes", attributes), ("wMaxPacketSize", packet), ("bInterval", interval) }) fs.Files[$"{D}/{name}/ep_{ep}/{k}"] = v;
+        }
+        void Port(string hubInterface, string port, string connect, string? peer = null, bool typeC = false)
+        {
+            fs.Files[$"{D}/{hubInterface}/{port}/connect_type"] = connect;
+            if (peer != null) fs.Links[$"{D}/{hubInterface}/{port}/peer"] = peer;
+            if (typeC) fs.Links[$"{D}/{hubInterface}/{port}/connector"] = "../../../../../../../port1-connector";
+        }
+        // A HID keyboard's configuration: one interface, a HID descriptor and an interrupt IN endpoint every 10 ms.
+        byte[] keyboard = [18, 1, 0x00, 0x02, 0, 0, 0, 8, 0x6D, 0x04, 0x1C, 0xC3, 0x04, 0x01, 1, 2, 0, 1,
+            9, 2, 34, 0, 1, 1, 0, 0xA0, 50, 9, 4, 0, 0, 1, 3, 1, 1, 0, 9, 0x21, 0x11, 1, 0, 1, 0x22, 65, 0, 7, 5, 0x81, 3, 8, 0, 10];
+        foreach (var (bus, version, ports) in new[] { (1, "2.00", 4), (2, "3.10", 2) })
+        {
+            fs.Links[$"{D}/usb{bus}"] = $"../../../devices/pci0000:00/0000:00:14.0/usb{bus}";
+            Device($"usb{bus}", new() { ["version"] = " " + version, ["maxchild"] = ports.ToString(), ["product"] = "xHCI Host Controller", ["bDeviceClass"] = "09", ["speed"] = bus == 1 ? "480" : "5000" });
+            fs.Files[$"{D}/{bus}-0:1.0/bInterfaceClass"] = "09";
+        }
+        Port("1-0:1.0", "usb1-port1", "hotplug", "../../usb2/2-0:1.0/usb2-port1");
+        Port("1-0:1.0", "usb1-port2", "hotplug", "../../usb2/2-0:1.0/usb2-port2", typeC: true);
+        Port("1-0:1.0", "usb1-port3", "hardwired");
+        Port("1-0:1.0", "usb1-port4", "not used");
+        Port("2-0:1.0", "usb2-port1", "hotplug", "../../usb1/1-0:1.0/usb1-port1");
+        Port("2-0:1.0", "usb2-port2", "hotplug", "../../usb1/1-0:1.0/usb1-port2", typeC: true);
+        // A USB 3 flash drive linked at 480 Mb/s.
+        Device("1-1", new() { ["idVendor"] = "0781", ["idProduct"] = "5583", ["bcdDevice"] = "0100", ["version"] = " 3.20", ["speed"] = "480", ["bDeviceClass"] = "00", ["product"] = "Ultra Fit", ["manufacturer"] = "SanDisk", ["bMaxPower"] = "224mA", ["bmAttributes"] = "80", ["serial"] = "4C530001" });
+        Interface("1-1:1.0", 8, "usb-storage");
+        // The USB 3 hub's USB 2 side, with one TT, and its USB 3 side; their ports name each other.
+        Device("1-2", new() { ["idVendor"] = "0bda", ["idProduct"] = "5411", ["bcdDevice"] = "0002", ["version"] = " 2.10", ["speed"] = "480", ["bDeviceClass"] = "09", ["bDeviceProtocol"] = "01", ["maxchild"] = "2", ["bmAttributes"] = "e0", ["bMaxPower"] = "0mA" });
+        Interface("1-2:1.0", 9, "hub");
+        Device("2-2", new() { ["idVendor"] = "0bda", ["idProduct"] = "0411", ["bcdDevice"] = "0002", ["version"] = " 3.20", ["speed"] = "5000", ["bDeviceClass"] = "09", ["bDeviceProtocol"] = "03", ["maxchild"] = "2", ["bmAttributes"] = "e0", ["bMaxPower"] = "0mA" });
+        Interface("2-2:1.0", 9, "hub");
+        for (int p = 1; p <= 2; p++) { Port("1-2:1.0", $"1-2-port{p}", "hotplug", $"../../2-2/2-2:1.0/2-2-port{p}"); Port("2-2:1.0", $"2-2-port{p}", "hotplug", $"../../1-2/1-2:1.0/1-2-port{p}"); }
+        Device("1-2.1", new() { ["idVendor"] = "046d", ["idProduct"] = "c31c", ["bcdDevice"] = "6401", ["version"] = " 2.00", ["speed"] = "12", ["bDeviceClass"] = "00", ["product"] = "USB Keyboard", ["manufacturer"] = "Logitech", ["bMaxPower"] = "100mA", ["bmAttributes"] = "a0", ["bConfigurationValue"] = "1" }, keyboard);
+        Interface("1-2.1:1.0", 3, "usbhid", ("81", "03", "0008", "0a"));
+        // An HID device no driver claimed.
+        Device("1-2.2", new() { ["idVendor"] = "1234", ["idProduct"] = "5678", ["version"] = " 2.00", ["speed"] = "12", ["bDeviceClass"] = "00", ["product"] = "Macro Pad", ["bMaxPower"] = "100mA", ["bmAttributes"] = "80" });
+        Interface("1-2.2:1.0", 3, null);
+        Device("2-2.2", new() { ["idVendor"] = "0bda", ["idProduct"] = "9210", ["bcdDevice"] = "2001", ["version"] = " 3.20", ["speed"] = "10000", ["rx_lanes"] = "1", ["bDeviceClass"] = "00", ["product"] = "RTL9210 NVMe", ["manufacturer"] = "Realtek", ["bMaxPower"] = "896mA", ["bmAttributes"] = "80" });
+        Interface("2-2.2:1.0", 8, "uas");
+        // A built-in webcam on a hardwired port.
+        Device("1-3", new() { ["idVendor"] = "5986", ["idProduct"] = "2113", ["version"] = " 2.01", ["speed"] = "480", ["bDeviceClass"] = "ef", ["product"] = "Integrated Camera", ["bMaxPower"] = "500mA", ["bmAttributes"] = "80" });
+        Interface("1-3:1.0", 14, "uvcvideo");
+        return fs;
+    }
+
+    private static void LinuxTests(Action<bool, string> Check)
+    {
+        var s = new LinuxUsbScanner(LinuxLaptop()) { CaptureRaw = true }.Scan();
+        var paths = Topology.PathLabels(s);
+        UsbNode At(string path) => s.Nodes.First(n => paths[n.Id] == path);
+        Check(s.Controllers.Count == 2 && s.Controllers[0].Name == "Intel xHCI Host Controller · bus 1" && s.Controllers[1].PciId == "8086:A36D" && s.Controllers[0].PciAddress == "00:14.0"
+            && s.Controllers[0].PciSubsystem == "17AA:2292" && s.Controllers[0].DriverService == "xhci_hcd", "Each bus is a host named after its controller's PCI device.");
+        var drive = At("H01/01");
+        Check(drive.Name == "SanDisk Ultra Fit" && drive.LinkMbps == 480 && drive.SpeedLimited && IssueRules.For(drive).Any(i => i.Text == "Running at USB 2" && i.Severity == Severity.Warning)
+            && drive.DriverService == "usb-storage" && drive.DeviceRevision == "1.00" && drive.MaxPowerMa == 224, "A USB 3 drive at 480 Mb/s runs at USB 2, as on Windows.");
+        var root1 = s.Controllers[0].Children[0];
+        Check(root1.Children[0].CompanionId == "usb2/1" && s.Controllers[1].Children[0].Children[0].CompanionId == "usb1/1" && root1.Children[1].Connector == "USB-C"
+            && root1.Children[2].Connector == "Internal" && root1.Children[3].Kind == "Empty port", "Root ports pair through peer links, and USB-C and built-in ports are told apart.");
+        var hub2 = At("H01/02"); var hub3 = At("H02/02");
+        Check(hub2.CompanionHubId == hub3.Id && hub2.IsUsb2Companion && hub2.TransactionTranslators == "Single" && hub3.Children.Count == 2, "A USB 3 hub's two sides pair across the buses.");
+        var keyboard = At("H01/02/01");
+        Check(keyboard.DeviceType == "Keyboard" && keyboard.PollIntervalMs == 8 && keyboard.OpenPipes.Count == 1 && keyboard.DriverService == "usbhid" && keyboard.Raw?.Configuration.Length == 68,
+            "A keyboard's interrupt endpoint gives its polling rate, as on Windows.");
+        var pad = At("H01/02/02");
+        Check(pad.KernelProblem == LinuxProblems.NoDriver && IssueRules.For(pad).Contains((Severity.Warning, LinuxProblems.NoDriver)) && Explanations.For(pad, LinuxProblems.NoDriver, [pad]).Steps!.Any(x => x.Contains("lsmod")),
+            "An HID device no driver claimed is a warning explained in Linux terms.");
+        var ssd = At("H02/02/02");
+        Check(ssd.LinkMbps == 10000 && ssd.Speed == "SuperSpeedPlus · 10 Gb/s" && ssd.SuperSpeedPlusCapable == true && ssd.DeviceType == "External drive" && ssd.Children.Count == 0, "A 10 Gb/s enclosure reads its rate.");
+        Check(At("H01/03").Location == "Internal" && At("H01/03").DeviceType == "Camera / video" && s.Nodes.All(n => n.PortMapWarnings.Count == 0), "A hardwired webcam is internal, and the port map is consistent.");
+        Check(LinuxUsbScanner.Generation("8.0 GT/s PCIe") == 3 && LinuxUsbScanner.Speed("20000", 2).Speed == "SuperSpeedPlus · 20 Gb/s · 2 lanes" && LinuxUsbScanner.Speed("bogus", 1).Mbps == null, "PCIe and USB rates parse.");
+        Check(new LinuxUsbScanner(new FakeSysfs()).Scan().Diagnostics.Count == 1, "No buses is a diagnostic, not a crash.");
+    }
+
+    private static void ContainerTests(Action<bool, string> Check)
+    {
+        // A monitor: its hub is named from the USB ID database, and its HID and Billboard sit behind it.
+        const string monitorId = "{11111111-0000-0000-0000-000000000001}", realtek = "{20b9cde5-7039-e011-a935-0002a5d5c51b}";
+        var hid = new UsbNode { Id = "r/1/1", Kind = "Device", Name = "USB Input Device", NameSource = "Generic reported name", ContainerId = monitorId };
+        var bb = new UsbNode { Id = "r/1/2", Kind = "Device", Name = "Billboard", NameSource = "USB product / manufacturer descriptors", ContainerId = monitorId };
+        var monitorHub = new UsbNode { Id = "r/1", Kind = "Hub", Name = "Realtek RTS5411 Hub", LookupProduct = "RTS5411 Hub", NameSource = "USB ID lookup", ContainerId = monitorId, Children = [hid, bb] };
+        // Two physical USB 3 hubs, each seen as a USB 2 side and a USB 3 side, whose firmware gives both the same Container ID.
+        UsbNode Side(string id, bool usb2, string companion) => new() { Id = id, Kind = "Hub", Name = "Realtek USB Hub", NameSource = "USB ID lookup", ContainerId = realtek, IsUsb2Companion = usb2, CompanionHubId = companion };
+        var a2 = Side("r/2", true, "r/3"); var a3 = Side("r/3", false, "r/2"); var b2 = Side("r/4", true, "r/5"); var b3 = Side("r/5", false, "r/4");
+        var builtIn = new UsbNode { Id = "r/6", Kind = "Device", Name = "Webcam", ContainerId = "{00000000-0000-0000-ffff-ffffffffffff}" };
+        var builtIn2 = new UsbNode { Id = "r/7", Kind = "Device", Name = "Fingerprint reader", ContainerId = "{00000000-0000-0000-ffff-ffffffffffff}" };
+        var snapshot = new Snapshot
+        {
+            Controllers = [new UsbNode { Id = "c", Kind = "Controller", Children = [new UsbNode { Id = "r", Kind = "Root hub", Children = [monitorHub, a2, a3, b2, b3, builtIn, builtIn2] }] }],
+            Containers = [new DeviceContainer { Id = monitorId, Name = "DELL U2723QE", Model = "DELL U2723QE" }, new DeviceContainer { Id = realtek, Name = "USB3.2 Hub", Model = "USB3.2 Hub" }]
+        };
+        Containers.Analyze(snapshot); Containers.Analyze(snapshot);
+        Check(monitorHub.Name == "Realtek RTS5411 Hub in DELL U2723QE" && monitorHub.NameSource == "USB ID lookup and device container" && hid.Name == "USB Input Device in DELL U2723QE" && bb.Name == "Billboard",
+            "Chip-named and generic members are named after their product once; a device that names itself keeps its name.");
+        Check(Containers.PartOf(snapshot, hid) == "DELL U2723QE" && Containers.Of(snapshot, monitorHub)!.Value.Others.Count == 2 && IssueRules.For(monitorHub).Count == 0,
+            "Members of one product show what they're part of.");
+        Check(!a2.ContainerIdShared && a3.ContainerIdShared && b3.ContainerIdShared && IssueRules.For(a3).Contains((Severity.Note, Containers.SharedId)) && a2.Name == "Realtek USB Hub",
+            "Two physical hubs with one Container ID are flagged once each, on their USB 3 side, and aren't renamed.");
+        Check(Containers.SharingWith(snapshot, a3).SequenceEqual([b3]) && Containers.SharingWith(snapshot, a2).SequenceEqual([b3]) && Containers.PartOf(snapshot, a2) == "ID shared with 1 other",
+            "A hub's own other side isn't unrelated hardware.");
+        Check(Containers.Explain(a3).Cause.Contains("same Container ID") && Containers.Explain(a3).Affects.StartsWith("No:"), "The explanation says it's harmless and comes from firmware.");
+        Check(!builtIn.ContainerIdShared && Containers.Of(snapshot, builtIn) == null && Containers.PartOf(snapshot, builtIn) == "", "The computer's own container groups nothing.");
+        // One hub's two sides alone are one unit, and a generic container name names nothing.
+        snapshot.Controllers[0].Children[0].Children.RemoveAll(n => n == b2 || n == b3);
+        Containers.Analyze(snapshot);
+        Check(!a3.ContainerIdShared && Containers.Of(snapshot, a2)!.Value.Product == "" && a2.Name == "Realtek USB Hub", "A USB 3 hub's two sides are one product.");
+        Check(Topology.SearchText(monitorHub, null).Contains("DELL U2723QE"), "Search finds devices by their container's name.");
+    }
+
+    private static void BillboardTests(Action<bool, string> Check)
+    {
+        // Captured from a monitor-style hub's Billboard on real hardware: DisplayPort (SVID FF01) entered.
+        var real = Billboard.Decode(Convert.FromHexString("050F490002" + "30100D050100000003" + new string('0', 62) + "0102000001FF0006" + "1410040000000000000000000000000000000000"))!;
+        Check(real.Info.Modes is [{ Svid: "FF01", Name: "DisplayPort", Index: 0, State: "Entered" }] && real.UrlString == 5 && real.ModeStrings is [6] && real.Info.VconnPower == "1 W" && !real.Info.InsufficientPower,
+            "A captured Billboard decodes DisplayPort as entered.");
+        // DisplayPort failed for lack of power, and a vendor mode that wasn't asked for, with Billboard Ex VDOs.
+        var failed = Billboard.Decode(Bos(BillboardCapability([2, 1], [0xFF01, 0x0BDA], failure: 1, vconn: 0x8000), [8, 0x10, 0x0F, 0, 0x45, 0x0C, 0x00, 0x00]))!.Info;
+        Check(failed.Modes[0].State == "Failed" && failed.Modes[1].State == "Not entered" && failed.Modes[1].Name == "Realtek mode"
+            && failed.InsufficientPower && !failed.PowerDeliveryFailed && failed.VconnPower == "Not required" && failed.Version == "1.21" && failed.Modes[0].Vdo == "00000C45",
+            "Modes decode their state, SVID name and VDO, and the failure info its bits.");
+        var device = new UsbNode { Kind = "Device", Name = "Monitor Billboard", Billboard = failed };
+        var why = Explanations.For(device, Billboard.Failed, [device]);
+        Check(IssueRules.For(device).SequenceEqual([(Severity.Warning, Billboard.Failed)]) && why.What.Contains("offers DisplayPort") && why.Affects.StartsWith("Yes: the picture doesn't come through")
+            && why.Cause.Contains("enough power") && why.Steps![0].Contains("power adapter") && why.Steps.Any(s => s.Contains("DisplayPort (a DP or D logo)")), "A failed DisplayPort mode is a warning that names the mode, the cause and what to do.");
+        Check(Billboard.Summary(device) == "DisplayPort · failed, Realtek mode · not entered" && Topology.SearchText(device, null).Contains("DisplayPort · failed"), "Properties and search show each mode's state.");
+        // Nothing failed and nothing entered: the computer never asked, which may be what's wanted.
+        var idle = new UsbNode { Kind = "Device", Billboard = Billboard.Decode(BillboardCapability([1], [0xFF01], failure: 2))!.Info };
+        Check(IssueRules.For(idle).SequenceEqual([(Severity.Note, Billboard.NotEntered)]) && Explanations.For(idle, Billboard.NotEntered, [idle]).What.Contains("didn't ask for it"), "A mode never asked for is a note.");
+        Check(idle.Billboard!.PowerDeliveryFailed && !idle.Billboard.InsufficientPower, "The second failure-info bit is a USB PD failure.");
+        // One mode entered and the others idle is how alternate modes work, so it's not an issue.
+        Check(IssueRules.For(new UsbNode { Kind = "Device", Billboard = Billboard.Decode(BillboardCapability([3, 1], [0xFF01, 0x8087]))!.Info }).Count == 0, "One mode entered and another idle is fine.");
+        // An unspecified error counts as a failure.
+        Check(IssueRules.For(new UsbNode { Kind = "Device", Billboard = Billboard.Decode(BillboardCapability([0], [0x8087]))!.Info }).Contains((Severity.Warning, Billboard.Failed)), "An unspecified error is a failure.");
+        // Billboard 1.0 has no failure info, so its modes start two bytes earlier.
+        var old = Billboard.Decode(BillboardCapability([3], [0xFF01], version10: true))!.Info;
+        Check(old.Modes is [{ Svid: "FF01", State: "Entered" }] && old.Version == "1.00" && !old.InsufficientPower, "A Billboard 1.0 capability decodes from its shorter layout.");
+        // Five modes span two bytes of bmConfigured.
+        var five = Billboard.Decode(BillboardCapability([3, 1, 1, 1, 2], [0xFF01, 1, 2, 3, 4]))!.Info;
+        Check(five.Modes[4].State == "Failed" && five.Modes[3].State == "Not entered", "bmConfigured gives each mode two bits, four modes to a byte.");
+        Check(Billboard.Decode(BillboardCapability([3], [0xFF01])[..30]) == null && Billboard.Decode(Bos()) == null && Billboard.Decode([]) == null, "A truncated capability or a BOS without one decodes to nothing.");
+        Check(Billboard.SvidName(0x8087) == "Thunderbolt" && Billboard.SvidName(0xFFFE) == "Vendor mode FFFE", "Thunderbolt is named, and unknown SVIDs say so.");
+        // The captured device puts its maker's name where a web address belongs.
+        Check(!Billboard.LooksLikeUrl("GsCooLink") && Billboard.LooksLikeUrl("www.dell.com/support") && Billboard.LooksLikeUrl("https://example.com"), "Only a web address is offered as a help page.");
     }
 }

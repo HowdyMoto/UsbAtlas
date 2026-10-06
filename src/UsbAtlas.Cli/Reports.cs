@@ -102,7 +102,7 @@ internal static class Reports
         JsonObject Node(UsbNode n)
         {
             var children = (Topology.MergedRoot(n) ?? n).Children;
-            var o = J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))), ("figures", J.S(Figures(n))),
+            var o = J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("figures", J.S(Figures(n))),
                 ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)),
                 ("issues", J.Some(IssuesOf(s, n).Select(i => (JsonNode)$"{i.Severity.ToString().ToLowerInvariant()}: {i.Text}"))));
             var shown = children.Where(c => ports || c.Kind != "Empty port").OrderBy(c => c.Port).ToList();
@@ -141,7 +141,7 @@ internal static class Reports
             ("path", s.PathOf(n)), ("name", n.DisplayName), ("shortName", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("nodeKind", n.Kind),
             ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)), ("status", n.Status),
             ("deviceType", n.Kind == "Device" ? n.DeviceType : null), ("typeEvidence", n.Kind == "Device" ? n.TypeEvidence : null),
-            ("vidPid", J.S(VidPid(n))), ("manufacturer", J.S(n.Manufacturer)), ("product", J.S(n.ReportedProduct)), ("windowsName", J.S(n.WindowsName)),
+            ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("manufacturer", J.S(n.Manufacturer)), ("product", J.S(n.ReportedProduct)), ("windowsName", J.S(n.WindowsName)),
             ("lookup", J.S(string.Join(" · ", new[] { n.LookupVendor, n.LookupProduct }.Where(x => x.Length > 0)))), ("nameSource", n.NameSource),
             ("serial", J.S(n.Serial)), ("instanceId", J.S(n.InstanceId)), ("id", n.Id),
             ("deviceClass", J.S(n.DeviceClass)), ("interfaceFunctions", J.Some(n.InterfaceFunctions.Select(x => (JsonNode)x))), ("hidUsages", J.Some(n.HidUsages.Select(x => (JsonNode)x))));
@@ -179,6 +179,18 @@ internal static class Reports
         if (n.DriverService.Length > 0 || n.DriverVersion.Length > 0 || n.DriverProblems.Count > 0)
             node["driver"] = J.Obj(("service", J.S(n.DriverService)), ("version", J.S(n.DriverVersion)), ("date", J.S(n.DriverDate)), ("provider", J.S(n.DriverProvider)), ("inf", J.S(n.DriverInf)),
                 ("problems", J.Some(n.DriverProblems.Select(p => (JsonNode)J.Obj(("code", p.Code), ("meaning", p.Meaning), ("instanceId", p.InstanceId), ("name", J.S(p.Name)))))));
+        if (n.ContainerId.Length > 0 && !Containers.IsRoot(n.ContainerId))
+        {
+            var c = s.Snapshot.Containers.FirstOrDefault(x => x.Id.Equals(n.ContainerId, StringComparison.OrdinalIgnoreCase));
+            var part = Containers.Of(s.Snapshot, n);
+            node["container"] = J.Obj(("id", n.ContainerId), ("name", J.S(c?.Name)), ("manufacturer", J.S(c?.Manufacturer)), ("model", J.S(c?.Model)),
+                ("partOf", J.S(part?.Product)), ("sameProduct", part is { } p ? J.Some(p.Others.Select(o => (JsonNode)J.Obj(("path", s.PathOf(o)), ("name", Topology.ShortName(o))))) : null),
+                ("sharedWithUnrelated", J.Some(Containers.SharingWith(s.Snapshot, n).Select(o => (JsonNode)J.Obj(("path", s.PathOf(o)), ("name", Topology.ShortName(o)))))));
+        }
+        if (n.Billboard is BillboardInfo b)
+            node["billboard"] = J.Obj(("version", b.Version), ("vconnPower", b.VconnPower), ("preferredMode", b.PreferredMode),
+                ("insufficientPower", b.InsufficientPower ? true : null), ("powerDeliveryFailed", b.PowerDeliveryFailed ? true : null), ("additionalInfoUrl", J.S(b.AdditionalInfoUrl)),
+                ("modes", J.Arr(b.Modes.Select(m => (JsonNode)J.Obj(("index", m.Index), ("svid", m.Svid), ("name", m.Name), ("description", J.S(m.Description)), ("state", m.State.ToLowerInvariant()), ("vdo", J.S(m.Vdo)))))));
         if (n.QuickReconnects > 0)
             node["reconnects"] = J.Obj(("count", n.QuickReconnects), ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))));
         report["node"] = node;

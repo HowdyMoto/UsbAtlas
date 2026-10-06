@@ -59,6 +59,8 @@ public sealed class UsbNode
     public List<DateTime> QuickReconnectTimes { get; set; } = [];
     public string VendorId { get; set; } = "";
     public string ProductId { get; set; } = "";
+    // The device descriptor's bcdDevice, such as 1.04: the maker's own revision number, usually its firmware version.
+    public string DeviceRevision { get; set; } = "";
     public string Manufacturer { get; set; } = "";
     public string Serial { get; set; } = "";
     public string DeviceClass { get; set; } = "";
@@ -84,6 +86,8 @@ public sealed class UsbNode
     public string DriverInf { get; set; } = "";
     // Device Manager problem codes on the device or one of its functions (interfaces, HID collections).
     public List<DeviceProblem> DriverProblems { get; set; } = [];
+    // On Linux, what keeps the kernel from using the device: no driver bound, or not authorized.
+    public string KernelProblem { get; set; } = "";
     // Descriptors as read, only when a scan is asked to keep them.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RawDescriptors? Raw { get; set; }
@@ -115,6 +119,15 @@ public sealed class UsbNode
     public string DeviceType { get; set; } = "USB device";
     public string TypeEvidence { get; set; } = "No specific device function identified.";
     public List<string> InterfaceFunctions { get; set; } = [];
+    // The Windows device container it belongs to, as {guid}: devices in one container are one product. True
+    // when unrelated hardware reports the same Container ID, as firmware that gives every unit one ID does.
+    public string ContainerId { get; set; } = "";
+    public bool ContainerIdShared { get; set; }
+    // What Windows calls the container, such as a monitor's model name, for search.
+    public string ContainerName { get; set; } = "";
+    // A USB-C device's Billboard: the alternate modes it offers and how each went. Null for anything else.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public BillboardInfo? Billboard { get; set; }
     public List<string> Notes { get; set; } = [];
     public List<UsbNode> Children { get; set; } = [];
     public IEnumerable<UsbNode> Walk() { yield return this; foreach (var c in Children) foreach (var n in c.Walk()) yield return n; }
@@ -157,6 +170,8 @@ public sealed class Snapshot
     public bool IsDemo { get; set; }
     public List<UsbNode> Controllers { get; set; } = [];
     public List<string> Diagnostics { get; set; } = [];
+    // The device containers USB devices belong to, with the names Windows gives them.
+    public List<DeviceContainer> Containers { get; set; } = [];
     // The active power plan's USB selective suspend setting, plugged in and on battery, and which applies now.
     public bool? UsbSuspendPluggedIn { get; set; }
     public bool? UsbSuspendOnBattery { get; set; }

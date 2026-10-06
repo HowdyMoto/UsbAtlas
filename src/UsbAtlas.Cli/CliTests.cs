@@ -30,6 +30,7 @@ internal static class CliTests
         PortMapTests();
         WakeTests();
         WatchNoiseTests();
+        TraceTests();
         McpTests();
         CommandTests();
     }
@@ -121,6 +122,13 @@ internal static class CliTests
         Check(!diff["newIssues"]!.AsArray().Any(i => i!["name"]!.ToString() == "USB flash drive"), "Issues follow a moved device instead of reappearing.");
         Check(Diff.Text(diff).Contains("> moved         USB flash drive H01/05/01 → H01/01/03") && Diff.Text(diff).Contains("- disconnected  H01/03 Mechanical keyboard"), "Diff text has one line per change.");
         Check(Diff.Empty(Diff.Compare(Demo(), Demo())), "Identical snapshots have no differences.");
+        // A firmware update shows as a new revision; a snapshot saved before revisions were recorded doesn't.
+        static Session Revised(string revision) { var s = DemoData.Create(); s.Nodes.First(n => n.Name == "Studio desktop hub").DeviceRevision = revision; return new(s, "demo"); }
+        var update = Diff.Compare(Revised("1.04"), Revised("1.10"));
+        Check(Diff.Text(update).Contains("~ changed       H01/01 Studio desktop hub: revision 1.04 → 1.10"), "A device whose revision changed is reported.");
+        Check(Diff.Empty(Diff.Compare(Revised(""), Revised("1.10"))), "A snapshot without revisions doesn't report every device as changed.");
+        var revised = Revised("1.10");
+        Check(Reports.Show(revised, revised.Resolve("H01/01"))["node"]!["revision"]!.ToString() == "1.10" && revised.Find("rev 1.10").Count == 1, "show and find carry the revision.");
         // A redacted baseline compared with a redacted scan: redaction must be stable and idempotent.
         var serialed = DemoData.Create(); serialed.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";
         var again = DemoData.Create(); again.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";
@@ -178,6 +186,11 @@ internal static class CliTests
         var sublinks = Descriptors.Decode(gen2, 3, 0x0320)["speeds"]!.AsArray().Select(x => x!.ToString()).ToList();
         Check(sublinks.Count == 2 && sublinks.All(x => x.Contains("symmetric") && !x.Contains("asymmetric")) && sublinks[1].Contains("TX") && sublinks[0].Contains("SuperSpeedPlus protocol"), "A TX sublink is symmetric, not asymmetric.");
         Check(Descriptors.Decode(Convert.FromHexString("12012003000000094C058A0D000101020301"), 3, 0x0320)["bMaxPacketSize0"]!.ToString().Contains("512 bytes"), "USB 3 bMaxPacketSize0 is an exponent.");
+        // A Billboard capability captured from a monitor-style hub, and a Billboard Ex VDO.
+        var billboard = Descriptors.Decode(Convert.FromHexString("30100D050100000003" + new string('0', 62) + "0102000001FF0006"), 2, 0x0201);
+        Check(billboard["alternateModes"]!.AsArray()[0]!["wSVID"]!.ToString() == "0xFF01 (DisplayPort)" && billboard["alternateModes"]!.AsArray()[0]!["state"]!.ToString() == "entered"
+            && billboard["bAdditionalFailureInfo"]!.ToString() == "0x00" && billboard["iAdditionalInfoURL"]!.GetValue<byte>() == 5, "Billboard capabilities decode their modes and failure info.");
+        Check(Descriptors.Decode([8, 0x10, 0x0F, 1, 0x45, 0x0C, 0, 0], 2, 0x0201)["dwAlternateModeVdo"]!.ToString() == "0x00000C45", "Billboard Ex decodes its VDO.");
         Check(Descriptors.Walk([0x09, 0x29, 0x04], 2, 0x0200)[0]["error"] != null && Descriptors.Decode([0x05, 0x29, 0x04, 0x00, 0x00], 2, 0x0200)["hex"] != null, "Truncated descriptors don't read past their bytes.");
         Check(Descriptors.ServiceMs(1, 1, 1) == 1 && Descriptors.ServiceMs(4, 1, 1) == 8 && Descriptors.ServiceMs(4, 2, 3) == 1, "Isochronous full-speed endpoints count 2^(bInterval-1) frames.");
     }
@@ -203,10 +216,14 @@ internal static class CliTests
             [@"PCI\VEN_1022&DEV_15B6\4&1"] = new("", "USBXHCI", [], "USB xHCI Compliant Host Controller", "", 10),
             [@"PCI\VEN_10DE&DEV_1234\4&2"] = new("", "nvlddmkm", [], "Display adapter", "", 43),
         };
-        var snap = new Snapshot();
-        Drivers.Apply(snap, devices);
-        Check(snap.Diagnostics.Count == 2 && snap.Diagnostics.Any(d => d.Contains("Code 43") && d.Contains("Descriptor Request Failed")) && snap.Diagnostics.Any(d => d.Contains("Code 10")),
-            "Unplaced USB problems become scan diagnostics, and other hardware's don't.");
+        // Drivers are read from the Windows registry.
+        if (OperatingSystem.IsWindows())
+        {
+            var snap = new Snapshot();
+            Drivers.Apply(snap, devices);
+            Check(snap.Diagnostics.Count == 2 && snap.Diagnostics.Any(d => d.Contains("Code 43") && d.Contains("Descriptor Request Failed")) && snap.Diagnostics.Any(d => d.Contains("Code 10")),
+                "Unplaced USB problems become scan diagnostics, and other hardware's don't.");
+        }
     }
 
     private static void FileTests()
@@ -355,6 +372,84 @@ internal static class CliTests
 
     // What a long watch showed: devices caught while Windows was still setting them up, and issues "resolved" by
     // unplugging, then announced again when their device came back.
+    // Hub driver events as TDH decodes them, placed on the sample topology by a rundown like the one USBHUB3
+    // sends when a session starts, with its handles and the controller's PCI address.
+    private static void TraceTests()
+    {
+        static EtwEvent Event(int id, int level, string name, params (string Key, object Value)[] fields) => new(new DateTime(2026, 10, 6, 9, 30, 0), UsbTrace.Hub3, id, level, name, fields.ToDictionary(f => f.Key, f => f.Value));
+        const ulong Root = 0x1000, Hub = 0x2000, Ssd = 0x3000, Camera = 0x4000;
+        var snapshot = DemoData.Create(); snapshot.Controllers[0].PciAddress = "02:00.0";
+        var s = new Session(snapshot, "demo");
+        var trace = new UsbTrace(() => s);
+        (string, object)[] Pci = [("fid_PciBus", 2UL), ("fid_PciDevice", 0UL), ("fid_PciFunction", 0UL)];
+        (string, object)[] Device(ulong handle, ulong hub, params ulong[] path) => [("fid_HubDevice", hub), ("fid_UsbDevice", handle), ("fid_PortNumber", path[^1]), ("fid_PortPathDepth", (ulong)path.Length),
+            ("fid_PortPath", new List<object>(path.Concat(Enumerable.Repeat(0UL, 6 - path.Length)).Cast<object>())), .. Pci];
+        Check(trace.Interpret(Event(8, 4, "USB 3.0 Port", [("fid_UsbDevice", Root), ("fid_PortNumber", 1UL), .. Pci]), false) == null, "Rundown events place things; they aren't news.");
+        trace.Interpret(Event(6, 4, "USB Device Information", Device(Hub, Root, 1)), false);
+        trace.Interpret(Event(6, 4, "USB Device Information", Device(Ssd, Hub, 1, 1)), false);
+        // A camera that connects while recording: placed by its new-device event, though the scan doesn't know it.
+        var arrived = trace.Interpret(Event(43, 4, "New USB Device Information", Device(Camera, Hub, 1, 3)), true)!;
+        Check(arrived["path"]!.ToString() == "H01/01/03" && arrived["severity"]!.ToString() == "info", "A new device is placed by its port path.");
+
+        // A hub's port status: a failed USB 3 link on the studio hub's port 2, where the camera is.
+        var failed = trace.Interpret(Event(101, 4, "Port Status for 3.0 Port", ("fid_UsbDevice", Hub), ("fid_PortNumber", 2UL), ("fid_PortStatus", 0x2C1UL), ("fid_PortChange", 0x40UL)), false)!;
+        Check(failed["path"]!.ToString() == "H01/01/02" && failed["name"]!.ToString() == "Studio camera" && failed["severity"]!.ToString() == "error" && failed["what"]!.ToString().Contains("SS.Inactive"),
+            "A USB 3 link that drops to SS.Inactive is an error on the hub's port, named after what's plugged in.");
+        Check(UsbTrace.PortStatus(true, 0x2A1, 0x80).What!.Contains("config error") && UsbTrace.PortStatus(true, 0x203, 0x20).Count == "warm resets" && UsbTrace.PortStatus(true, 0x209, 0x08).Count == "overcurrent events",
+            "Config errors, warm resets and overcurrent decode from the change bits.");
+        Check(UsbTrace.PortStatus(true, 0x203, 0x40).Severity == "info" && UsbTrace.PortStatus(true, 0x263, 0x40).What == "Link state changed to U3 (suspended).", "Suspending a link is routine.");
+        Check(UsbTrace.PortStatus(false, 0x503, 0x04).What == "Resumed from suspend." && UsbTrace.PortStatus(false, 0x501, 0x02).Count == "ports disabled" && UsbTrace.PortStatus(false, 0x100, 0x01).What == "Disconnected.",
+            "USB 2 ports decode resume, a port the hub disabled, and disconnects.");
+        Check(trace.Interpret(Event(100, 4, "Port Status for 2.0 Port", ("fid_UsbDevice", Hub), ("fid_PortNumber", 1UL), ("fid_PortStatus", 0x503UL), ("fid_PortChange", 0x04UL)), false) == null,
+            "Routine resumes are left out unless verbose.");
+        // A device's own events: the SSD came up on the USB 2 bus, and Windows retried setting it up.
+        var slow = trace.Interpret(Event(173, 2, "SuperSpeed Device is Connected on the 2.0 Bus", ("fid_UsbDevice", Ssd)), false)!;
+        Check(slow["path"]!.ToString() == "H01/01/01" && slow["what"]!.ToString().Contains("USB 2 bus") && slow["source"]!.ToString() == "USBHUB3 173", "A SuperSpeed device on the USB 2 bus is placed at the device.");
+        trace.Interpret(Event(62, 2, "Retry Enumeration", ("fid_HubDevice", Hub), ("fid_PortNumber", 4UL)), false);
+        trace.Interpret(Event(62, 2, "Retry Enumeration", ("fid_HubDevice", Hub), ("fid_PortNumber", 4UL)), false);
+        var unknown = trace.Interpret(Event(999, 3, "Something New Went Wrong", ("fid_UsbDevice", 0x9999UL)), false)!;
+        Check(unknown["what"]!.ToString() == "Something New Went Wrong." && unknown["path"] == null, "An event USB Atlas doesn't know is told as Windows names it, unplaced when its handle is unknown.");
+        Check(UsbTrace.Describe(Event(74, 2, "Validation Failure of Configuration Descriptor")).What == "Windows rejected a malformed descriptor (“Validation Failure of Configuration Descriptor”).", "Rejected descriptors name the descriptor.");
+
+        // As captured on real hardware: setting up a device on the travel hub's port 2 failed once and was retried.
+        // The failures name a handle no event has placed yet, and the retry names none.
+        const ulong Travel = 0x5000, Fresh = 0x6000, Light = 0x7000;
+        trace.Interpret(Event(6, 4, "USB Device Information", Device(Travel, Root, 5)), false);
+        trace.Interpret(Event(60, 4, "Start of USB Device Enumeration", ("fid_UsbDevice", Travel), ("fid_PortNumber", 2UL)), false);
+        var request = trace.Interpret(Event(162, 2, "Request for Configuration Descriptor Failed", ("fid_UsbDevice", Fresh), ("fid_PortNumber", 0UL)), false)!;
+        var retry = trace.Interpret(Event(62, 2, "Retry Enumeration", ("fid_UsbDevice", 0UL)), false)!;
+        Check(request["path"]!.ToString() == "H01/05/02" && retry["path"]!.ToString() == "H01/05/02" && request["name"]!.ToString() == "LED ring light", "Failures while a device is being set up are placed at the port being set up.");
+        trace.Interpret(Event(61, 4, "Completion of USB Device Enumeration", ("fid_HubDevice", Travel), ("fid_UsbDevice", Light), ("fid_PortNumber", 2UL)), false);
+        Check(trace.Interpret(Event(132, 2, "Device Control Transfer Error", ("fid_UsbDevice", Light), ("fid_PortNumber", 0UL)), false)!["path"]!.ToString() == "H01/05/02"
+            && trace.Interpret(Event(132, 2, "Device Control Transfer Error", ("fid_UsbDevice", 0x8000UL)), false)!["path"] == null, "Once set up, the device is placed by its handle, and nothing else is guessed.");
+        // The hub driver logs a connection's status twice; the second line says nothing new.
+        (string, object)[] Connect = [("fid_UsbDevice", Travel), ("fid_PortNumber", 4UL), ("fid_PortStatus", 0x101UL), ("fid_PortChange", 0x01UL)];
+        Check(trace.Interpret(Event(100, 4, "Port Status for 2.0 Port", Connect), false) != null && trace.Interpret(Event(100, 4, "Port Status for 2.0 Port", Connect), false) == null, "A repeated port status isn't told twice.");
+        // A failed port change names no handle, only the device's VID:PID.
+        var change = trace.Interpret(Event(123, 2, "Failure during Port Change Request", ("fid_PortNumber", 5UL), ("fid_idVendor", 0x05E3UL), ("fid_idProduct", 0x0610UL)), false)!;
+        Check(change["path"]!.ToString() == "H01/05" && change["name"]!.ToString() == "Travel hub", "An event naming only a VID:PID is placed at the one device with it.");
+        // Handles are pointers the driver reuses: once the travel hub's port disconnects, an old handle that comes
+        // back for a new device being set up at the studio hub belongs there, and the travel hub keeps its name.
+        trace.Interpret(Event(100, 4, "Port Status for 2.0 Port", ("fid_UsbDevice", Root), ("fid_PortNumber", 5UL), ("fid_PortStatus", 0x100UL), ("fid_PortChange", 0x01UL)), false);
+        trace.Interpret(Event(60, 4, "Start of USB Device Enumeration", ("fid_UsbDevice", Hub), ("fid_PortNumber", 4UL)), false);
+        var reused = trace.Interpret(Event(132, 2, "Device Control Transfer Error", ("fid_UsbDevice", Light)), false)!;
+        Check(reused["path"]!.ToString() == "H01/01/04", "A reused handle is placed where the device is being set up, not where it was.");
+        s.Snapshot.Controllers[0].Children[0].Children.RemoveAll(n => n.Name == "Travel hub");
+        var unplugged = trace.Interpret(Event(100, 4, "Port Status for 2.0 Port", ("fid_UsbDevice", Root), ("fid_PortNumber", 5UL), ("fid_PortStatus", 0x101UL), ("fid_PortChange", 0x01UL)), false)!;
+        Check(unplugged["name"]!.ToString() == "Travel hub" && unplugged["what"]!.ToString() == "Connected.", "A port keeps the name of what was last there.");
+        Check(UsbTrace.Singular("enumeration retries") == "enumeration retry" && UsbTrace.Singular("transfer errors") == "transfer error" && UsbTrace.Singular("SuperSpeed on USB 2") == "SuperSpeed on USB 2", "Counts of one read in the singular.");
+
+        var summary = trace.Summary(DateTime.Now, s);
+        var ports = summary["ports"]!.AsArray();
+        static int Total(JsonNode? p) => p!["counts"]!.AsObject().Sum(c => c.Value!.GetValue<int>());
+        Check(ports.Any(p => p!["path"]!.ToString() == "H01/01/04" && p["counts"]!["enumeration retries"]!.GetValue<int>() == 2) && ports.Zip(ports.Skip(1)).All(x => Total(x.First) >= Total(x.Second))
+            && ports.Any(p => p!["path"]!.ToString() == "H01/01/02" && p["counts"]!["link failures"]!.GetValue<int>() == 1), "The summary counts each port's events, busiest first.");
+        string text = UsbTrace.Text(summary) + UsbTrace.Text(failed);
+        Check(text.Contains("H01/01/04: 2 enumeration retries") && text.Contains("error    H01/01/02 Studio camera  The USB 3 link failed and entered SS.Inactive."), "Trace text has a line per event and per port.");
+        Check(EtwSession.Value([1, 0, 0, 0], 8) is 1UL && EtwSession.Value([0x41, 0, 0, 0], 1) is "A" && EtwSession.Value([1, 0, 0, 0], 13) is true && EtwSession.Value([0xAB], 14) is "AB", "TDH values decode by their in-type.");
+        Check(Run("trace", "--demo").Code == 3 && Options.Parse(["watch", "--trace"]).Has("trace"), "trace refuses sample data, and watch takes --trace.");
+    }
+
     private static void WatchNoiseTests()
     {
         static Session Without(string name) { var s = DemoData.Create(); s.Controllers[0].Children[0].Children.RemoveAll(n => n.Name == name); return new(s, "demo"); }
@@ -414,7 +509,7 @@ internal static class CliTests
         JsonObject Reply(JsonNode id) => replies.First(r => JsonNode.DeepEquals(r["id"], id));
         Check(Reply(1)["result"]!["protocolVersion"]!.ToString() == "2025-06-18" && Reply(1)["result"]!["capabilities"]!["tools"] != null, "initialize agrees a protocol version and offers tools.");
         var tools = Reply(2)["result"]!["tools"]!.AsArray();
-        Check(tools.Count == 11 && tools.All(t => t!["inputSchema"]!["properties"]!["format"] != null && t["annotations"]!["readOnlyHint"]!.GetValue<bool>()), "Every tool is listed, read-only, with a format option.");
+        Check(tools.Count == 12 && tools.Any(t => t!["name"]!.ToString() == "usb_trace") && tools.All(t => t!["inputSchema"]!["properties"]!["format"] != null && t["annotations"]!["readOnlyHint"]!.GetValue<bool>()), "Every tool is listed, read-only, with a format option.");
         string Text(JsonObject r) => r["result"]!["content"]![0]!["text"]!.ToString();
         Check(Text(Reply(3)).Contains("ERROR: Insufficient power") && !Text(Reply(3)).Contains("WARNING:") && !Reply(3)["result"]!["isError"]!.GetValue<bool>(), "usb_issues runs the issues command; finding errors isn't a tool error.");
         Check(JsonNode.Parse(Text(Reply(4)))!["node"]!["path"]!.ToString() == "H01/05", "format json returns the same report as JSON.");

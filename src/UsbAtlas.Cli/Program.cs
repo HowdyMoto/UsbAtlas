@@ -34,7 +34,15 @@ internal static class Program
                                  devices that drop and come back. When the computer sleeps and wakes, it
                                  reports what didn't come back or came back slower. --for 60s (default; 0
                                  runs until Ctrl+C), --verbose for every Windows notification, --out FILE
-                                 to also append each event to FILE as a line of JSON.
+                                 to also append each event to FILE as a line of JSON, --trace to add the
+                                 USB hub driver's own events (see trace).
+          trace                  Record what Windows' USB hub driver reports, placed on the topology:
+                                 connections, port and warm resets, USB 3 link failures, overcurrent,
+                                 enumeration retries and failures, rejected descriptors, SuperSpeed
+                                 devices on the USB 2 bus, U1/U2 refused, USB-C alternate modes. Then a
+                                 count per port. --for 30s (default; 0 runs until Ctrl+C), --verbose for
+                                 every step and its fields, --out FILE as in watch. Needs administrator
+                                 rights or membership in the Performance Log Users group.
           scan                   The full snapshot as JSON. --out FILE saves it; --raw includes descriptors.
           diff <before> [<after>]  What changed between two saved snapshots, or between one and now.
           map                    This machine's port map as JSON: each host controller's ports as the
@@ -130,6 +138,7 @@ internal static class Program
                 }
                 case "events":
                 {
+                    if (!OperatingSystem.IsWindows()) throw new CliException("events reads the Windows event logs. On Linux, the kernel's USB messages are in journalctl -k.");
                     var s = Session.Open(o);
                     Print(EventLog.Report(s, o.Duration("since", TimeSpan.FromHours(24)), o.Int("max", 100, 1, 10000), o.Has("errors"), o.Has("redact"))); return 0;
                 }
@@ -175,16 +184,22 @@ internal static class Program
                     output.Write(o.Json ? Json.Write(diff) + Environment.NewLine : Diff.Text(diff));
                     return 0;
                 }
-                case "watch":
+                case "watch" or "trace":
                 {
-                    // --out keeps every event as a line of JSON, whatever the console shows.
+                    // --out keeps every event as a line of JSON, whatever the console shows. Hub driver events
+                    // arrive on a thread of their own, so lines are written one at a time.
                     using var log = o.Get("out") is string logFile ? OpenLog(logFile) : null;
+                    var gate = new object();
                     void Emit(JsonObject e)
                     {
-                        output.Write(o.Json ? Json.Write(e, false) + Environment.NewLine : Watch.Text(e)); output.Flush();
-                        log?.WriteLine(Json.Write(e, false)); log?.Flush();
+                        lock (gate)
+                        {
+                            output.Write(o.Json ? Json.Write(e, false) + Environment.NewLine : UsbTrace.Text(e)); output.Flush();
+                            log?.WriteLine(Json.Write(e, false)); log?.Flush();
+                        }
                     }
-                    Emit(Watch.Run(o, o.Duration("for", TimeSpan.FromSeconds(60)), o.Has("verbose"), o.Has("redact"), Emit, cancel));
+                    var duration = o.Duration("for", TimeSpan.FromSeconds(o.Command == "trace" ? 30 : 60));
+                    Emit(o.Command == "trace" ? UsbTrace.Run(o, duration, o.Has("verbose"), Emit, cancel) : Watch.Run(o, duration, o.Has("verbose"), o.Has("redact"), Emit, cancel));
                     return 0;
                 }
                 case "self-test":

@@ -17,6 +17,7 @@ internal static class IssueRules
         else if (n.Kind == "Unavailable") issues.Add((Severity.Error, UsbBudgets.IsPowerFault(n) || n.Status == "Insufficient bandwidth" ? n.Status : "Port error"));
         if (n.ScanIncomplete) issues.Add((Severity.Warning, "Scan incomplete"));
         if (Explanations.DriverProblemSeverity(n) is Severity problem) issues.Add((problem, Explanations.DriverProblem));
+        if (LinuxProblems.SeverityOf(n) is Severity kernel) issues.Add((kernel, n.KernelProblem));
         if (HubRelationships.ReducedSpeed(n)) issues.Add((Explanations.SpeedSeverity(n), Explanations.SpeedLabel(n)));
         foreach (var warning in n.PowerWarnings) issues.Add((Explanations.PowerSeverity(n, warning), warning));
         // A hub that drops takes everything behind it along, as switching a KVM, changing monitor inputs or
@@ -24,6 +25,11 @@ internal static class IssueRules
         if (n.QuickReconnects > 0) issues.Add((n.Kind == "Hub" ? Severity.Note : Severity.Warning, "Unstable connection"));
         if (UsbBudgets.UplinkSeverity(n) is Severity uplink) issues.Add((uplink, "Limited by PCIe link"));
         if (UsbBudgets.EndpointsRunningHigh(n)) issues.Add((Severity.Note, "Many endpoints in use"));
+        // A USB-C alternate mode that failed loses what it carries, such as the picture; one never asked for may be intended.
+        if (Billboard.FailedModes(n).Count > 0) issues.Add((Severity.Warning, Billboard.Failed));
+        else if (Billboard.NoneEntered(n)) issues.Add((Severity.Note, Billboard.NotEntered));
+        // Unrelated hardware grouped as one device by Windows still works, so it's a note.
+        if (n.ContainerIdShared) issues.Add((Severity.Note, Containers.SharedId));
         // Firmware describing a port wrongly changes nothing plugged into it, so each finding is a note.
         foreach (var finding in n.PortMapWarnings) issues.Add((Severity.Note, finding));
         // A nearly full link still fits everything on it, so it's a note; peaks that can't all fit are a warning.

@@ -52,7 +52,9 @@ internal sealed class Session
         else if (o.Has("demo")) { snapshot = DemoData.Create(); source = "demo"; }
         else
         {
-            snapshot = new UsbScanner { CaptureRaw = raw }.Scan(); source = "live";
+            try { snapshot = Scanner.ThisComputer(raw); }
+            catch (PlatformNotSupportedException ex) { throw new CliException(ex.Message + " Read a saved snapshot with --input FILE."); }
+            source = "live";
             var labels = new DeviceLabels();
             if (labels.LoadError != null) snapshot.Diagnostics.Add(labels.LoadError);
             else labels.Apply(snapshot);
@@ -69,6 +71,7 @@ internal sealed class Session
             Normalize(snapshot);
             // Derived from what the file holds, so a snapshot saved before a rule existed is still checked by it.
             PortMap.Analyze(snapshot);
+            Containers.Analyze(snapshot);
             if (snapshot.Controllers.Count == 0 && snapshot.Diagnostics.Count == 0) throw new CliException($"{file} has no controllers. Is it a USB Atlas snapshot (atlascli scan, or Export in the app)?");
             return snapshot;
         }
@@ -81,8 +84,10 @@ internal sealed class Session
     // A file may hold nulls where the model expects values: empty lists and strings stand in for them.
     private static void Normalize(Snapshot snapshot)
     {
-        snapshot.Controllers ??= []; snapshot.Diagnostics ??= [];
+        snapshot.Controllers ??= []; snapshot.Diagnostics ??= []; snapshot.Containers ??= [];
         snapshot.Controllers.RemoveAll(c => c == null);
+        snapshot.Containers.RemoveAll(c => c == null);
+        foreach (var c in snapshot.Containers) { c.Id ??= ""; c.Name ??= ""; c.Manufacturer ??= ""; c.Model ??= ""; }
         var stack = new Stack<UsbNode>(snapshot.Controllers);
         var seen = new HashSet<UsbNode>(ReferenceEqualityComparer.Instance);
         while (stack.TryPop(out var n))
@@ -95,6 +100,12 @@ internal sealed class Session
             n.DriverProblems.RemoveAll(p => p == null);
             n.MoreCompanions.RemoveAll(c => c == null);
             foreach (var c in n.MoreCompanions) { c.HubSymbolicLink ??= ""; c.Id ??= ""; }
+            if (n.Billboard is BillboardInfo b)
+            {
+                b.Modes ??= []; b.Modes.RemoveAll(m => m == null);
+                b.Version ??= ""; b.AdditionalInfoUrl ??= ""; b.VconnPower ??= "";
+                foreach (var m in b.Modes) { m.Svid ??= ""; m.Name ??= ""; m.Description ??= ""; m.State ??= ""; m.Vdo ??= ""; }
+            }
             foreach (var c in n.Children) stack.Push(c);
         }
     }

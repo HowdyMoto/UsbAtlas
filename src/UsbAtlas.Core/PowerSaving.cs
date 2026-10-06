@@ -14,6 +14,7 @@ internal static class PowerSaving
     private const string DeviceSetting = "“Allow the computer to turn off this device to save power”";
     private static readonly Guid UsbSettings = new("2a737441-1930-4402-8d77-b2bebba308a3"), SelectiveSuspend = new("48e6b7a6-50f5-4782-a5d4-53bb8f07e226");
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     internal static void Read(Snapshot snapshot, IReadOnlyDictionary<string, UsbScanner.DevNode> devices)
     {
         (snapshot.UsbSuspendPluggedIn, snapshot.UsbSuspendOnBattery) = PlanSetting();
@@ -96,6 +97,7 @@ internal static class PowerSaving
     // Device Manager's Power Management checkbox for each devnode that offers it. WMI names an instance
     // by its device instance ID plus "_0". Late-bound WMI scripting needs no extra package; it must
     // impersonate and read through Properties_ to return every instance.
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static List<(string Instance, bool Allowed)> DeviceSettings()
     {
         var result = new List<(string, bool)>();
@@ -115,6 +117,7 @@ internal static class PowerSaving
     }
 
     // SelectiveSuspendEnabled, REG_BINARY or REG_DWORD in the device's hardware key, turns on HID idling.
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static bool? HidSelectiveSuspend(string instance)
     {
         try

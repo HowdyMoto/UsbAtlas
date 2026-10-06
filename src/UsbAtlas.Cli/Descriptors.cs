@@ -174,6 +174,20 @@ internal static class Descriptors
             case 4 when d.Length >= 20:
                 F("ContainerID", new Guid(d.AsSpan(4, 16)).ToString());
                 break;
+            case 0x0D when Billboard.Decode(d) is { } bb:
+            {
+                var b = bb.Info;
+                F("iAdditionalInfoURL", bb.UrlString); F("bNumberOfAlternateModes", b.Modes.Count); F("bPreferredAlternateMode", b.PreferredMode);
+                F("VCONNPower", $"0x{BitConverter.ToUInt16(d, 6):X4} ({b.VconnPower})");
+                F("bmConfigured", Convert.ToHexString(d, 8, 32));
+                F("bcdVersion", b.Version);
+                if (d.Length != 42 + 4 * b.Modes.Count) F("bAdditionalFailureInfo", $"0x{d[42]:X2}{(b.InsufficientPower ? " insufficient power" : "")}{(b.PowerDeliveryFailed ? " USB PD communication failed" : "")}");
+                F("alternateModes", J.Arr(b.Modes.Select((m, i) => (JsonNode)J.Obj(("wSVID", $"0x{m.Svid} ({m.Name})"), ("bAlternateMode", m.Index), ("iAlternateModeString", bb.ModeStrings[i]), ("state", m.State.ToLowerInvariant())))));
+                break;
+            }
+            case 0x0F when d.Length >= 8:
+                F("bIndex", d[3]); F("dwAlternateModeVdo", $"0x{BitConverter.ToUInt32(d, 4):X8}");
+                break;
             case 5 when d.Length >= 20:
                 F("PlatformCapabilityUUID", new Guid(d.AsSpan(4, 16)).ToString() switch
                 {

@@ -2,7 +2,7 @@
   <!-- atlascli: the app's scan, issues and explanations on the command line, and as an MCP server. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>UsbAtlas.Cli</RootNamespace>

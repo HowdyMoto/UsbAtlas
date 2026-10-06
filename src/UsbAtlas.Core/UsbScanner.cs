@@ -12,7 +12,7 @@ public sealed class UsbScanner
     private readonly Dictionary<string, (string Name, string Manufacturer, string InstanceId)> names = new(StringComparer.OrdinalIgnoreCase);
     // Every present devnode by instance ID: its parent, its driver service and, for a HID collection, its
     // usages; its name, driver key and any Device Manager problem code.
-    internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0);
+    internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0, string ContainerId = "");
     private readonly Dictionary<string, DevNode> devices = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> hidUsages = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
@@ -20,6 +20,7 @@ public sealed class UsbScanner
     // Keep descriptor bytes on each node for deep diagnostics. Off for the app, which doesn't show them.
     public bool CaptureRaw { get; init; }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public Snapshot Scan()
     {
         snapshot = new(); visited.Clear(); names.Clear(); devices.Clear(); hidUsages.Clear();
@@ -80,6 +81,10 @@ public sealed class UsbScanner
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         HubRelationships.Analyze(snapshot);
         HubRelationships.NoteReducedSpeed(snapshot);
+        foreach (var node in snapshot.Nodes.Where(n => n.Kind is "Device" or "Hub" && n.InstanceId.Length > 0))
+            node.ContainerId = devices.GetValueOrDefault(node.InstanceId)?.ContainerId ?? "";
+        snapshot.Containers = [.. Containers.Read(snapshot.Nodes.Select(n => n.ContainerId)).Values];
+        Containers.Analyze(snapshot);
         PortMap.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
@@ -156,8 +161,9 @@ public sealed class UsbScanner
             node.Kind = data[24] != 0 ? "Hub" : "Device";
             node.VendorId = BitConverter.ToUInt16(data, 12).ToString("X4");
             node.ProductId = BitConverter.ToUInt16(data, 14).ToString("X4");
+            node.DeviceRevision = Bcd(BitConverter.ToUInt16(data, 16));
             var bcd = BitConverter.ToUInt16(data, 6);
-            node.UsbVersion = $"USB {bcd >> 8:X}.{(bcd >> 4) & 15:X}{bcd & 15:X}";
+            node.UsbVersion = "USB " + Bcd(bcd);
             (node.Speed, node.LinkMbps) = DecodeSpeed(data[23], flags);
             // A SuperSpeedPlus link's lane speed and lane count come from a query of their own, which
             // Windows refuses for slower links.
@@ -215,10 +221,20 @@ public sealed class UsbScanner
                     break;
                 }
             }
-            // The BOS descriptor lists USB 2.1+ and USB 3 capabilities, such as SuperSpeedPlus and LPM.
-            if (CaptureRaw && bcd >= 0x0201 && Descriptor(handle, port, 15, 0, 0, 5) is { Length: >= 5 } bosHead && bosHead[1] == 15
+            // The BOS descriptor lists USB 2.1+ and USB 3 capabilities, such as SuperSpeedPlus and LPM. A Billboard's
+            // says how its USB-C alternate modes went, so it's read on every scan.
+            bool billboard = data[8] == Billboard.Class || node.InterfaceFunctions.Contains("Billboard");
+            if ((CaptureRaw || billboard) && bcd >= 0x0201 && Descriptor(handle, port, 15, 0, 0, 5) is { Length: >= 5 } bosHead && bosHead[1] == 15
                 && Descriptor(handle, port, 15, 0, 0, Math.Max((ushort)5, BitConverter.ToUInt16(bosHead, 2))) is { } bos)
-                node.Raw!.Bos = Convert.ToHexString(bos);
+            {
+                if (CaptureRaw) node.Raw!.Bos = Convert.ToHexString(bos);
+                if (billboard && Billboard.Decode(bos) is { } decoded)
+                {
+                    node.Billboard = decoded.Info;
+                    node.Billboard.AdditionalInfoUrl = StringDescriptor(handle, port, decoded.UrlString, language);
+                    for (int i = 0; i < decoded.ModeStrings.Count; i++) node.Billboard.Modes[i].Description = StringDescriptor(handle, port, decoded.ModeStrings[i], language);
+                }
+            }
             ReadOpenPipes(data, returnedInfo, SpeedClass(data[23], flags), endpoints, node);
             DeviceIdentity.Identify(node);
             if (node.Kind == "Hub")
@@ -272,6 +288,13 @@ public sealed class UsbScanner
     internal static bool DescriptorRead(byte[] connectionInfo) => connectionInfo[4] == 18 && connectionInfo[5] == 1;
     // A device qualifier is 10 bytes, type 6, naming a USB version of 2.0 or later.
     internal static bool HighSpeedQualifier(byte[]? qualifier) => qualifier is { Length: >= 10 } q && q[0] == 10 && q[1] == 6 && BitConverter.ToUInt16(q, 2) >= 0x0200;
+    // DEVPKEY_Device_ContainerId, a DEVPROP_TYPE_GUID.
+    private static string ContainerProperty(IntPtr set, ref Native.DeviceData d)
+    {
+        var key = new Native.PropertyKey { Category = new("8C7ED206-3F8A-4827-B3AB-AE9E1FAEFC6C"), Id = 2 };
+        var bytes = new byte[16];
+        return Native.SetupDiGetDeviceProperty(set, ref d, ref key, out uint type, bytes, (uint)bytes.Length, out _, 0) && type == 0x0D ? Containers.Normalize(new Guid(bytes)) : "";
+    }
     private static readonly Guid PciDeviceProperties = new("3AB22E31-8264-4B4E-9AF5-A8D2D8E33E62");
     private static int? PciProperty(IntPtr set, ref Native.DeviceData d, uint id)
     {
@@ -281,6 +304,8 @@ public sealed class UsbScanner
         return Native.SetupDiGetDeviceProperty(set, ref d, ref key, out uint type, bytes, (uint)bytes.Length, out _, 0) && type == 7 && BitConverter.ToInt32(bytes) is > 0 and var value ? value : null;
     }
     internal static int DecodePower(byte maxPower, ushort bcdUsb) => maxPower * (bcdUsb >= 0x0300 ? 8 : 2);
+    // Binary-coded decimal as USB versions and revisions are written: 0x0210 is 2.10.
+    internal static string Bcd(ushort value) => $"{value >> 8:X}.{(value >> 4) & 15:X}{value & 15:X}";
     private static int SpeedClass(byte speed, int flags) => (flags & 5) != 0 ? 3 : speed;
 
     // Open pipes follow NumberOfOpenPipes (offset 27) as packed USB_PIPE_INFO entries from offset 35:
@@ -290,13 +315,17 @@ public sealed class UsbScanner
         if (returned < 35 || speedClass > 3) return;
         int count = BitConverter.ToInt32(data, 27);
         if (count < 0 || 35 + count * 11 > Math.Min(returned, data.Length)) return;
+        ApplyOpenPipes(Enumerable.Range(0, count).Select(i => 35 + i * 11).Select(at => (data[at + 2], data[at + 3], BitConverter.ToUInt16(data, at + 4), data[at + 6])).ToList(), speedClass, endpoints, node);
+    }
+    // What a device's open pipes reserve, how often it's polled, and each pipe described, from their endpoint
+    // descriptors' address, attributes, packet size and interval.
+    internal static void ApplyOpenPipes(List<(byte Address, byte Attributes, ushort MaxPacket, byte Interval)> pipes, int speedClass, List<UsbBudgets.Endpoint> endpoints, UsbNode node)
+    {
+        if (speedClass > 3) return;
         double reserved = 0;
         (byte Address, byte Interval)? fastest = null;
-        for (int i = 0; i < count; i++)
+        foreach (var (address, attributes, maxPacket, interval) in pipes)
         {
-            int at = 35 + i * 11;
-            byte address = data[at + 2], attributes = data[at + 3], interval = data[at + 6];
-            ushort maxPacket = BitConverter.ToUInt16(data, at + 4);
             // SuperSpeed bytes per interval live in the companion descriptor of the matching alternate setting.
             int? perInterval = endpoints.FirstOrDefault(e => e.Address == address && e.Attributes == attributes && e.MaxPacket == maxPacket && e.Interval == interval)?.BytesPerInterval;
             reserved += UsbBudgets.PeriodicMbps(attributes, maxPacket, interval, speedClass, perInterval);
@@ -323,8 +352,9 @@ public sealed class UsbScanner
         if (!DescriptorRead(data)) return;
         node.VendorId = BitConverter.ToUInt16(data, 12).ToString("X4");
         node.ProductId = BitConverter.ToUInt16(data, 14).ToString("X4");
+        node.DeviceRevision = Bcd(BitConverter.ToUInt16(data, 16));
         var bcd = BitConverter.ToUInt16(data, 6);
-        node.UsbVersion = $"USB {bcd >> 8:X}.{(bcd >> 4) & 15:X}{bcd & 15:X}";
+        node.UsbVersion = "USB " + Bcd(bcd);
         node.DeviceClass = ClassName(data[8]);
         ushort language = 0x0409;
         var langs = Descriptor(handle, port, 3, 0, 0, 255);
@@ -342,7 +372,7 @@ public sealed class UsbScanner
         }
     }
     private static string ConnectionStatus(int status) => status switch { 0 => "Empty", 1 => "Connected", 2 => "Enumeration failed", 3 => "General failure", 4 => "Overcurrent", 5 => "Insufficient power", 6 => "Insufficient bandwidth", 7 => "Hub nested too deeply", 8 => "Legacy hub", 9 => "Enumerating", 10 => "Resetting", _ => "Status " + status };
-    private static string ClassName(byte value) => value switch { 0 => "Defined by interfaces", 1 => "Audio", 2 => "Communications", 3 => "Human interface (HID)", 7 => "Printer", 8 => "Mass storage", 9 => "Hub", 14 => "Video", 0xE0 => "Wireless controller", 0xEF => "Composite / miscellaneous", 0xFF => "Vendor specific", _ => $"Class 0x{value:X2}" };
+    internal static string ClassName(byte value) => value switch { 0 => "Defined by interfaces", 1 => "Audio", 2 => "Communications", 3 => "Human interface (HID)", 7 => "Printer", 8 => "Mass storage", 9 => "Hub", 14 => "Video", 0x11 => "Billboard", 0xE0 => "Wireless controller", 0xEF => "Composite / miscellaneous", 0xFF => "Vendor specific", _ => $"Class 0x{value:X2}" };
 
     // Names every present device by driver key, and records each devnode's parent and service so HID
     // collections and power settings can be traced back to the USB device they belong to.
@@ -367,7 +397,7 @@ public sealed class UsbScanner
                 var usages = instance.StartsWith(@"HID\", StringComparison.OrdinalIgnoreCase) ? DeviceIdentity.ReadHidUsages(MultiProperty(set, ref d, 1)) : [];
                 // DN_HAS_PROBLEM: Device Manager shows the problem code on the device's General tab.
                 int problem = Native.CM_Get_DevNode_Status(out var devStatus, out var code, d.DevInst, 0) == 0 && (devStatus & 0x400) != 0 ? (int)code : 0;
-                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem);
+                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem, ContainerProperty(set, ref d));
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }

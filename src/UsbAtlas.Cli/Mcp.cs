@@ -9,7 +9,7 @@ namespace UsbAtlas.Cli;
 internal static class Mcp
 {
     private static readonly string[] Versions = ["2025-06-18", "2025-03-26", "2024-11-05"];
-    private const string Instructions = "USB Atlas reads this Windows PC's USB topology: host controllers, hubs, ports and devices, their negotiated link rates, reserved bandwidth, requested power, polling rates, power-saving settings and drivers, and explains problems in plain words. Start with usb_issues; use usb_tree for the layout and usb_show <path> for one device. Paths such as H01/04/02 name the host and each port on the way. For intermittent problems, call usb_watch while the person replugs or wiggles the device, or usb_baseline before a change and usb_diff after it. All tools are read-only. Figures come from descriptors and Windows, not measurements.";
+    private const string Instructions = "USB Atlas reads this Windows PC's USB topology: host controllers, hubs, ports and devices, their negotiated link rates, reserved bandwidth, requested power, polling rates, power-saving settings and drivers, and explains problems in plain words. Start with usb_issues; use usb_tree for the layout and usb_show <path> for one device. Paths such as H01/04/02 name the host and each port on the way. For intermittent problems, call usb_watch while the person replugs or wiggles the device, usb_trace for the hub driver's account of why a link dropped or came up slow, or usb_baseline before a change and usb_diff after it. All tools are read-only. Figures come from descriptors and Windows, not measurements.";
 
     private sealed record Tool(string Name, string Description, JsonObject Properties, string[] Required, Func<JsonObject, List<string>> Args);
 
@@ -46,6 +46,9 @@ internal static class Mcp
         new("usb_watch", "Watch USB devices connect and disconnect for some seconds and report each change (connected, disconnected, moved, link or power changes, issues appearing or resolving) and devices that drop and come back quickly. Ask the person to replug or wiggle the device while it runs.",
             J.Obj(("seconds", Prop("integer", "How long to watch, 5 to 120. Default 20."))), [],
             a => ["watch", "--for", Math.Clamp(int.TryParse(Arg(a, "seconds"), out var s) ? s : 20, 5, 120) + "s"]),
+        new("usb_trace", "Record what Windows' USB hub driver reports for some seconds, placed on the topology: connections, port and warm resets, USB 3 link failures (config errors, SS.Inactive, compliance mode), overcurrent, enumeration retries and failures, rejected descriptors, SuperSpeed devices that came up on the USB 2 bus, U1/U2 refused, and USB-C alternate modes; then a count per port. This explains why a device dropped or runs slower. Ask the person to replug the device while it runs. Needs administrator rights or the Performance Log Users group.",
+            J.Obj(("seconds", Prop("integer", "How long to record, 5 to 120. Default 30."))), [],
+            a => ["trace", "--for", Math.Clamp(int.TryParse(Arg(a, "seconds"), out var s) ? s : 30, 5, 120) + "s"]),
         new("usb_baseline", "Save the current USB state in this session, to compare with usb_diff after the person changes something (moves a device, swaps a cable, changes a setting).",
             new JsonObject(), [], _ => ["scan", "--out", baseline]),
         new("usb_diff", "Compare the USB state now with the one saved by usb_baseline: what connected, disconnected or moved, what changed, and which issues appeared or were resolved.",

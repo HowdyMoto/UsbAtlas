@@ -17,6 +17,25 @@ See [Third-party notices](THIRD-PARTY-NOTICES.md) for attribution and license fi
 
 Download the Windows x64 portable ZIP from [GitHub Releases](https://github.com/HowdyMoto/UsbAtlas/releases/latest), extract the entire archive, and open `UsbAtlas.exe`. The release includes the .NET runtime; no separate runtime installation is needed. Keep the bundled license and notice files with the app.
 
+To check a download, compare its hash with the release's `SHA256SUMS.txt`, and, for signed releases, check the signature of the executables after extracting:
+
+```powershell
+(Get-FileHash .\UsbAtlas-1.3.0-win-x64.zip).Hash      # matches the line in SHA256SUMS.txt
+Get-AuthenticodeSignature .\UsbAtlas.exe, .\atlascli.exe | Format-List Status, SignerCertificate, TimeStamperCertificate
+```
+
+A signed executable reads `Valid`, signed by the publisher named in the release notes. The .NET runtime's own files carry Microsoft's signature.
+
+## Releasing
+
+`release.ps1` makes a release: it publishes the self-contained win-x64 package (the app, `atlascli.exe` beside it, and the license and notice files, the .NET runtime's included), signs USB Atlas's own binaries when a certificate is configured, verifies every signature, runs both self-tests and the off-screen UI checks from the package, zips it, and writes `SHA256SUMS.txt` to `artifacts\releases\v<version>`. `-Linux` adds the command line for linux-x64 and linux-arm64 as `.tar.gz` files with the right permissions. `Get-Help .\release.ps1` describes it.
+
+Signing uses `signtool` from the Windows SDK with SHA-256 and an RFC 3161 timestamp, and either a code-signing certificate in the certificate store (`-CertificateThumbprint`, or `USBATLAS_SIGN_THUMBPRINT`) or Azure Artifact Signing (`-ArtifactSigningDlib` and `-ArtifactSigningMetadata`, or `USBATLAS_SIGN_DLIB` and `USBATLAS_SIGN_METADATA`). Without either it still packages, and warns that the build is unsigned; `-RequireSigning` makes that an error, for official releases.
+
+```powershell
+.\release.ps1 -CertificateThumbprint <thumbprint> -RequireSigning -Linux
+```
+
 ## Run
 
 To compile the current source and run it, without a release build or packaging, run this from the repository root:
@@ -52,7 +71,8 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 | `budget [<target>]` | Bandwidth and power arithmetic with its inputs: reserved and peak bandwidth against each link's capacity, shared transaction translators, and bus-powered hubs' current against the specification. |
 | `raw <target>` | The node's descriptors, decoded field by field with their hex: device, configuration, interfaces, endpoints, BOS capabilities (LPM, SuperSpeedPlus lane speeds), hub descriptor (power switching and overcurrent protection, per port or ganged), connection and connector flags, and a SuperSpeedPlus link's lane speed and lane count. |
 | `events` | Recent USB history from the Windows event logs: devices set up, failing to start (Kernel-PnP 411) or removed, and drivers that failed to load, placed in the topology when still connected. |
-| `watch` | Devices connecting, disconnecting, moving and changing as it happens, and devices that drop and come back; run it while replugging or wiggling a cable. When the computer sleeps and wakes, it reports what didn't come back or came back on a slower link. `--for 0` runs until Ctrl+C, and `--out FILE` also appends each event to a file as a line of JSON, for soak tests. |
+| `watch` | Devices connecting, disconnecting, moving and changing as it happens, and devices that drop and come back; run it while replugging or wiggling a cable. When the computer sleeps and wakes, it reports what didn't come back or came back on a slower link. `--for 0` runs until Ctrl+C, and `--out FILE` also appends each event to a file as a line of JSON, for soak tests. `--trace` adds the hub driver's own events, as `trace` reports them. |
+| `trace` | Why a link dropped or came up slow, from Windows' USB hub driver itself: connections, port and warm resets, USB 3 links that failed (config errors, SS.Inactive, compliance mode), overcurrent, enumeration retries and failures, descriptors Windows rejected, SuperSpeed devices that came up on the USB 2 bus, U1/U2 refused, and USB-C alternate modes, each placed on the topology, then a count per port. See **Hub driver events** below. |
 | `scan`, `diff` | Save a snapshot, change something, and see what changed: devices moved, links renegotiated, issues appearing or resolved. |
 | `map` | This machine's port map as a JSON file: each host controller's ports as the firmware describes them to Windows, and what is wired in. |
 | `check [<map>]` | Pass or fail: the firmware's port map has no contradictions and, given a map from a known-good unit, this machine matches it. |
@@ -64,6 +84,29 @@ A target is a path such as `H01/04/02` (host 1, port 4, port 2, as `tree` shows 
 ```powershell
 claude mcp add usb-atlas -- "C:\path\to\atlascli.exe" mcp
 ```
+
+### Linux
+
+The command line also runs on Linux, reading sysfs (`/sys/bus/usb/devices` and the controllers' PCI devices) with no root access needed. It fills the same snapshot, so `issues`, `tree`, `show`, `find`, `budget`, `raw`, `scan`, `diff`, `map`, `check` and `mcp` work as on Windows, and snapshots from either system load in the other. Build it with:
+
+```sh
+dotnet publish src/UsbAtlas.Cli -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true   # or linux-arm64
+```
+
+Each USB bus is a host, as `lsusb -t` numbers them, so `H01/03` is bus 1, port 3: an xHCI controller's USB 2 and USB 3 ports are two buses that share its PCI device, its PCIe link and its endpoints. Ports come from `usbN-portM`: whether they can be plugged into (`connect_type`), the other half of their socket (`peer`) and USB-C (`connector`), so socket pairing, hub pairing and the port-map checks work as on Windows. Devices bring their link rate and lanes, descriptors, interfaces and the endpoints of each interface's current setting, which give polling rates and reserved bandwidth, and the kernel's count of overcurrent events per port is in Detection details. Two findings are Linux's own: **No driver bound** (a warning: a device with standard functions that no kernel driver claimed) and **Not authorized** (a note: a device USBGuard or a similar policy blocked).
+
+Linux doesn't report some of what Windows does: power-saving settings, driver versions and problem codes, Billboard capabilities (the BOS descriptor isn't in sysfs), device containers, whether a 12 Mb/s device supports high speed, and whether a USB 3 hub's USB 2 side is missing its USB 3 side. `events` and `trace` read Windows' own logs and tracing, so they refuse on Linux (the kernel's USB messages are in `journalctl -k`), and `watch` rescans every second instead of waiting for notifications, without tracking sleep. Some explanations still name Windows, since they were written for it. The scanner is tested against fixture sysfs trees on every self-test; it hasn't yet run on real Linux hardware.
+
+### Hub driver events
+
+`trace` records what Windows' USB 3 hub driver (USBHUB3, which also runs the USB 2 ports of xHCI controllers) logs through Event Tracing for Windows, the events Device Manager and the event logs never show. It starts a real-time session on the driver's error, enumeration and rundown events, reads them with the Windows trace-decoding API (no packages), and places each one on the topology: the driver's rundown names each hub's and device's controller and port path, and a device being set up is placed at the port being set up. Each port's status changes are decoded from the hub's `wPortStatus` and `wPortChange`, so a USB 3 link that drops to SS.Inactive or compliance mode, a link that couldn't be trained, a warm reset or overcurrent reads as what it is. Routine resumes, resets and set-up steps appear with `--verbose`, which also prints each event's fields. At the end it counts each port's events, busiest first.
+
+```powershell
+atlascli trace --for 60s          # replug or wiggle the device meanwhile
+atlascli watch --trace --for 0    # changes and the hub driver's account of them, until Ctrl+C
+```
+
+Starting an event session needs administrator rights or membership in the Performance Log Users group; `trace` says so when it can't, and the rest of USB Atlas still needs neither. The events come from USBHUB3; hubs and controllers run by older drivers (USBHUB, USBPORT) log nothing here.
 
 ### Checking a board's port map
 
@@ -88,7 +131,7 @@ The map is meant to be edited: delete a field and it is no longer checked, and s
 | `src/UsbAtlas.Cli/` | `atlascli`: the command line and MCP server. |
 | `docs/` | Release notes. |
 | `artifacts/` | Generated and untracked: builds, publishes, release packages, previews, scans, and test results. `Directory.Build.props` routes all build output here. |
-| Root | This README, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `run-dev.ps1` (compile and run), `UsbAtlas.slnx`, and `Directory.Build.props`. |
+| Root | This README, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `run-dev.ps1` (compile and run), `release.ps1` (package, sign and check a release), `UsbAtlas.slnx`, and `Directory.Build.props`. |
 
 ## Explore
 
@@ -139,6 +182,19 @@ are named from the bundled offline USB ID database. Those entries usually name t
 maker of the chip inside (a hub in a Dell monitor may appear as Realtek), not the
 retail brand; clicking its name or pencil in Properties can rename it. Detection details record where
 each name came from, along with the original USB strings, Windows name and lookup results.
+**Device revision** is the device descriptor's `bcdDevice`, the maker's own revision number; for hubs and
+adapters it is usually the firmware version, the first thing their makers' support asks for. Search finds
+it as “rev 1.04”, and `diff` and `watch` report a device whose revision changed, as a firmware update does.
+
+**Device containers:** Windows groups the USB devices of one product, such as a monitor's hub, audio and
+Billboard, into a device container, by the Container ID the device reports or by where it sits. Properties'
+**Part of** row names the product, from the container's model name or your label on its top device, and
+Detection details lists the rest of it; `show` reports the same. A hub or device named from the USB ID
+database inside a container with a specific name is named after it, such as “Realtek RTS5411 Hub in DELL
+U2723QE”, and search finds devices by their container's name. When separate pieces of hardware report the
+same Container ID, which comes from firmware that gives every unit one ID, the top of each gets a
+**Container ID shared** note: everything works, but Windows' settings show them as one device. A USB 3 hub's
+two sides are one piece of hardware and aren't flagged.
 
 **Game controllers:** wheels, pedals, shifters, handbrakes, button boxes, joysticks and
 game pads are recognized by the HID collections Windows lists for them (a Joystick, Game
@@ -224,6 +280,11 @@ everything plugged into it is, so the setting matters most on devices.
 
 USB 2/3 companion logical ports can refer to the same physical socket; Windows names each port's companion, and both are drawn as that socket, split at a seam when they are on the same hub. An external USB 3 hub may appear as two hubs, whose cards name each other. Connector shape is never inferred from USB version. Empty counts are logical ports. Errors and inaccessible hubs remain visible; a scan can be partial if hardware changes during enumeration.
 
+**USB-C alternate modes:** a USB-C monitor, dock or adapter whose alternate mode, such as DisplayPort over USB-C, doesn't start shows a **Billboard** device, and some show one all the time. USB Atlas reads every Billboard's BOS descriptor on each scan and decodes its Billboard capability: each mode it offers (DisplayPort, Thunderbolt, or a vendor's own, named from the USB ID database), whether it was entered, failed or never asked for, and why one failed: not enough power over USB-C, or USB Power Delivery failing. Properties shows them as **Alternate modes**, with each mode's SVID, string and Billboard Ex VDO in Detection details, and `show` and `raw` report the same fields.
+
+- **Alternate mode failed** (warning): a mode was attempted and not entered, or the device reports an error. Its explanation names what is lost, such as the picture, and what to do: its power adapter when power was short, a cable that carries video, and a port marked for DisplayPort or Thunderbolt.
+- **Alternate mode not entered** (note): nothing failed, but the computer never asked for any mode, so the port or cable in between may not carry it. One mode entered with the others idle is normal and isn't flagged.
+
 **Port map:** Windows learns about a computer's built-in ports from its firmware (ACPI `_UPC` and `_PLD`): which can be plugged into, which are USB-C, and which USB 2 and USB 3 ports share a socket. When that description contradicts itself, the port shows a note. Nothing plugged in is affected, and it can't be fixed at the port; a firmware update may correct it.
 
 - **No USB 2 half reported:** a USB 3 port you can plug into has no USB 2 port named as the other half of its socket. Every USB 3 socket also carries USB 2.
@@ -250,7 +311,7 @@ Start-Process $exe '--demo --render --verify-ui --compact' -WorkingDirectory $ou
 Start-Process $exe '--demo --render --verify-ui --vertical' -WorkingDirectory $out -Wait
 ```
 
-The app writes these files to its working directory, so the commands above keep them in `artifacts\diagnostics`. `--self-test` writes `self-test.txt` and exits. `atlascli self-test` runs the same checks and the command line's own (every command against the sample topology, diff, redaction, descriptor decoding and the MCP protocol) and prints the result. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits.
+The app writes these files to its working directory, so the commands above keep them in `artifacts\diagnostics`. `--self-test` writes `self-test.txt` and exits. `atlascli self-test` runs the same checks and the command line's own (every command against the sample topology, diff, redaction, descriptor decoding and the MCP protocol) and prints the result. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits; add `--select TEXT` to preview Properties for the first node whose search text matches, such as `--render --select 0BDA:5411` on live hardware.
 
 ## API references
 
