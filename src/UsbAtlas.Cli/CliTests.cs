@@ -35,6 +35,7 @@ internal static class CliTests
         CommandTests();
         DisplayTests();
         EventTests();
+        HubDescriptorTests();
     }
 
     private static void OptionTests()
@@ -644,6 +645,21 @@ internal static class CliTests
             "USB events stay USB, and a display driver that stopped responding is a display event.");
         Check(Of("Microsoft-Windows-Kernel-PnP", 400, ("DeviceInstanceId", @"PCI\VEN_8086&DEV_1234\3&1")) == null && Of("Some-Provider", 1) == null, "Anything else is left out.");
         Check(Run("events", "--demo", "--usb-only", "--max", "1").Code is 0 or 3 && Options.Parse(["events", "--usb-only"]).Has("usb-only"), "events takes --usb-only.");
+    }
+
+    // IOCTL_USB_GET_HUB_INFORMATION_EX as a Realtek USB 3 hub answered it: USB_HUB_TYPE 3, highest port 4,
+    // then its SuperSpeed hub descriptor.
+    private static void HubDescriptorTests()
+    {
+        byte[] ex = Convert.FromHexString("03000000" + "0400" + "0C2A040D00000202C8001000");
+        var read = UsbScanner.HubDescriptorEx(ex, ex.Length);
+        Check(read is ("USB 3 hub", { Length: 12 }) && read.Value.Descriptor[1] == 0x2A, "A USB 3 hub's own descriptor is read from after the hub type and port count.");
+        var d = read!.Value.Descriptor;
+        Check(UsbScanner.HubDescriptorEx(ex, 7) == null && UsbScanner.HubDescriptorEx(ex, 12) == null, "A short answer gives no descriptor rather than a truncated one.");
+        byte[] other = Convert.FromHexString("02000000" + "0400" + "0905040D000002");
+        Check(UsbScanner.HubDescriptorEx(other, other.Length) == null, "Anything but a hub descriptor is refused.");
+        var decoded = Descriptors.Decode(d, 3, 0x0320);
+        Check(decoded["bHubContrCurrent"]!.ToString() == "2 (8 mA)" && decoded["wHubDelay"]!.ToString() == "200 ns", "SuperSpeed hub descriptors decode their own fields.");
     }
 
     private static void CommandTests()

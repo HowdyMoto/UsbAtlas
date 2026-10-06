@@ -116,7 +116,7 @@ public sealed class UsbScanner
         var info = new byte[76];
         if (!Query(handle, 258, info, out var returned) || returned < 7) { hub.ScanIncomplete = true; hub.Notes.Add("Cannot read hub ports: " + Error()); return; }
         hub.PortCount = info[6];
-        if (CaptureRaw && info[4] >= 7 && returned >= 4 + info[4]) (hub.Raw ??= new()).Hub = Convert.ToHexString(info, 4, info[4]);
+        if (CaptureRaw) ReadHubDescriptor(handle, hub, info, returned);
         // USB_HUB_DESCRIPTOR is 71 bytes; HubIsBusPowered follows it.
         if (hub.Kind != "Root hub" && returned >= 76) hub.PowerSource = info[75] != 0 ? "Bus powered" : "Self powered";
         for (int port = 1; port <= hub.PortCount; port++)
@@ -258,6 +258,31 @@ public sealed class UsbScanner
                 node.Notes.Add("Downstream devices share this hub's upstream link. Link speed is a signaling ceiling, not available payload throughput.");
             }
         }
+    }
+
+    // The hub's own descriptor, in USB 3 format (0x2A) for a USB 3 hub, from IOCTL_USB_GET_HUB_INFORMATION_EX:
+    // a packed USB_HUB_TYPE and HighestPortNumber, then the descriptor. When Windows doesn't answer, the
+    // USB 2-format descriptor in USB_NODE_INFORMATION stands in, which Windows fills in itself for USB 3 hubs.
+    private static void ReadHubDescriptor(SafeFileHandle handle, UsbNode hub, byte[] nodeInfo, int nodeReturned)
+    {
+        var raw = hub.Raw ??= new();
+        var ex = new byte[128];
+        if (Query(handle, 277, ex, out var returned) && HubDescriptorEx(ex, returned) is var (type, descriptor))
+        {
+            raw.Hub = Convert.ToHexString(descriptor); raw.HubSource = "hub"; raw.HubType = type;
+        }
+        else if (nodeInfo[4] >= 7 && nodeReturned >= 4 + nodeInfo[4])
+        {
+            raw.Hub = Convert.ToHexString(nodeInfo, 4, nodeInfo[4]); raw.HubSource = "windows";
+        }
+    }
+    internal static (string Type, byte[] Descriptor)? HubDescriptorEx(byte[] ex, int returned)
+    {
+        if (returned < 8) return null;
+        int length = ex[6];
+        if (length < 7 || 6 + length > Math.Min(returned, ex.Length) || ex[7] is not (0x29 or 0x2A)) return null;
+        string type = BitConverter.ToInt32(ex, 0) switch { 1 => "Root hub", 2 => "USB 2 hub", 3 => "USB 3 hub", var t => $"Type {t}" };
+        return (type, ex[6..(6 + length)]);
     }
 
     internal static (string, double?) DecodeSpeed(byte speed, int flags)
