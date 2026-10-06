@@ -17,6 +17,25 @@ See [Third-party notices](THIRD-PARTY-NOTICES.md) for attribution and license fi
 
 Download the Windows x64 portable ZIP from [GitHub Releases](https://github.com/HowdyMoto/UsbAtlas/releases/latest), extract the entire archive, and open `UsbAtlas.exe`. The release includes the .NET runtime; no separate runtime installation is needed. Keep the bundled license and notice files with the app.
 
+To check a download, compare its hash with the release's `SHA256SUMS.txt`, and, for signed releases, check the signature of the executables after extracting:
+
+```powershell
+(Get-FileHash .\UsbAtlas-1.3.0-win-x64.zip).Hash      # matches the line in SHA256SUMS.txt
+Get-AuthenticodeSignature .\UsbAtlas.exe, .\usbatlas-cli.exe | Format-List Status, SignerCertificate, TimeStamperCertificate
+```
+
+A signed executable reads `Valid`, signed by the publisher named in the release notes. The .NET runtime's own files carry Microsoft's signature.
+
+## Releasing
+
+`release.ps1` makes a release: it publishes the self-contained win-x64 package (the app, `usbatlas-cli.exe` beside it, and the license and notice files, the .NET runtime's included), signs USB Atlas's own binaries when a certificate is configured, verifies every signature, runs both self-tests and the off-screen UI checks from the package, zips it, and writes `SHA256SUMS.txt` to `artifacts\releases\v<version>`. `-Linux` adds the command line for linux-x64 and linux-arm64 as `.tar.gz` files with the right permissions. `Get-Help .\release.ps1` describes it.
+
+Signing uses `signtool` from the Windows SDK with SHA-256 and an RFC 3161 timestamp, and either a code-signing certificate in the certificate store (`-CertificateThumbprint`, or `USBATLAS_SIGN_THUMBPRINT`) or Azure Artifact Signing (`-ArtifactSigningDlib` and `-ArtifactSigningMetadata`, or `USBATLAS_SIGN_DLIB` and `USBATLAS_SIGN_METADATA`). Without either it still packages, and warns that the build is unsigned; `-RequireSigning` makes that an error, for official releases.
+
+```powershell
+.\release.ps1 -CertificateThumbprint <thumbprint> -RequireSigning -Linux
+```
+
 ## Run
 
 To compile the current source and run it, without a release build or packaging, run this from the repository root:
@@ -112,7 +131,7 @@ The map is meant to be edited: delete a field and it is no longer checked, and s
 | `src/UsbAtlas.Cli/` | `usbatlas-cli`: the command line and MCP server. |
 | `docs/` | Release notes. |
 | `artifacts/` | Generated and untracked: builds, publishes, release packages, previews, scans, and test results. `Directory.Build.props` routes all build output here. |
-| Root | This README, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `run-dev.ps1` (compile and run), `UsbAtlas.slnx`, and `Directory.Build.props`. |
+| Root | This README, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `run-dev.ps1` (compile and run), `release.ps1` (package, sign and check a release), `UsbAtlas.slnx`, and `Directory.Build.props`. |
 
 ## Explore
 
