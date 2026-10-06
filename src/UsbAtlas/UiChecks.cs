@@ -838,6 +838,21 @@ public partial class MainWindow
             Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).IsEnabled, "A USB 2 half of a USB 3 socket must offer the socket's speed too.");
             SelectNode(snapshot.Nodes.First(n => n.Kind == "Empty port" && n.Protocols == "USB 2.0" && n.CompanionId.Length == 0)); UpdateLayout();
             Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)) is { IsEnabled: false, Content: "Not applicable" }, "A USB 2 socket has no speed to set.");
+            // A socket's type set in Properties redraws both halves on the graph, from a USB-C pill to USB-A to a plain
+            // built-in slot, says so in the evidence, and clears again; the firmware's flag stays as reported.
+            var typeC = snapshot.Nodes.Single(n => n.Id == "demo/root/8"); var typeCPartner = snapshot.Nodes.Single(n => n.Id == typeC.CompanionId);
+            bool Pill(UsbNode port) { var slot = portSlots.GetValueOrDefault(port.Id) ?? connectedPorts[port.Id]; var c = ((Border)slot.Template.FindName("Chrome", slot)).CornerRadius; return Math.Max(Math.Max(c.TopLeft, c.TopRight), Math.Max(c.BottomLeft, c.BottomRight)) >= slot.Height / 2; }
+            SelectNode(typeC); UpdateLayout();
+            var typeButton = Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketConnectorTag));
+            Check(Pill(typeC) && Pill(typeCPartner) && typeButton.Content as string == "As detected · Set…"
+                && typeButton.ContextMenu?.Items.OfType<MenuItem>().Select(i => i.Header as string).SequenceEqual(["As detected", "USB-A", "USB-C", "Internal: no socket"]) == true, "A USB-C socket starts as a pill, with its type to be set from four choices.");
+            SetSocketConnector(typeC, "USB-A"); UpdateLayout();
+            Check(!Pill(typeC) && !Pill(typeCPartner) && Tongue(typeC) != null && typeC.PortConnectorIsTypeC == true, "Setting a USB-C socket to USB-A must redraw both halves as USB-A and keep the firmware's flag.");
+            SetSocketConnector(typeC, "Internal"); UpdateLayout();
+            Check(Tongue(typeC) == null && Tongue(typeCPartner) == null && Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketConnectorTag)).Content as string == "Internal: no socket · Edit"
+                && Evidence().Any(t => t.Contains("You set this socket's connector")), "An internal socket is drawn without a tongue, and Properties says why.");
+            SetSocketConnector(typeC, null); UpdateLayout();
+            Check(Pill(typeC) && Pill(typeCPartner) && typeC.SocketConnectorSet == null, "Removing the setting must draw the USB-C socket again.");
         }
         finally
         {

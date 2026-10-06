@@ -181,7 +181,7 @@ internal static class Reports
                 ("typicalBestTransfer", UsbBudgets.BestTransfer(n.LinkMbps) is { Length: > 0 } best ? $"{best} for a fast drive; typical, not measured" : null));
         else node["protocols"] = J.Obj(("ports", n.Protocols), ("downstream", J.S(n.DownstreamProtocols)));
         if (parent != null || n.Port > 0)
-            node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("ratedMbps", J.N(n.SocketRatedMbps)), ("evidence", J.S(n.SocketEvidence)),
+            node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("ratedMbps", J.N(n.SocketRatedMbps)), ("connectorSet", J.S(n.SocketConnectorSet)), ("evidence", J.S(n.SocketEvidence)),
                 ("userConnectable", n.PortIsUserConnectable), ("usbC", n.PortConnectorIsTypeC), ("debugCapable", n.PortIsDebugCapable),
                 ("sharesSocketWith", n.CompanionId.Length > 0 && s.ById(n.CompanionId) is UsbNode c ? s.PathOf(c) : null),
                 ("alsoSharesSocketWith", J.Some(n.MoreCompanions.Where(m => m.Id.Length > 0 && s.ById(m.Id) != null).Select(m => (JsonNode)s.PathOf(s.ById(m.Id)!)))),

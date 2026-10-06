@@ -77,6 +77,19 @@ internal static class IdentityTests
             sockets.IsDemo = true; Check(labels.TrySetSocketSpeed(usb3Half, sockets, 5000, out _) && usb3Half.SocketSpeed == "5 Gb/s", "Sample sockets take a speed of their own.");
             sockets.IsDemo = false; labels.Apply(sockets);
             Check(usb3Half.SocketRatedMbps == null && usb3Half.SocketSpeed == "≥5 Gb/s", "Sample socket speeds must not leak into hardware.");
+            // A socket's connector set by the user is drawn for both halves instead of the firmware's, which stays as reported for
+            // the port-map checks; it takes the socket's USB-C claims with it, survives a reload, and clears from either half.
+            usb2Half.PortConnectorIsTypeC = true; usb3Half.PortConnectorIsTypeC = true; DeviceIdentity.ClassifySockets(sockets);
+            Check(usb3Half.Connector == "USB-C" && UsbC.Socket(sockets, usb3Half).Count > 0, "A socket the firmware flags as USB-C is drawn as USB-C.");
+            Check(labels.TrySetSocketConnector(usb3Half, sockets, "Internal", out _) && usb2Half.Connector == "Internal" && usb3Half.Connector == "Internal" && usb3Half.PortConnectorIsTypeC == true
+                && usb2Half.SocketEvidence.StartsWith("You set this socket's connector to built in") && usb2Half.SocketEvidence.Contains("Windows reports a USB-C socket") && UsbC.Socket(sockets, usb3Half).Count == 0,
+                "Setting a socket's connector must draw both halves with it, keep the firmware's flag, give both in the evidence and drop its USB-C claims.");
+            usb2Half.SocketConnectorSet = null; usb3Half.SocketConnectorSet = null; new DeviceLabels(file).Apply(sockets);
+            Check(usb2Half.SocketConnectorSet == "Internal" && usb3Half.Connector == "Internal", "A socket's connector must survive a reload.");
+            Check(!labels.TrySetSocketConnector(usb3Half, sockets, "Lightning", out var connectorError) && connectorError.Length > 0 && usb3Half.SocketConnectorSet == "Internal", "Only USB-A, USB-C and Internal can be set.");
+            Check(labels.TrySetSocketConnector(usb2Half, sockets, "USB-A", out _) && usb3Half.Connector == "USB-A" && UsbC.Socket(sockets, usb3Half).Count == 0, "A socket the firmware calls USB-C can be set to USB-A.");
+            Check(labels.TrySetSocketConnector(usb2Half, sockets, null, out _) && usb3Half.SocketConnectorSet == null && usb3Half.Connector == "USB-C" && usb3Half.SocketEvidence.StartsWith("Windows reports a USB-C socket."),
+                "Clearing the connector from the other half must draw the firmware's again.");
             File.WriteAllText(file, "invalid json"); labels = new DeviceLabels(file);
             Check(!labels.TrySet(node, snapshot, "replacement", out _) && File.ReadAllText(file) == "invalid json", "Malformed label data must not be silently overwritten.");
             var blocked = new DeviceLabels(Path.Combine(folder, "missing", "labels.json"));
