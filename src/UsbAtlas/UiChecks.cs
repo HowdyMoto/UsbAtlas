@@ -822,6 +822,22 @@ public partial class MainWindow
             editSelectedLabel!(); editor = inlineLabelHost!; UpdateLayout();
             Descendants(editor).OfType<Button>().Single(b => b.Content as string == "Reset").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(hub.UserLabel == "" && hub.DisplayName == "Studio desktop hub", "Label Reset failed to restore the detected name.");
+            // A socket's speed set in Properties recolors its tongue on the graph, on both halves, and clears again.
+            var socket = snapshot.Nodes.Single(n => n.Id == "demo/root/7"); var otherHalf = snapshot.Nodes.Single(n => n.Id == socket.CompanionId);
+            Border Tongue(UsbNode port) { var slot = portSlots.GetValueOrDefault(port.Id) ?? connectedPorts[port.Id]; return (Border)slot.Template.FindName("Tongue", slot); }
+            SelectNode(socket); UpdateLayout();
+            var speedButton = Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag));
+            Check(Tongue(socket).Background == Brush("SocketSuperSpeed") && speedButton.Content as string == "As detected · Set…", "An unproven USB 3 socket starts blue, with its speed to be set.");
+            Check(speedButton.ContextMenu?.Items.OfType<MenuItem>().Select(i => i.Header as string).SequenceEqual(["As detected", "5 Gb/s", "10 Gb/s or faster"]) == true && speedButton.ContextMenu.Items.OfType<MenuItem>().Count(i => i.IsChecked) == 1, "The speed menu must offer the three choices with the current one checked.");
+            SetSocketSpeed(socket, 10000); UpdateLayout();
+            Check(Tongue(socket).Background == Brush("SocketSuperSpeedPlus") && Tongue(otherHalf).Background == Brush("SocketSuperSpeedPlus"), "Setting a socket to 10 Gb/s must turn both halves' tongues red.");
+            Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).Content as string == "10 Gb/s or faster · Edit" && Evidence().Any(t => t.Contains("You set this socket's speed")), "Properties must show the speed set and why the socket is drawn so.");
+            SetSocketSpeed(socket, null); UpdateLayout();
+            Check(Tongue(socket).Background == Brush("SocketSuperSpeed") && socket.SocketRatedMbps == null, "Removing the setting must turn the socket blue again.");
+            SelectNode(snapshot.Nodes.Single(n => n.Id == "demo/root/8")); UpdateLayout();
+            Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).IsEnabled, "A USB 2 half of a USB 3 socket must offer the socket's speed too.");
+            SelectNode(snapshot.Nodes.First(n => n.Kind == "Empty port" && n.Protocols == "USB 2.0" && n.CompanionId.Length == 0)); UpdateLayout();
+            Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)) is { IsEnabled: false, Content: "Not applicable" }, "A USB 2 socket has no speed to set.");
         }
         finally
         {
@@ -845,6 +861,20 @@ public partial class MainWindow
             Check(RefreshButton.ToolTip is StackPanel tip && tip.Children.OfType<TextBlock>().First().Text.Contains("auto"), "Refresh's tooltip must say auto-refresh is on.");
             item = RefreshMenu().Items.OfType<MenuItem>().Single(); item.IsChecked = false; item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Check(!autoRefresh && AutoRefreshDot.Visibility == Visibility.Collapsed, "Turning auto-refresh off must clear the dot.");
+            // The item is a themed toggle switch, not WPF's light check box: outlined and left when off, accent and right when on.
+            foreach (bool on in new[] { false, true })
+            {
+                SetAutoRefresh(on);
+                var menu = RefreshMenu(); menu.IsOpen = true; menu.UpdateLayout();
+                var toggle = menu.Items.OfType<MenuItem>().Single(); toggle.ApplyTemplate();
+                var track = (Border)toggle.Template.FindName("Track", toggle); var thumb = (System.Windows.Shapes.Ellipse)toggle.Template.FindName("Thumb", toggle);
+                bool drawn = track.Visibility == Visibility.Visible && thumb.HorizontalAlignment == (on ? HorizontalAlignment.Right : HorizontalAlignment.Left)
+                    && track.Background == (on ? Brush("Accent") : Brushes.Transparent) && thumb.Fill == Brush(on ? "OnAccent" : "TextMuted") && menu.Background == Brush("Surface");
+                { var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)Math.Ceiling(menu.ActualWidth), (int)Math.Ceiling(menu.ActualHeight), 96, 96, PixelFormats.Pbgra32); bitmap.Render(menu); var png = new System.Windows.Media.Imaging.PngBitmapEncoder(); png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap)); using var stream = System.IO.File.Create($"refresh-menu-{(on ? "on" : "off")}-preview.png"); png.Save(stream); }
+                menu.IsOpen = false;
+                Check(drawn, $"Auto-refresh must be a themed toggle switch, {(on ? "on: accent track, thumb right" : "off: outlined track, thumb left")}.");
+            }
+            SetAutoRefresh(false);
         }
         finally { SetAutoRefresh(wasOn); }
         // Demo refresh completes immediately, exercising the shortest possible scan.

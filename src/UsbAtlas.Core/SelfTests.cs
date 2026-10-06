@@ -56,6 +56,14 @@ internal static class SelfTests
         Check(Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]).Cause.StartsWith("Its USB 3 connection didn't come up"), "Without DisplayPort entered, the cable is the likely cause.");
         stuck.HighSpeedCapable = false;
         Check(!HubRelationships.ReducedSpeed(stuck) && !HubRelationships.ReducedSpeed(new UsbNode { Kind = "Device", LinkMbps = 12 }), "A full-speed-only device at 12 Mb/s is where it belongs.");
+        // A port refused for bandwidth is fixed at its hub, together with the hub's own bandwidth warning.
+        var refused = new UsbNode { Id = "b/r/1/3", Kind = "Unavailable", Port = 3, Status = "Insufficient bandwidth" };
+        UsbNode StudioInterface(string id, int port) => new() { Id = id, Kind = "Device", Port = port, DeviceType = "Audio", LinkMbps = 12, ReservedMbps = 1, PeakReservedMbps = 6 };
+        var fullHub = new UsbNode { Id = "b/r/1", Kind = "Hub", Name = "Studio hub", Port = 1, LinkMbps = 480, TransactionTranslators = "Single", Children = [StudioInterface("b/r/1/1", 1), StudioInterface("b/r/1/2", 2), refused] };
+        var busy = Triage.FixFirst(new Snapshot { Controllers = [new() { Id = "b", Kind = "Controller", Children = [new() { Id = "b/r", Kind = "Root hub", Children = [fullHub] }] }] });
+        Check(UsbBudgets.SharedTtCouldExceed(fullHub) && busy.Count == 1 && busy[0].Node == refused && busy[0].Also.SequenceEqual([("Shared TT could exceed", fullHub)]),
+            "A port refused for bandwidth and its hub's bandwidth warning are one fix.");
+        Check(UsbC.Names(["USB4(TM) Host Router (Microsoft)", "USB4™ Host Router"]) == "USB4 Host Router", "USB4 router names drop trademark and driver-maker suffixes.");
         // A controller's PCIe link is shared by everything on its ports.
         Check(UsbBudgets.PcieMbps(2, 1) == 4000 && UsbBudgets.PcieMbps(4, 16) == 15754 * 16 && UsbBudgets.PcieMbps(null, 4) == null && UsbBudgets.PcieMbps(7, 1) == null
             && UsbBudgets.PcieText(3, 4) == "PCIe 3.0 ×4", "PCIe links are read after line encoding.");
@@ -417,6 +425,17 @@ internal static class SelfTests
         usb3.Kind = "Device"; usb3.Speed = "SuperSpeedPlus · 10 Gb/s or higher";
         DeviceIdentity.ClassifySockets(host);
         Check(usb2.SocketSpeed == "≥10 Gb/s" && usb3.SocketSpeed == "≥10 Gb/s", "A device linked at SuperSpeedPlus proves the whole socket carries 10 Gb/s.");
+        // A speed the user set stands in for the top rate Windows can't report, on both halves, until a device links faster.
+        usb3.Kind = "Empty port"; usb3.Speed = "Not reported"; usb2.SocketRatedMbps = 10000;
+        DeviceIdentity.ClassifySockets(host);
+        Check(usb2.SocketSpeed == "≥10 Gb/s" && usb3.SocketSpeed == "≥10 Gb/s" && usb3.SocketEvidence.Contains("You set this socket's speed to 10 Gb/s or faster"), "A socket set to 10 Gb/s on either half is 10 Gb/s on both.");
+        usb2.SocketRatedMbps = 5000; DeviceIdentity.ClassifySockets(host);
+        Check(usb3.SocketSpeed == "5 Gb/s" && usb3.SocketEvidence.Contains("speed to 5 Gb/s;"), "A socket set to 5 Gb/s is capped at 5 Gb/s.");
+        usb3.Kind = "Device"; usb3.Speed = "SuperSpeedPlus · 10 Gb/s or higher"; DeviceIdentity.ClassifySockets(host);
+        Check(usb3.SocketSpeed == "≥10 Gb/s" && usb3.SocketEvidence.Contains("faster than the 5 Gb/s you set"), "A device linked at 10 Gb/s beats a 5 Gb/s setting and says so.");
+        lone.SocketRatedMbps = 10000; DeviceIdentity.ClassifySockets(host);
+        Check(lone.SocketSpeed == "USB 2.0", "A speed setting can't give a USB 2 socket a USB 3 half.");
+        usb2.SocketRatedMbps = null; lone.SocketRatedMbps = null;
         // A plug-in hub's own SuperSpeedPlus support sets its sockets' speed; a host's root ports stay open-ended.
         var port = new UsbNode { Id = "h/1", Kind = "Empty port", Protocols = "USB 3.x", PortIsUserConnectable = true, PortConnectorIsTypeC = false };
         DeviceIdentity.ClassifySocket([(port, new UsbNode { Kind = "Hub", SuperSpeedPlusCapable = true })]);
