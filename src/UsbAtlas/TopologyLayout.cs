@@ -17,7 +17,7 @@ internal static partial class TopologyLayout
 
     // X/Y place the subtree within its parent's subtree; CardX/CardY place the node's card within its own.
     // A packed node's children alternate between two rows (see MeasureCore).
-    internal sealed record Item(UsbNode Node, double X, double Y, double Width, double Height, double CardX, double CardY, List<Item> Children, bool Packed) { internal List<Item>? SnappedStages { get; init; } internal bool SnappedColumn { get; init; } }
+    internal sealed record Item(UsbNode Node, double X, double Y, double Width, double Height, double CardX, double CardY, List<Item> Children, bool Packed) { internal List<Item>? SnappedStages { get; init; } }
 
     internal static Item Measure(UsbNode node, Func<UsbNode, List<UsbNode>> children, bool horizontal, Func<UsbNode, double> width, Func<UsbNode, double> height,
         Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups = null, double gap = Gap, bool pack = false, Func<UsbNode, UsbNode?>? twin = null)
@@ -42,7 +42,7 @@ internal static partial class TopologyLayout
     private static Item MeasureCore(UsbNode node, Func<UsbNode, List<UsbNode>> children, Func<UsbNode, double> cross, Func<UsbNode, double> along,
         Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups, double gap, bool pack, Func<UsbNode, UsbNode?>? twin = null)
     {
-        if (groups?.Invoke(node) is { Count: > 1 } members) return MeasureSnapped(members, children, cross, along, portOffset, groups);
+        if (groups?.Invoke(node) is { Count: > 1 } members) return MeasureSnapped(members, children, cross, along, portOffset, groups, twin);
         double width = cross(node), height = along(node);
         var kids = children(node);
         if (kids.Count == 0) return new(node, 0, 0, width, height, 0, 0, [], false);
@@ -94,8 +94,9 @@ internal static partial class TopologyLayout
         return Math.Max(directions.Count(d => d < 0), directions.Count(d => d > 0));
     }
 
-    // Returns one orthogonal polyline per child, from its port (or the parent's edge) to its card.
-    internal static List<List<Point>> Route(Rect parent, IReadOnlyList<Point?> ports, IReadOnlyList<Rect> children, bool horizontal)
+    // Returns one orthogonal polyline per child, from its port (or the parent's edge) to its card, with turning
+    // lanes the given distance apart.
+    internal static List<List<Point>> Route(Rect parent, IReadOnlyList<Point?> ports, IReadOnlyList<Rect> children, bool horizontal, double spacing = LaneSpacing)
     {
         static Point Flip(Point p) => new(p.Y, p.X);
         static Rect FlipRect(Rect r) => new(r.Y, r.X, r.Height, r.Width);
@@ -113,7 +114,7 @@ internal static partial class TopologyLayout
             var start = starts[i];
             double center = children[i].X + children[i].Width / 2, top = children[i].Y;
             if (Direction(start.X, center) == 0) { routes.Add([start, new(start.X, top)]); continue; }
-            double lane = parent.Bottom + Stub + lanes[i] * LaneSpacing;
+            double lane = parent.Bottom + Stub + lanes[i] * spacing;
             routes.Add([start, new(start.X, lane), new(center, lane), new(center, top)]);
         }
         return horizontal ? routes.Select(r => r.Select(Flip).ToList()).ToList() : routes;
