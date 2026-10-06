@@ -56,6 +56,14 @@ internal static class SelfTests
         Check(Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]).Cause.StartsWith("Its USB 3 connection didn't come up"), "Without DisplayPort entered, the cable is the likely cause.");
         stuck.HighSpeedCapable = false;
         Check(!HubRelationships.ReducedSpeed(stuck) && !HubRelationships.ReducedSpeed(new UsbNode { Kind = "Device", LinkMbps = 12 }), "A full-speed-only device at 12 Mb/s is where it belongs.");
+        // A port refused for bandwidth is fixed at its hub, together with the hub's own bandwidth warning.
+        var refused = new UsbNode { Id = "b/r/1/3", Kind = "Unavailable", Port = 3, Status = "Insufficient bandwidth" };
+        UsbNode StudioInterface(string id, int port) => new() { Id = id, Kind = "Device", Port = port, DeviceType = "Audio", LinkMbps = 12, ReservedMbps = 1, PeakReservedMbps = 6 };
+        var fullHub = new UsbNode { Id = "b/r/1", Kind = "Hub", Name = "Studio hub", Port = 1, LinkMbps = 480, TransactionTranslators = "Single", Children = [StudioInterface("b/r/1/1", 1), StudioInterface("b/r/1/2", 2), refused] };
+        var busy = Triage.FixFirst(new Snapshot { Controllers = [new() { Id = "b", Kind = "Controller", Children = [new() { Id = "b/r", Kind = "Root hub", Children = [fullHub] }] }] });
+        Check(UsbBudgets.SharedTtCouldExceed(fullHub) && busy.Count == 1 && busy[0].Node == refused && busy[0].Also.SequenceEqual([("Shared TT could exceed", fullHub)]),
+            "A port refused for bandwidth and its hub's bandwidth warning are one fix.");
+        Check(UsbC.Names(["USB4(TM) Host Router (Microsoft)", "USB4™ Host Router"]) == "USB4 Host Router", "USB4 router names drop trademark and driver-maker suffixes.");
         // A controller's PCIe link is shared by everything on its ports.
         Check(UsbBudgets.PcieMbps(2, 1) == 4000 && UsbBudgets.PcieMbps(4, 16) == 15754 * 16 && UsbBudgets.PcieMbps(null, 4) == null && UsbBudgets.PcieMbps(7, 1) == null
             && UsbBudgets.PcieText(3, 4) == "PCIe 3.0 ×4", "PCIe links are read after line encoding.");
