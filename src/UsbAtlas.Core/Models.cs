@@ -141,6 +141,10 @@ public sealed class UsbNode
     // 5000 or 10000 Mb/s. Saved with port names (DeviceLabels), shared by both halves, and beaten by a device
     // that links faster.
     public double? SocketRatedMbps { get; set; }
+    // The connector the user set for the socket, when the firmware describes it wrongly: USB-A, USB-C or Internal.
+    // Saved with port names (DeviceLabels), shared by both halves, and drawn instead of what Windows reports;
+    // PortConnectorIsTypeC and PortIsUserConnectable keep the firmware's description for the port-map checks.
+    public string? SocketConnectorSet { get; set; }
     public bool? SuperSpeedPlusCapable { get; set; }
     // Linked at full speed: true when it answers a request for its device qualifier, so it supports high speed;
     // false when it doesn't, as a full-speed-only device must refuse it, or couldn't be asked.

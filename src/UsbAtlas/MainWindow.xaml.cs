@@ -285,6 +285,7 @@ public partial class MainWindow : Window
             Field("Hubs above", HubDepth.Summary(node), "Hubs between the computer and this port, not counting the computer's own. USB allows five in a row; docks, monitors and keyboards often have hubs inside.");
             Field("Port name", PortNameEditor(node), "Your own name for this socket. It stays with the hub port when the device in it changes.");
             Field("Socket speed", SocketSpeedEditor(node), SocketSpeedHelp);
+            Field("Socket type", SocketConnectorEditor(node), SocketConnectorHelp);
             Field("Port supports", node.Protocols, "The USB versions Windows says this port carries.");
             Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)), ConnectorHelp + (UsbC.Socket(snapshot, node).Count > 0
                 ? " Windows doesn't report whether a USB-C socket carries USB4 or Thunderbolt, DisplayPort, or what Power Delivery contract it has. Detection details says what is known." : ""));
@@ -499,7 +500,7 @@ public partial class MainWindow : Window
     private const string PowerSavingHelp = "Device Manager's “Allow the computer to turn off this device to save power”. When it's on and the power plan's USB selective suspend is on, Windows may suspend the device when it looks idle.";
     private const string LinkUseHelp = "How much of the time this link can set aside for timed transfers, such as audio, video and input, is held now. Bulk transfers, such as storage, reserve nothing and share what is left.";
     private const string SharedLinkHelp = "How much of the shared 12 Mb/s link's reservable time (10.8 Mb/s) the slower devices on every port hold. Low-speed devices count eight times their payload, since each byte takes eight times as long.";
-    private const string ConnectorHelp = "The socket it's plugged into, as Windows reports it: USB-A, USB-C, or built in with no socket. The tongue's color is the fastest speed the socket is known to carry.";
+    private const string ConnectorHelp = "The socket it's plugged into, as Windows reports it or as you set it in Socket type: USB-A, USB-C, or built in with no socket. The tongue's color is the fastest speed the socket is known to carry.";
     private const string SupplyHelp = "How much power the port can supply. Windows doesn't report it, so USB Atlas can't tell.";
     private void Field(string label, string value, string help)
     {

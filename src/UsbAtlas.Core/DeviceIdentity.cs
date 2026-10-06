@@ -76,22 +76,30 @@ internal static class DeviceIdentity
     {
         var (port, hub) = halves[0];
         var evidence = new List<string>();
+        string reported;
         if (halves.Any(h => h.Port.PortConnectorIsTypeC == true))
         {
-            port.Connector = "USB-C"; evidence.Add("Windows reports a USB-C socket.");
+            port.Connector = "USB-C"; reported = "Windows reports a USB-C socket"; evidence.Add(reported + ".");
         }
         else if (halves.Any(h => h.Port.PortIsUserConnectable == true))
         {
-            port.Connector = "USB-A"; evidence.Add("Windows reports a user-accessible socket that isn't USB-C, so it is drawn as USB-A.");
+            port.Connector = "USB-A"; reported = "Windows reports a user-accessible socket that isn't USB-C"; evidence.Add(reported + ", so it is drawn as USB-A.");
             if (hub.Kind == "Hub") evidence.Add("Plug-in hubs usually can't tell Windows that a socket is USB-C, so a USB-C socket on one may be drawn as USB-A.");
         }
         else if (halves.Any(h => h.Port.PortIsUserConnectable == false))
         {
-            port.Connector = "Internal"; evidence.Add("Windows marks this port as not user-accessible: usually a built-in device or internal connection, with no socket to plug into.");
+            port.Connector = "Internal"; reported = "Windows marks this port as not user-accessible"; evidence.Add(reported + ": usually a built-in device or internal connection, with no socket to plug into.");
         }
         else
         {
-            port.Connector = "Not reported"; evidence.Add("Windows did not report this port's connector.");
+            port.Connector = "Not reported"; reported = "Windows did not report this port's connector"; evidence.Add(reported + ".");
+        }
+        // Some firmware describes a socket wrongly, such as an onboard hub's link flagged as USB-C, so a connector
+        // the user set replaces what Windows reports. The evidence still says what that was.
+        if (halves.Select(h => h.Port.SocketConnectorSet).FirstOrDefault(c => c != null) is string connector)
+        {
+            port.Connector = connector; evidence.Clear();
+            evidence.Add($"You set this socket's connector to {(connector == "Internal" ? "built in, with no socket to plug into" : connector)}; {reported}.");
         }
         var super = halves.Where(h => h.Port.Protocols.Contains("USB 3.x")).ToList();
         // A speed the user set belongs to the socket, so either half carries it for both.

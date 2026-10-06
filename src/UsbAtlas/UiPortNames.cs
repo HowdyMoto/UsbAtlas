@@ -31,29 +31,46 @@ public partial class MainWindow
     private bool CanRateSocket(UsbNode node) => CanNamePort(node) && snapshot.Nodes.Any(n => (n.Id == node.Id || n.Id == node.CompanionId) && n.Protocols.Contains("USB 3.x"));
     private static string SocketSpeedChoice(double? mbps) => SocketSpeeds.Last(s => s.Mbps == null || mbps >= s.Mbps).Label;
 
-    // The row keeps a button of the same height for every node, so the inspector's rows stay in place; it is
-    // disabled where there is no socket speed to set.
-    private FrameworkElement SocketSpeedEditor(UsbNode node)
+    private FrameworkElement SocketSpeedEditor(UsbNode node) => SocketSettingEditor(CanRateSocket(node), SocketSpeedTag, node.SocketRatedMbps is double rated ? SocketSpeedChoice(rated) : null,
+        "Tell USB Atlas how fast this socket is, from the board's labels or manual, when Windows can't report it", "Only a socket with a USB 3 half has a speed to set.",
+        SocketSpeeds.Select(s => (s.Label, s.Mbps == node.SocketRatedMbps, (Action)(() => SetSocketSpeed(node, s.Mbps)))));
+    private void SetSocketSpeed(UsbNode port, double? mbps)
     {
-        bool can = CanRateSocket(node);
-        var button = new Button { Content = !can ? "Not applicable" : node.SocketRatedMbps is double rated ? SocketSpeedChoice(rated) + " · Edit" : "As detected · Set…", IsEnabled = can, Padding = new Thickness(5, 1, 5, 1), HorizontalAlignment = HorizontalAlignment.Left, Tag = SocketSpeedTag,
-            ToolTip = can ? "Tell USB Atlas how fast this socket is, from the board's labels or manual, when Windows can't report it" : "Only a socket with a USB 3 half has a speed to set." };
+        if (!deviceLabels.TrySetSocketSpeed(port, snapshot, mbps, out var error)) { StatusText.Text = error; return; }
+        Draw(); ShowDetails(); StatusText.Text = mbps == null ? "Socket speed setting removed." : $"Socket speed set to {SocketSpeedChoice(mbps)}.";
+    }
+
+    // A socket's connector can be set when the firmware describes it wrongly, as some boards flag an onboard
+    // hub's link or an internal header as a USB-C socket. It covers both halves, and is drawn instead of what
+    // Windows reports (DeviceIdentity.ClassifySocket); atlascli check still reads the firmware's description.
+    private const string SocketConnectorHelp = "What this socket really is, when Windows reports it wrongly: some boards describe an onboard hub's link or an internal header as a USB-C socket. Saved with port names, for both halves of the socket. The firmware's own description is kept, and the port-map check still reads it.";
+    internal const string SocketConnectorTag = "socket-connector";
+    private static readonly (string Label, string? Connector)[] SocketConnectors = [("As detected", null), ("USB-A", "USB-A"), ("USB-C", "USB-C"), ("Internal: no socket", "Internal")];
+    private FrameworkElement SocketConnectorEditor(UsbNode node) => SocketSettingEditor(CanNamePort(node), SocketConnectorTag, SocketConnectors.FirstOrDefault(c => c.Connector != null && c.Connector == node.SocketConnectorSet).Label,
+        "Tell USB Atlas what this socket really is, when Windows reports it wrongly", "Only a numbered port on a hub has a socket to set.",
+        SocketConnectors.Select(c => (c.Label, c.Connector == node.SocketConnectorSet, (Action)(() => SetSocketConnector(node, c.Connector)))));
+    private void SetSocketConnector(UsbNode port, string? connector)
+    {
+        if (!deviceLabels.TrySetSocketConnector(port, snapshot, connector, out var error)) { StatusText.Text = error; return; }
+        Draw(); ShowDetails(); StatusText.Text = connector == null ? "Socket type setting removed." : $"Socket type set to {SocketConnectors.First(c => c.Connector == connector).Label}.";
+    }
+
+    // A socket setting's row keeps a button of the same height for every node, so the inspector's rows stay in
+    // place; it is disabled where there is nothing to set, and otherwise opens its choices with the current one checked.
+    private Button SocketSettingEditor(bool can, string tag, string? chosen, string tip, string notApplicable, IEnumerable<(string Label, bool Checked, Action Choose)> choices)
+    {
+        var button = new Button { Content = !can ? "Not applicable" : chosen != null ? chosen + " · Edit" : "As detected · Set…", IsEnabled = can, Padding = new Thickness(5, 1, 5, 1), HorizontalAlignment = HorizontalAlignment.Left, Tag = tag, ToolTip = can ? tip : notApplicable };
         if (!can) return button;
         var menu = new ContextMenu { Background = Brush("Surface"), Foreground = Brush("TextPrimary"), BorderBrush = Brush("Border"), PlacementTarget = button, Placement = PlacementMode.Bottom };
-        foreach (var (label, mbps) in SocketSpeeds)
+        foreach (var (label, isChecked, choose) in choices)
         {
-            var item = new MenuItem { Header = label, IsCheckable = true, IsChecked = node.SocketRatedMbps == mbps, Tag = mbps };
-            item.Click += (_, _) => SetSocketSpeed(node, mbps);
+            var item = new MenuItem { Header = label, IsCheckable = true, IsChecked = isChecked };
+            item.Click += (_, _) => choose();
             menu.Items.Add(item);
         }
         // The menu opens on a click and, as a context menu, on a right-click too.
         button.ContextMenu = menu; button.Click += (_, _) => menu.IsOpen = true;
         return button;
-    }
-    private void SetSocketSpeed(UsbNode port, double? mbps)
-    {
-        if (!deviceLabels.TrySetSocketSpeed(port, snapshot, mbps, out var error)) { StatusText.Text = error; return; }
-        Draw(); ShowDetails(); StatusText.Text = mbps == null ? "Socket speed setting removed." : $"Socket speed set to {SocketSpeedChoice(mbps)}.";
     }
 
     private void EditDeviceName(UsbNode node, FrameworkElement target)

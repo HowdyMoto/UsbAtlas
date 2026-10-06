@@ -26,8 +26,8 @@ internal static class UsbC
         controller.LocationEvidence = "Windows reaches this host controller through a PCIe tunnel over USB4 or Thunderbolt, so it's inside something plugged into the computer, such as a dock, monitor or enclosure, not on the motherboard.";
     }
 
-    // The USB-C socket a port is, when it is one; empty ports included.
-    private static bool IsUsbC(UsbNode n) => n.Connector == "USB-C" || n.PortConnectorIsTypeC == true;
+    // The USB-C socket a port is, when it is one; empty ports included. A connector the user set wins over the firmware's flag.
+    private static bool IsUsbC(UsbNode n) => n.SocketConnectorSet is string set ? set == "USB-C" : n.Connector == "USB-C" || n.PortConnectorIsTypeC == true;
     private static bool OnHost(Snapshot s, UsbNode n) => Topology.FindPath(s, n.Id) is { Count: >= 2 } path && path[^2].Kind is "Root hub" or "Controller";
 
     // What Windows says about USB4, Thunderbolt, DisplayPort and Power Delivery for a USB-C socket, each spelled
