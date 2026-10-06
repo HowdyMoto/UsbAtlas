@@ -153,11 +153,15 @@ internal static class Reports
             node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("evidence", J.S(n.SocketEvidence)),
                 ("userConnectable", n.PortIsUserConnectable), ("usbC", n.PortConnectorIsTypeC), ("debugCapable", n.PortIsDebugCapable),
                 ("sharesSocketWith", n.CompanionId.Length > 0 && s.ById(n.CompanionId) is UsbNode c ? s.PathOf(c) : null),
-                ("alsoSharesSocketWith", J.Some(n.MoreCompanions.Where(m => m.Id.Length > 0 && s.ById(m.Id) != null).Select(m => (JsonNode)s.PathOf(s.ById(m.Id)!)))));
-        if (n.PciId.Length > 0)
-            node["controller"] = J.Obj(("pciId", n.PciId), ("vendor", J.S(Topology.PciVendor(n.PciId))), ("subsystem", J.S(n.PciSubsystem)), ("revision", J.S(n.PciRevision)), ("pciAddress", J.S(n.PciAddress)),
+                ("alsoSharesSocketWith", J.Some(n.MoreCompanions.Where(m => m.Id.Length > 0 && s.ById(m.Id) != null).Select(m => (JsonNode)s.PathOf(s.ById(m.Id)!)))),
+                ("usbCFeatures", UsbC.Socket(s.Snapshot, n) is { Count: > 0 } features ? J.Obj([.. features.Select(f => (f.Feature, (JsonNode?)f.Text))]) : null));
+        if (n.PciId.Length > 0 || n.PcieTunneled == true)
+            node["controller"] = J.Obj(("pciId", J.S(n.PciId)), ("vendor", J.S(Topology.PciVendor(n.PciId))), ("subsystem", J.S(n.PciSubsystem)), ("revision", J.S(n.PciRevision)), ("pciAddress", J.S(n.PciAddress)),
                 ("pcieLink", n.PcieGeneration is int g && n.PcieLanes is int l ? J.Obj(("generation", g), ("lanes", l), ("maxGeneration", n.PcieMaxGeneration), ("maxLanes", n.PcieMaxLanes), ("mbps", J.N(UsbBudgets.PcieMbps(g, l)))) : null),
+                ("tunneledOverUsb4OrThunderbolt", n.PcieTunneled == true ? true : null),
                 ("endpointsInUse", UsbBudgets.ControllerLoad(n).Endpoints));
+        if (n.Kind is "Controller" or "Root hub" && UsbC.Computer(s.Snapshot) is { Count: > 0 } computer)
+            node["usbC"] = J.Arr(computer.Select(x => (JsonNode)x));
         node["location"] = J.Obj(("where", n.Location), ("evidence", n.LocationEvidence));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable),

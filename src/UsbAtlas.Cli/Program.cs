@@ -28,8 +28,9 @@ internal static class Program
           budget [<target>]      Bandwidth and power arithmetic with its inputs. Without a target: every
                                  hub and anything with a budget issue.
           raw <target>           The node's USB descriptors, decoded field by field with their hex.
-          events                 Recent USB events from the Windows logs. --since 24h (default), --max 100,
-                                 --errors for critical, error and warning events only.
+          events                 Recent USB events from the Windows logs, including USB-C controller (UCSI)
+                                 failures. --since 24h (default), --max 100, --errors for critical, error
+                                 and warning events only.
           watch                  Report devices connecting, disconnecting and changing as it happens, and
                                  devices that drop and come back. When the computer sleeps and wakes, it
                                  reports what didn't come back or came back slower. --for 60s (default; 0

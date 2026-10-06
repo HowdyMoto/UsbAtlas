@@ -223,10 +223,12 @@ internal static class UsbBudgets
     private static double? SocketDataMbps(UsbNode port) => UsbDataMbps(port) ?? port.SocketSpeed switch { "≥10 Gb/s" => 10000 * 128.0 / 132, "≥5 Gb/s" or "5 Gb/s" => 4000, _ => null };
 
     // Everything on a controller's root ports shares its PCIe link to the computer: its usable rate, what its
-    // fastest port could carry, what's linked to its ports now, and a device linked faster than it alone.
+    // fastest port could carry, what's linked to its ports now, and a device linked faster than it alone. A
+    // controller reached through a USB4 or Thunderbolt tunnel reports the tunnel's PCIe link, which doesn't
+    // say what the tunnel carries, so it isn't judged.
     internal static (double Uplink, double Fastest, double Linked, UsbNode? Capped)? Uplink(UsbNode controller)
     {
-        if (controller.Kind != "Controller" || PcieMbps(controller.PcieGeneration, controller.PcieLanes) is not double uplink) return null;
+        if (controller.Kind != "Controller" || controller.PcieTunneled == true || PcieMbps(controller.PcieGeneration, controller.PcieLanes) is not double uplink) return null;
         var ports = controller.Children.Where(r => r.Kind == "Root hub").SelectMany(r => r.Children).ToList();
         var links = ports.Where(p => p.Kind is "Device" or "Hub" && UsbDataMbps(p) != null).ToList();
         return (uplink, ports.Select(SocketDataMbps).Max() ?? 0, links.Sum(p => UsbDataMbps(p)!.Value), links.FirstOrDefault(p => UsbDataMbps(p) > uplink));

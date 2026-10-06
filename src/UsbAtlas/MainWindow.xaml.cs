@@ -263,7 +263,8 @@ public partial class MainWindow : Window
             Field("Port number", node.Port.ToString("00"));
             Field("Port name", PortNameEditor(node));
             Field("Port supports", node.Protocols);
-            Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)));
+            Field("Connector", NodeVisuals.Connector(node, SocketPartner(node)), UsbC.Socket(snapshot, node).Count > 0
+                ? "Windows doesn't report whether a USB-C socket carries USB4 or Thunderbolt, DisplayPort, or what Power Delivery contract it has. Detection details says what is known." : null);
             Field("Location", node.Location switch { "Unknown" => "Not reported", "External" => "Likely outside the computer", "Internal" => "Likely built in", "Host" => "In the computer", var other => other },
                 "Worked out from whether Windows says the port is one you can plug into, and what it's connected through. Windows doesn't report where hardware sits.");
             Field("Power available", "Unknown · not measured", SupplyHelp);
@@ -295,8 +296,10 @@ public partial class MainWindow : Window
             bool heldBack = controller.PcieMaxGeneration > controller.PcieGeneration || controller.PcieMaxLanes > controller.PcieLanes;
             Field("PCIe link", UsbBudgets.PcieMbps(controller.PcieGeneration, controller.PcieLanes) is double uplink
                 ? $"{UsbBudgets.PcieText(controller.PcieGeneration!.Value, controller.PcieLanes!.Value)} · about {UsbBudgets.Rate(uplink)}"
-                    + (heldBack ? $" · can do {UsbBudgets.PcieText(controller.PcieMaxGeneration ?? controller.PcieGeneration.Value, controller.PcieMaxLanes ?? controller.PcieLanes.Value)}" : "") : "Not reported",
-                "The PCIe connection this controller reaches the computer over, shared by all its ports: the most they can move together. Built-in controllers often report a wide internal link.");
+                    + (heldBack ? $" · can do {UsbBudgets.PcieText(controller.PcieMaxGeneration ?? controller.PcieGeneration.Value, controller.PcieMaxLanes ?? controller.PcieLanes.Value)}" : "")
+                    + (controller.PcieTunneled == true ? " · over USB4/Thunderbolt" : "") : controller.PcieTunneled == true ? "Over USB4/Thunderbolt" : "Not reported",
+                "The PCIe connection this controller reaches the computer over, shared by all its ports: the most they can move together. Built-in controllers often report a wide internal link."
+                    + (controller.PcieTunneled == true ? " This one is tunneled over USB4 or Thunderbolt, so what it can carry depends on that connection, which Windows doesn't report here." : ""));
             Field("Endpoints", $"{UsbBudgets.ControllerLoad(controller).Endpoints} in use",
                 "The channels this controller keeps open for its devices: one for each device's control plus one for each open pipe. Controllers hold only so many, and Windows doesn't say how many; some common ones top out at 96.");
             Field("Port support", ProtocolSummary(node));
@@ -304,7 +307,7 @@ public partial class MainWindow : Window
             Field("In use", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString());
             Field("Devices", node.Walk().Count(n => n.Kind == "Device").ToString());
             Field("Connector", NodeVisuals.Connector(node));
-            Field("Location", "Host hardware");
+            Field("Location", controller.Location == UsbC.TunneledLocation ? UsbC.TunneledLocation : "Host hardware", controller.LocationEvidence);
             Field("Power source", node.PowerSource);
             // The root hub is what Device Manager lists, and what sim hardware guides point to.
             Field("Power saving", PowerSavingText(MergedRoot(node) ?? node));
@@ -353,6 +356,8 @@ public partial class MainWindow : Window
         if (node.InterfaceFunctions.Count > 0) notes.Add("Reported functions: " + string.Join(", ", node.InterfaceFunctions));
         if (node.HidUsages.Count > 0) notes.Add("HID collections: " + string.Join(", ", node.HidUsages) + ".");
         notes.AddRange(Billboard.Evidence(node));
+        notes.AddRange(UsbC.Socket(snapshot, node).Select(f => $"{f.Feature}: {f.Text}"));
+        if (host) notes.AddRange(UsbC.Computer(snapshot));
         notes.AddRange(Containers.Evidence(snapshot, node, n => pathLabels.GetValueOrDefault(n.Id, "")));
         if (host) notes.Add(PowerSaving.PlanNote(snapshot));
         var knownLinks = chain.Where(n => n.LinkMbps.HasValue).ToList();

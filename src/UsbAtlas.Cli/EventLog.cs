@@ -12,7 +12,10 @@ namespace UsbAtlas.Cli;
 internal static class EventLog
 {
     private const string PnpConfiguration = "Microsoft-Windows-Kernel-PnP/Configuration";
-    private static readonly string[] SystemProviders = ["Microsoft-Windows-Kernel-PnP", "Microsoft-Windows-USB-USBHUB3", "Microsoft-Windows-USB-USBXHCI", "Microsoft-Windows-USB-UCX", "Microsoft-Windows-USB-USBPORT", "Microsoft-Windows-USB-USBHUB", "USBHUB3", "usbhub", "USBXHCI"];
+    // The USB-C connector manager's failures: the firmware's USB-C controller (UCSI) didn't answer a command.
+    // Only computers with UCSI have this log.
+    private const string Ucsi = "Microsoft-Windows-USB-UCMUCSICX/Operational";
+    private static readonly string[] SystemProviders = ["Microsoft-Windows-Kernel-PnP", "Microsoft-Windows-USB-USBHUB3", "Microsoft-Windows-USB-USBXHCI", "Microsoft-Windows-USB-UCX", "Microsoft-Windows-USB-USBPORT", "Microsoft-Windows-USB-USBHUB", "USBHUB3", "usbhub", "USBXHCI", "Microsoft-Windows-USB-USB4DeviceRouter-EventLogs"];
     internal sealed record Entry(DateTime Time, string Channel, string Provider, int Id, int Level, string InstanceId, string Message);
 
     internal static JsonObject Report(Session s, TimeSpan since, int max, bool errorsOnly, bool redact = false)
@@ -24,6 +27,7 @@ internal static class EventLog
         entries.AddRange(Read(PnpConfiguration, $"*[System[TimeCreated[timediff(@SystemTime) <= {ms}]]]", problems));
         string providers = string.Join(" or ", SystemProviders.Select(p => $"@Name='{p}'"));
         entries.AddRange(Read("System", $"*[System[Provider[{providers}] and TimeCreated[timediff(@SystemTime) <= {ms}]]]", problems));
+        entries.AddRange(Read(Ucsi, $"*[System[TimeCreated[timediff(@SystemTime) <= {ms}]]]", problems, optional: true));
         var shown = entries.Where(e => !errorsOnly || e.Level is >= 1 and <= 3).OrderByDescending(e => e.Time).Take(max).ToList();
         // Devices since unplugged aren't in the snapshot, so their serials are found in the text itself.
         string Clean(string text) => redact ? Session.RedactText(text) : text;
@@ -31,7 +35,7 @@ internal static class EventLog
         var byInstance = s.Snapshot.Nodes.Where(n => n.InstanceId.Length > 0).GroupBy(n => n.InstanceId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         var report = Reports.Header(s, "events");
         report["window"] = $"last {Window(since)}";
-        report["note"] = "Kernel-PnP 400 and 410 are normal setup and start events; 411 means a device failed to start, 219 a driver failed to load, 420/430 removal or a device needing more setup. The path is where the device is now, when it's connected.";
+        report["note"] = "Kernel-PnP 400 and 410 are normal setup and start events; 411 means a device failed to start, 219 a driver failed to load, 420/430 removal or a device needing more setup. UCMUCSICX events mean the computer's USB-C controller firmware (UCSI) failed a command, which can stop charging, video or role swaps over USB-C. The path is where the device is now, when it's connected.";
         if (problems.Count > 0) report["logDiagnostics"] = J.Arr(problems.Select(p => (JsonNode)p));
         report["events"] = J.Arr(shown.Select(e =>
         {
@@ -60,13 +64,15 @@ internal static class EventLog
     private static bool UsbRelated(string text) => text.Contains(@"USB\", StringComparison.OrdinalIgnoreCase) || text.Contains("VID_", StringComparison.OrdinalIgnoreCase)
         || text.Contains(@"HID\", StringComparison.OrdinalIgnoreCase) || text.Contains(@"USBSTOR\", StringComparison.OrdinalIgnoreCase);
 
-    private static List<Entry> Read(string channel, string query, List<string> problems)
+    // An optional log that isn't on this computer, such as UCSI's on a desktop without USB-C, isn't a problem.
+    private static List<Entry> Read(string channel, string query, List<string> problems, bool optional = false)
     {
         var result = new List<Entry>();
         var handle = EvtQuery(IntPtr.Zero, channel, query, 0x1 | 0x200);
         if (handle == IntPtr.Zero)
         {
             int error = Marshal.GetLastWin32Error();
+            if (optional && error is 15007 or 2) return result;
             problems.Add($"{channel}: " + (error == 5 ? "access denied; this log needs administrator rights here." : error is 15007 or 2 ? "log not found." : new System.ComponentModel.Win32Exception(error).Message));
             return result;
         }
