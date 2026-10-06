@@ -787,7 +787,9 @@ public partial class MainWindow
             var socket = snapshot.Nodes.Single(n => n.Id == "demo/root/7"); var otherHalf = snapshot.Nodes.Single(n => n.Id == socket.CompanionId);
             Border Tongue(UsbNode port) { var slot = portSlots.GetValueOrDefault(port.Id) ?? connectedPorts[port.Id]; return (Border)slot.Template.FindName("Tongue", slot); }
             SelectNode(socket); UpdateLayout();
-            Check(Tongue(socket).Background == Brush("SocketSuperSpeed") && Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).Content as string == "As detected · Set…", "An unproven USB 3 socket starts blue, with its speed to be set.");
+            var speedButton = Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag));
+            Check(Tongue(socket).Background == Brush("SocketSuperSpeed") && speedButton.Content as string == "As detected · Set…", "An unproven USB 3 socket starts blue, with its speed to be set.");
+            Check(speedButton.ContextMenu?.Items.OfType<MenuItem>().Select(i => i.Header as string).SequenceEqual(["As detected", "5 Gb/s", "10 Gb/s or faster"]) == true && speedButton.ContextMenu.Items.OfType<MenuItem>().Count(i => i.IsChecked) == 1, "The speed menu must offer the three choices with the current one checked.");
             SetSocketSpeed(socket, 10000); UpdateLayout();
             Check(Tongue(socket).Background == Brush("SocketSuperSpeedPlus") && Tongue(otherHalf).Background == Brush("SocketSuperSpeedPlus"), "Setting a socket to 10 Gb/s must turn both halves' tongues red.");
             Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).Content as string == "10 Gb/s or faster · Edit" && Evidence().Any(t => t.Contains("You set this socket's speed")), "Properties must show the speed set and why the socket is drawn so.");

@@ -46,7 +46,8 @@ public partial class MainWindow
             item.Click += (_, _) => SetSocketSpeed(node, mbps);
             menu.Items.Add(item);
         }
-        button.Click += (_, _) => menu.IsOpen = true;
+        // The menu opens on a click and, as a context menu, on a right-click too.
+        button.ContextMenu = menu; button.Click += (_, _) => menu.IsOpen = true;
         return button;
     }
     private void SetSocketSpeed(UsbNode port, double? mbps)
