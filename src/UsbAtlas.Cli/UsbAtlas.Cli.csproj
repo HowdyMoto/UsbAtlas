@@ -9,6 +9,7 @@
     <AssemblyName>atlascli</AssemblyName>
     <Version>1.5.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\UsbAtlas\Assets\AppIcon.ico</ApplicationIcon>
     <Authors>Wright Bagwell</Authors>
     <Copyright>Copyright (c) 2026 Wright Bagwell</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
