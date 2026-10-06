@@ -114,9 +114,30 @@ public partial class MainWindow
         if (focusedBranch != null) FrameSelectionPath();
     }
 
-    private void TreePanelClick(object sender, RoutedEventArgs e)
+    private void TreePanelClick(object sender, RoutedEventArgs e) { treeFoldedForRoom = false; ShowTree(TreePanel.Visibility != Visibility.Visible); }
+    // The canvas gets room first. When the window narrows until the canvas would have less than half of it,
+    // the device tree, which repeats the canvas, folds away, and it comes back once there's room again,
+    // unless it was shown or hidden by hand in between. Only resizing the window across that width acts;
+    // dragging a splitter never folds anything.
+    private bool treeFoldedForRoom, canvasHadRoom = true;
+    private bool CanvasHasRoom(double total, double slack)
     {
-        bool hide = TreePanel.Visibility == Visibility.Visible;
+        static double Wide(ColumnDefinition c) => Math.Max(c.ActualWidth, c.Width.IsAbsolute ? c.Width.Value : 0);
+        double inspector = InspectorPanel.Visibility == Visibility.Visible ? Wide(InspectorColumn) + 5 : 0;
+        double tree = TreePanel.Visibility == Visibility.Visible ? Wide(TreeColumn) : treePanelWidth;
+        return total - tree - 5 - inspector >= total / 2 + slack;
+    }
+    private void FoldTreeForRoom(double total)
+    {
+        bool room = CanvasHasRoom(total, canvasHadRoom ? 0 : 24);
+        if (canvasHadRoom && !room && TreePanel.Visibility == Visibility.Visible) { ShowTree(false); treeFoldedForRoom = true; }
+        else if (!canvasHadRoom && room && treeFoldedForRoom) { ShowTree(true); treeFoldedForRoom = false; }
+        canvasHadRoom = room;
+    }
+    private void ShowTree(bool show)
+    {
+        bool hide = !show;
+        if (hide == (TreePanel.Visibility != Visibility.Visible)) return;
         if (hide) treePanelWidth = TreeColumn.ActualWidth;
         TreeColumn.MinWidth = hide ? 0 : 180;
         TreeColumn.Width = new GridLength(hide ? 0 : treePanelWidth);

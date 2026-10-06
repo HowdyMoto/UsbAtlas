@@ -125,7 +125,13 @@ internal static class NodeVisuals
 
     // Card titles drop corporate suffixes and driver boilerplate so the model reads first; the full name
     // stays in the tooltip, tree and inspector. A custom label is shown as typed.
-    internal static string ShortName(UsbNode n) => Topology.ShortName(n);
+    // A port Windows couldn't configure has its status appended to its name; the card's badge already says
+    // it, so the title doesn't.
+    internal static string ShortName(UsbNode n)
+    {
+        var name = Topology.ShortName(n);
+        return n.Kind == "Unavailable" && n.UserLabel.Length == 0 && n.Status.Length > 0 && name.EndsWith(" · " + n.Status, StringComparison.Ordinal) ? name[..^(n.Status.Length + 3)] : name;
+    }
 
     // A meter for the bus time a link has reserved, labeled above a thin bar so the label never sits on
     // what it describes. The bar is split into parts, one per device sharing the link (one part on a
@@ -261,6 +267,7 @@ internal static class NodeVisuals
 
     // The legend beneath the graph: each kind of socket, drawn small with the canvas's own templates.
     internal const string SocketLegendHelp = "Shape is the connector: USB-A is a rectangle with its tongue along the top, USB-C a pill with its tongue in the middle, and a built-in port with no socket a plain slot. Tongue color is speed: black USB 2, blue USB 3 at 5 Gb/s, red 10 Gb/s or faster. A socket split at a seam is one physical socket that Windows reports as two logical ports, USB 2 and USB 3. A filled socket is in use. A connection's width is its negotiated link rate, widest at 10 Gb/s and faster; a dashed connection runs slower than its device supports, amber when that holds something back.";
+    internal const string LegendGroupTag = "legend-group";
     internal static IEnumerable<FrameworkElement> SocketLegend()
     {
         FrameworkElement Glyph(string connector, string speed, SocketPart part = SocketPart.Whole) => new ContentControl
@@ -277,12 +284,6 @@ internal static class NodeVisuals
             entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), VerticalAlignment = VerticalAlignment.Center });
             return entry;
         }
-        yield return Entry("USB 2", Glyph("USB-A", "USB 2.0"));
-        yield return Entry("5 Gb/s", Glyph("USB-A", "≥5 Gb/s"));
-        yield return Entry("10 Gb/s+", Glyph("USB-A", "≥10 Gb/s"));
-        yield return Entry("USB-C", Glyph("USB-C", "≥5 Gb/s"));
-        yield return Entry("Split socket", Glyph("USB-A", "≥5 Gb/s", SocketPart.First), Glyph("USB-A", "≥5 Gb/s", SocketPart.Second));
-        yield return Entry("Built-in", Glyph("Internal", "USB 2.0"));
         // Connections are drawn at full size, since their widths are what the entries show.
         FrameworkElement Link(string label, string ink, bool dashed, params double[] widths)
         {
@@ -292,8 +293,17 @@ internal static class NodeVisuals
             entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             return entry;
         }
-        yield return Link("Link rate", "Wire", false, WireWidth(new UsbNode { LinkMbps = 12 }), WireWidth(new UsbNode { LinkMbps = 480 }), WireWidth(new UsbNode { LinkMbps = 5000 }), WireWidth(new UsbNode { LinkMbps = 10000 }));
-        yield return Link("Slower than device", "Warning", true, 2);
+        // Entries are grouped by what they show, and each group stays together when the legend wraps.
+        FrameworkElement Group(string name, params FrameworkElement[] entries)
+        {
+            var group = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 10, 2), Tag = LegendGroupTag };
+            group.Children.Add(new TextBlock { Text = name, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Ink("TextMuted"), Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
+            foreach (var entry in entries) group.Children.Add(entry);
+            return group;
+        }
+        yield return Group("Speed", Entry("USB 2", Glyph("USB-A", "USB 2.0")), Entry("5 Gb/s", Glyph("USB-A", "≥5 Gb/s")), Entry("10 Gb/s+", Glyph("USB-A", "≥10 Gb/s")));
+        yield return Group("Socket", Entry("USB-C", Glyph("USB-C", "≥5 Gb/s")), Entry("Split", Glyph("USB-A", "≥5 Gb/s", SocketPart.First), Glyph("USB-A", "≥5 Gb/s", SocketPart.Second)), Entry("Built-in", Glyph("Internal", "USB 2.0")));
+        yield return Group("Link", Link("Rate", "Wire", false, WireWidth(new UsbNode { LinkMbps = 12 }), WireWidth(new UsbNode { LinkMbps = 480 }), WireWidth(new UsbNode { LinkMbps = 5000 }), WireWidth(new UsbNode { LinkMbps = 10000 })), Link("Slower than device", "Warning", true, 2));
     }
 
     // The partner is the socket's other half when both are on the same hub.
