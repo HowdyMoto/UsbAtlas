@@ -165,7 +165,7 @@ internal static class Reports
                 ("typicalBestTransfer", UsbBudgets.BestTransfer(n.LinkMbps) is { Length: > 0 } best ? $"{best} for a fast drive; typical, not measured" : null));
         else node["protocols"] = J.Obj(("ports", n.Protocols), ("downstream", J.S(n.DownstreamProtocols)));
         if (parent != null || n.Port > 0)
-            node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("evidence", J.S(n.SocketEvidence)),
+            node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("ratedMbps", J.N(n.SocketRatedMbps)), ("evidence", J.S(n.SocketEvidence)),
                 ("userConnectable", n.PortIsUserConnectable), ("usbC", n.PortConnectorIsTypeC), ("debugCapable", n.PortIsDebugCapable),
                 ("sharesSocketWith", n.CompanionId.Length > 0 && s.ById(n.CompanionId) is UsbNode c ? s.PathOf(c) : null),
                 ("alsoSharesSocketWith", J.Some(n.MoreCompanions.Where(m => m.Id.Length > 0 && s.ById(m.Id) != null).Select(m => (JsonNode)s.PathOf(s.ById(m.Id)!)))),
@@ -178,6 +178,8 @@ internal static class Reports
         if (n.Kind is "Controller" or "Root hub" && UsbC.Computer(s.Snapshot) is { Count: > 0 } computer)
             node["usbC"] = J.Arr(computer.Select(x => (JsonNode)x));
         node["location"] = J.Obj(("where", n.Location), ("evidence", n.LocationEvidence));
+        if (n.Kind is not ("Controller" or "Root hub"))
+            node["hubsAbove"] = J.Obj(("count", n.HubsAbove), ("limit", HubDepth.Max), ("chain", J.Some(HubDepth.Above(s.Chain(n)).Select(h => (JsonNode)$"{s.PathOf(h)} {Topology.ShortName(h)}"))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable),
                 ("drawThroughPortMa", n.Kind == "Hub" ? UsbBudgets.Demand(n).Known : null), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))));

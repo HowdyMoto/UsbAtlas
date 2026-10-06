@@ -28,12 +28,15 @@ internal static class Triage
             .Take(max).ToList();
     }
 
-    // Where an issue is fixed, as the hub and the kind of fix: a device a bus-powered hub can't power, or one a
-    // slower hub holds back, is fixed at that hub, together with the hub's own findings of the same kind.
+    // Where an issue is fixed, as the hub and the kind of fix: a device a bus-powered hub can't power, one a
+    // slower hub holds back, or one refused because its hub's connection is full, is fixed at that hub, together
+    // with the hub's own findings of the same kind.
     private static (UsbNode, string) FixedAt(UsbNode n, string issue, List<UsbNode> path)
     {
         if (issue is "Insufficient power" or "Power at risk" or "Over power budget" or Explanations.AdapterNotDetected)
             return (issue is "Insufficient power" or "Power at risk" && path.Count >= 2 && path[^2] is { Kind: "Hub", PowerSource: "Bus powered" } hub ? hub : n, "power");
+        if (issue is "Insufficient bandwidth" or "Shared TT could exceed" || issue == "Could exceed when streaming" && n.Kind == "Hub")
+            return (issue == "Insufficient bandwidth" && path.Count >= 2 && path[^2] is { Kind: "Hub" } full ? full : n, "bandwidth");
         if (issue.StartsWith("Running at", StringComparison.Ordinal))
             return (path.SkipLast(1).LastOrDefault(p => p.Kind == "Hub" && Explanations.HeldBack(p).Contains(n)) ?? n, "speed");
         return (n, issue);
