@@ -169,6 +169,8 @@ internal static class Explanations
                 return Uas.Explain(n, path);
             case HubDepth.AtLimit:
                 return HubDepth.Explain(n, path);
+            case KnownProblems.Label when KnownProblems.For(n) != null:
+                return KnownProblems.Explain(n);
             case Containers.SharedId:
                 return Containers.Explain(n);
             case LinuxProblems.NoDriver or LinuxProblems.NotAuthorized:
