@@ -71,6 +71,7 @@ internal sealed class Session
             Normalize(snapshot);
             // Derived from what the file holds, so a snapshot saved before a rule existed is still checked by it.
             PortMap.Analyze(snapshot);
+            HubDepth.Analyze(snapshot);
             Containers.Analyze(snapshot);
             Interference.Analyze(snapshot);
             if (snapshot.Controllers.Count == 0 && snapshot.Diagnostics.Count == 0) throw new CliException($"{file} has no controllers. Is it a USB Atlas snapshot (atlascli scan, or Export in the app)?");

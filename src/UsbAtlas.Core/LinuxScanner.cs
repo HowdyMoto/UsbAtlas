@@ -76,6 +76,7 @@ internal sealed class LinuxUsbScanner(ISysfs sys)
         HubRelationships.NoteReducedSpeed(snapshot);
         PortMap.Analyze(snapshot);
         Interference.Analyze(snapshot);
+        HubDepth.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         return snapshot;
     }
@@ -171,6 +172,7 @@ internal sealed class LinuxUsbScanner(ISysfs sys)
                 {
                     var config = raw[at..(at + total)];
                     node.InterfaceFunctions = DeviceIdentity.ReadInterfaceFunctions(config);
+                    node.OffersUas = Uas.Offers(config);
                     endpoints = UsbBudgets.ReadEndpoints(config);
                     if (CaptureRaw) node.Raw = new RawDescriptors { Device = Convert.ToHexString(raw, 0, 18), Configuration = Convert.ToHexString(config), SpeedCode = speedClass };
                 }

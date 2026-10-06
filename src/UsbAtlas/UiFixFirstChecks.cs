@@ -18,10 +18,13 @@ public partial class MainWindow
         Check(expected.Count > 0 && FixFirstPanel.Visibility == Visibility.Visible && FixFirstPanel.ActualHeight > 0, "Fix first must show when the sample has issues.");
         Check(rows.Count == expected.Count && rows.Select(r => ((Triage.Item)r.Tag).Issue).SequenceEqual(expected.Select(i => i.Issue)), "Fix first must list the ranked issues in order.");
         var lead = (Triage.Item)rows[0].Tag;
-        var runs = ((TextBlock)((DockPanel)rows[0].Content).Children.OfType<TextBlock>().Single()).Inlines.OfType<Run>().ToList();
-        Check(lead.Severity == Severity.Error && runs[0].Text == lead.Issue && runs[0].Foreground == Brush("Error") && runs[^1].Text.Contains(lead.Fix) && runs[^1].Foreground == Brush("TextSecondary"),
-            "Fix first leads with the error, its name in status color and its fix in plain text.");
-        Check(!runs[1].Text.Contains(lead.Issue), "Fix first names where the issue is without repeating it, as card titles do.");
+        var leadRow = (DockPanel)rows[0].Content;
+        var runs = leadRow.Children.OfType<TextBlock>().Single().Inlines.OfType<Run>().ToList();
+        var badgeText = VisualDescendants(leadRow.Children.OfType<Border>().First()).OfType<TextBlock>().Single();
+        Check(lead.Severity == Severity.Error && badgeText.Text == lead.Issue && badgeText.Foreground == Brush("Error") && leadRow.Children.OfType<Border>().First().Background == Brush("ErrorSurface")
+            && runs[^1].Text.Contains(lead.Fix) && runs[^1].Foreground == Brush("TextSecondary"),
+            "Fix first leads with the error as a badge, its name in status color on its tinted surface, and its fix in plain text.");
+        Check(!runs[0].Text.Contains(lead.Issue), "Fix first names where the issue is without repeating it, as card titles do.");
         Check(((string)rows[0].ToolTip).Contains("also resolves"), "A grouped fix says what else it resolves.");
         CaptureUi("fix-first-preview.png");
 
