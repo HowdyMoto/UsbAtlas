@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -49,9 +50,29 @@ internal sealed class DeviceLabels
         return Set(node, snapshot, enabled ? "linked" : "", false, out error, true);
     }
     internal bool TrySetPort(UsbNode node, Snapshot snapshot, string label, out string error) => Set(node, snapshot, label, true, out error);
+    // The speed the user sets for a socket is kept under both of its halves, so either half finds it and clears it.
+    private static string SocketKey(UsbNode node, Snapshot snapshot) => PortKey(node, snapshot) is { Length: > 0 } key ? "socket-speed|" + key : "";
+    internal bool TrySetSocketSpeed(UsbNode node, Snapshot snapshot, double? mbps, out string error)
+    {
+        error = "";
+        if (LoadError != null) { error = LoadError + " Existing file has been preserved."; return false; }
+        if (mbps is not (null or 5000 or 10000)) { error = "Set a socket to 5 Gb/s, or to 10 Gb/s or faster."; return false; }
+        var halves = snapshot.Nodes.Where(n => n.Id == node.Id || node.CompanionId.Length > 0 && n.Id == node.CompanionId);
+        var keys = halves.Select(n => SocketKey(n, snapshot)).Where(k => k.Length > 0).ToList();
+        if (keys.Count == 0) { error = "Select a numbered port on a hub."; return false; }
+        var next = new Dictionary<string, string>(labels);
+        foreach (var key in keys) { if (mbps is double rate) next[key] = rate.ToString(CultureInfo.InvariantCulture); else next.Remove(key); }
+        return Save(next, snapshot, out error);
+    }
     internal void Apply(Snapshot snapshot)
     {
-        foreach (var node in snapshot.Nodes) { node.UserLabel = labels.GetValueOrDefault(Key(node, snapshot), ""); node.PortLabel = labels.GetValueOrDefault(PortKey(node, snapshot), ""); node.SnapToParentHub = labels.GetValueOrDefault(SnapKey(node, snapshot), "") == "linked"; }
+        foreach (var node in snapshot.Nodes)
+        {
+            node.UserLabel = labels.GetValueOrDefault(Key(node, snapshot), ""); node.PortLabel = labels.GetValueOrDefault(PortKey(node, snapshot), ""); node.SnapToParentHub = labels.GetValueOrDefault(SnapKey(node, snapshot), "") == "linked";
+            node.SocketRatedMbps = double.TryParse(labels.GetValueOrDefault(SocketKey(node, snapshot), ""), NumberStyles.Float, CultureInfo.InvariantCulture, out var rated) && rated > 0 ? rated : null;
+        }
+        // The scan drew the sockets before it knew the speeds the user set, so they are drawn again with them.
+        DeviceIdentity.ClassifySockets(snapshot);
     }
     internal bool TrySet(UsbNode node, Snapshot snapshot, string label, out string error) => Set(node, snapshot, label, false, out error);
     private bool Set(UsbNode node, Snapshot snapshot, string label, bool port, out string error, bool snap = false)
@@ -64,6 +85,12 @@ internal sealed class DeviceLabels
         string key = snap ? SnapKey(node, snapshot) : port ? PortKey(node, snapshot) : Key(node, snapshot);
         if (key.Length == 0) { error = "Select a numbered port on a hub."; return false; }
         if (label.Length == 0) next.Remove(key); else next[key] = label;
+        return Save(next, snapshot, out error);
+    }
+    // Writes the labels whole through a temporary file, so a failed write leaves the saved ones intact.
+    private bool Save(Dictionary<string, string> next, Snapshot snapshot, out string error)
+    {
+        error = "";
         string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
