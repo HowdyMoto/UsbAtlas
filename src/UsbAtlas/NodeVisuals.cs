@@ -269,7 +269,7 @@ internal static class NodeVisuals
     }
 
     // The legend beneath the graph: each kind of socket, drawn small with the canvas's own templates.
-    internal const string SocketLegendHelp = "Shape is the connector: USB-A is a rectangle with its tongue along the top, USB-C a pill with its tongue in the middle, and a built-in port with no socket a plain slot. Tongue color is speed: black USB 2, blue USB 3 at 5 Gb/s, red 10 Gb/s or faster. A socket split at a seam is one physical socket that Windows reports as two logical ports, USB 2 and USB 3. A filled socket is in use. A connection's width is its negotiated link rate, widest at 10 Gb/s and faster; a dashed connection runs slower than its device supports, amber when that holds something back. A short dashed line on an empty socket half marks a hub's USB 3 side that didn't connect there, amber or gray by the same rule. The color of a card's icon and name says what the device does; hubs, hosts and ports stay gray. Point at anything on the graph to see what it means.";
+    internal const string SocketLegendHelp = "Shape is the connector: USB-A is a rectangle with its tongue along the top, USB-C a pill with its tongue in the middle, and a built-in port with no socket a plain slot. Tongue color is speed: black USB 2, blue USB 3 at 5 Gb/s or faster, red 10 Gb/s or faster. Windows doesn't report an empty socket's top rate, so a 10 Gb/s socket on the computer stays blue until a device links to it at 10 Gb/s or faster; a hub's sockets are red when the hub supports 10 Gb/s. A socket split at a seam is one physical socket that Windows reports as two logical ports, USB 2 and USB 3. A filled socket is in use. A connection's width is its negotiated link rate, widest at 10 Gb/s and faster; a dashed connection runs slower than its device supports, amber when that holds something back. A short dashed line on an empty socket half marks a hub's USB 3 side that didn't connect there, amber or gray by the same rule. The color of a card's icon and name says what the device does; hubs, hosts and ports stay gray. Point at anything on the graph to see what it means.";
     internal const string LegendGroupTag = "legend-group";
     internal static IEnumerable<FrameworkElement> SocketLegend()
     {
@@ -278,9 +278,10 @@ internal static class NodeVisuals
             Template = SocketTemplate(new UsbNode { Connector = connector, SocketSpeed = speed }, part), Width = SocketWidth, Height = SocketHeight, Focusable = false, IsHitTestVisible = false,
             Background = Ink("Surface"), BorderBrush = Ink("Wire"), BorderThickness = SocketBorder(part, false, 1)
         };
-        FrameworkElement Entry(string label, params FrameworkElement[] glyphs)
+        FrameworkElement Entry(string label, string? help, params FrameworkElement[] glyphs)
         {
             var entry = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center };
+            if (help != null) { entry.Background = Brushes.Transparent; entry.ToolTip = help; }
             var shapes = new StackPanel { Orientation = Orientation.Horizontal, LayoutTransform = new ScaleTransform(0.75, 0.75), Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
             foreach (var glyph in glyphs) shapes.Children.Add(glyph);
             entry.Children.Add(shapes);
@@ -304,8 +305,11 @@ internal static class NodeVisuals
             foreach (var entry in entries) group.Children.Add(entry);
             return group;
         }
-        yield return Group("Speed", Entry("USB 2", Glyph("USB-A", "USB 2.0")), Entry("5 Gb/s", Glyph("USB-A", "≥5 Gb/s")), Entry("10 Gb/s+", Glyph("USB-A", "≥10 Gb/s")));
-        yield return Group("Socket", Entry("USB-C", Glyph("USB-C", "≥5 Gb/s")), Entry("Split", Glyph("USB-A", "≥5 Gb/s", SocketPart.First), Glyph("USB-A", "≥5 Gb/s", SocketPart.Second)), Entry("Built-in", Glyph("Internal", "USB 2.0")));
+        yield return Group("Speed",
+            Entry("USB 2", "Black: USB 2, up to 480 Mb/s.", Glyph("USB-A", "USB 2.0")),
+            Entry("5 Gb/s+", "Blue: USB 3 at 5 Gb/s or faster. Windows doesn't report an empty socket's top rate, so a 10 Gb/s socket on the computer stays blue until a device links to it at 10 Gb/s or faster.", Glyph("USB-A", "≥5 Gb/s")),
+            Entry("10 Gb/s+", "Red: 10 Gb/s or faster, shown once a device here links that fast, or when the hub supports it.", Glyph("USB-A", "≥10 Gb/s")));
+        yield return Group("Socket", Entry("USB-C", null, Glyph("USB-C", "≥5 Gb/s")), Entry("Split", null, Glyph("USB-A", "≥5 Gb/s", SocketPart.First), Glyph("USB-A", "≥5 Gb/s", SocketPart.Second)), Entry("Built-in", null, Glyph("Internal", "USB 2.0")));
         yield return Group("Link",
             Link("Rate", "Wire", null, "Width is the negotiated link rate: 12 Mb/s, 480 Mb/s, 5 Gb/s and 10 Gb/s or faster.", WireWidth(new UsbNode { LinkMbps = 12 }), WireWidth(new UsbNode { LinkMbps = 480 }), WireWidth(new UsbNode { LinkMbps = 5000 }), WireWidth(new UsbNode { LinkMbps = 10000 })),
             Link("Slower than device", "Warning", WireDashes(), "Dashed: the link runs slower than the device supports. Amber when that slows something plugged in now; gray when nothing is slowed yet.", 2),
