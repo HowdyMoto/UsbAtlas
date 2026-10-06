@@ -145,6 +145,7 @@ internal static class SelfTests
             && uasSteps[0].StartsWith("It's connected at USB 2 speed") && uasSteps[1].Contains("instead of through Desk hub"), "A drive offering UAS but running bulk-only is a warning, with a USB 2 link and a hub as the likeliest causes.");
         slowDrive.OffersUas = false;
         Check(!IssueRules.For(slowDrive).Any(i => i.Text == Uas.NotInUse) && Uas.Summary(slowDrive) == "Bulk-only", "A drive that offers only bulk-only, such as a flash drive, isn't flagged.");
+        KnownProblemTests(Check);
         // Five hubs in a row: the fifth is at the limit, and a sixth's device is refused. A paired hub's USB 2 side
         // leaves the note to its USB 3 side.
         var deep = new UsbNode { Id = "d/refused", Kind = "Unavailable", Status = "Hub nested too deeply", Port = 1 };
@@ -784,6 +785,58 @@ internal static class SelfTests
         Check(At("H01/03").Location == "Internal" && At("H01/03").DeviceType == "Camera / video" && s.Nodes.All(n => n.PortMapWarnings.Count == 0), "A hardwired webcam is internal, and the port map is consistent.");
         Check(LinuxUsbScanner.Generation("8.0 GT/s PCIe") == 3 && LinuxUsbScanner.Speed("20000", 2).Speed == "SuperSpeedPlus · 20 Gb/s · 2 lanes" && LinuxUsbScanner.Speed("bogus", 1).Mbps == null, "PCIe and USB rates parse.");
         Check(new LinuxUsbScanner(new FakeSysfs()).Scan().Diagnostics.Count == 1, "No buses is a diagnostic, not a crash.");
+    }
+
+    // Chips with known problems: the bundled list, matching by VID:PID and revision, and a note only where
+    // something here looks like the problem. Linux already works around them, so there nothing is raised.
+    private static void KnownProblemTests(Action<bool, string> Check)
+    {
+        bool linux = OperatingSystem.IsLinux();
+        var entries = KnownProblems.Entries;
+        Check(entries.Count >= 20 && entries.All(e => e.Source.StartsWith("https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/", StringComparison.Ordinal) && e.Name.Length > 0)
+            && entries.GroupBy(e => (e.VendorId, e.ProductId)).All(g => g.Count() == 1), "Every listed chip is listed once and links the kernel line it comes from.");
+        Check(KnownProblems.Revision("1.28") == 0x0128 && KnownProblems.Revision("1A.0F") == 0x1A0F && KnownProblems.Revision("") == null && KnownProblems.Revision("1.2") == null,
+            "Revisions read as Device revision shows them.");
+        var parsed = KnownProblems.Parse(new StringReader("# comment\n\n0984\t0301\t1.00-1.28\tno-uas\tEnclosure\thttps://example\n"));
+        bool rejected = false;
+        try { KnownProblems.Parse(new StringReader("0984\t0301\t*\tslow\tEnclosure\thttps://example\n")); } catch (FormatException) { rejected = true; }
+        Check(parsed is [{ FirstRevision: 0x0100, LastRevision: 0x0128, AllRevisions: false }] && rejected, "Revision ranges parse, and an unknown problem is refused.");
+
+        // Every revision of a listed hub matches; an entry for one firmware matches only that one, and only when it's read.
+        var hub = new UsbNode { Id = "k/r/1", Kind = "Hub", Name = "Desk hub", VendorId = "05e3", ProductId = "0612", DeviceRevision = "6.63" };
+        var apricorn = new UsbNode { Id = "k/r/2", Kind = "Device", VendorId = "0984", ProductId = "0301", DeviceRevision = "1.28", OffersUas = true, StorageProtocol = "UAS" };
+        Check(KnownProblems.For(hub)?.Problem == KnownProblems.Lpm && KnownProblems.For(apricorn)?.Problem == KnownProblems.NoUas
+            && KnownProblems.For(new UsbNode { Kind = "Device", VendorId = "0984", ProductId = "0301", DeviceRevision = "1.29" }) == null
+            && KnownProblems.For(new UsbNode { Kind = "Device", VendorId = "0984", ProductId = "0301" }) == null
+            && KnownProblems.For(new UsbNode { Kind = "Unavailable", VendorId = "05E3", ProductId = "0612" }) == null
+            && KnownProblems.For(new UsbNode { Kind = "Hub", VendorId = "05E3", ProductId = "0610" }) == null, "Chips match by VID:PID, and by revision when the entry names one.");
+
+        // Listed but working: Properties says so, and nothing is raised.
+        Check(!KnownProblems.Raised(hub) && !IssueRules.For(hub).Any(i => i.Text == KnownProblems.Label)
+            && KnownProblems.Summary(hub) == (linux ? "Linux works around it · link power management" : "No signs here · link power management")
+            && KnownProblems.Summary(new UsbNode { Kind = "Hub", VendorId = "05E3", ProductId = "0610" }) == "None listed"
+            && KnownProblems.Evidence(hub).Contains("quirks.c#L345"), "A listed chip with no sign of its problem isn't flagged, and Properties says so.");
+        hub.QuickReconnects = 2;
+        var lpm = Explanations.For(hub, KnownProblems.Label, [hub]);
+        Check(KnownProblems.Raised(hub) != linux && (linux || IssueRules.For(hub).Contains((Severity.Note, KnownProblems.Label)))
+            && lpm.What.StartsWith("Genesys Logic hub has a known problem: links to it can drop") && lpm.What.EndsWith("It dropped and came back twice this session.")
+            && lpm.Steps![0].Contains("USB 3 Link Power Management") && lpm.Steps[^1] == "Check its maker for a firmware update; its revision here is 6.63.",
+            "A listed hub that drops is a note naming the problem, what here looks like it, and what to do.");
+
+        // A hub whose ports need slow resets shows it when a device behind it didn't connect.
+        var failed = new UsbNode { Id = "k/r/3/2", Kind = "Unavailable", Port = 2, Status = "Enumeration failed" };
+        var terminus = new UsbNode { Id = "k/r/3", Kind = "Hub", VendorId = "1A40", ProductId = "0101", Children = [failed] };
+        Check(KnownProblems.Signs(terminus, KnownProblems.For(terminus)!).SequenceEqual(["The device on its port 2 didn't connect."]), "A slow-reset hub's sign is a port that didn't connect.");
+
+        // A drive Linux avoids UAS with: running bulk-only is a note, not a warning; dropping under UAS is the sign.
+        Check(KnownProblems.Signs(apricorn, KnownProblems.For(apricorn)!).Count == 0, "A listed drive working under UAS shows no sign.");
+        apricorn.QuickReconnects = 1;
+        Check(KnownProblems.Signs(apricorn, KnownProblems.For(apricorn)!).SequenceEqual(["It dropped and came back once this session."]), "A listed drive dropping under UAS is its sign.");
+        var jmicron = new UsbNode { Id = "k/r/4", Kind = "Device", VendorId = "357D", ProductId = "7788", OffersUas = true, StorageProtocol = "Bulk-only", LinkMbps = 5000 };
+        var bulk = Explanations.For(jmicron, Uas.NotInUse, [jmicron]);
+        Check(IssueRules.For(jmicron).Contains((Severity.Note, Uas.NotInUse)) && !IssueRules.For(jmicron).Any(i => i.Text == KnownProblems.Label)
+            && bulk.What.Contains("so Linux uses bulk-only with it too") && bulk.Affects.Contains("bulk-only may be the safer choice"),
+            "A drive Linux avoids UAS with isn't warned about running bulk-only.");
     }
 
     private static void ContainerTests(Action<bool, string> Check)

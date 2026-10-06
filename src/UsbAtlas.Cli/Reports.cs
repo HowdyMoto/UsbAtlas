@@ -232,6 +232,9 @@ internal static class Reports
         if (n.OtherEntries.Count > 0) node["otherEntries"] = J.Arr(n.OtherEntries.Select(o => (JsonNode)Remembered(o.Entry, o.Place)));
         if (Uas.Summary(n).Length > 0)
             node["storage"] = J.Obj(("protocol", J.S(n.StorageProtocol)), ("offersUas", n.OffersUas), ("summary", Uas.Summary(n)));
+        if (KnownProblems.For(n) is KnownProblems.Entry known)
+            node["knownProblem"] = J.Obj(("problem", KnownProblems.Short(known.Problem)), ("chip", known.Name), ("revisions", known.AllRevisions ? "all" : n.DeviceRevision),
+                ("summary", KnownProblems.Summary(n)), ("signs", J.Some(KnownProblems.Signs(n, known).Select(x => (JsonNode)x))), ("source", known.Source));
         if (n.QuickReconnects > 0)
             node["reconnects"] = J.Obj(("count", n.QuickReconnects), ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))));
         if (n.Display is DisplayFinding f)

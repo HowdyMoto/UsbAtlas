@@ -1,0 +1,46 @@
+# Hub, dock and drive-enclosure chips with known problems, read by KnownProblems.cs.
+#
+# Each line is one chip: tab-separated vendor ID, product ID, revisions, problem, name and source.
+#   vendor, product  Four hex digits, as USB Atlas shows VID:PID.
+#   revisions        * for every revision, one revision such as 1.28 (bcdDevice, as Device revision shows it),
+#                    or a range such as 1.00-3.09.
+#   problem          lpm         Links to it drop or fail in USB's low-power link states (U1/U2, L1).
+#                    resume      It doesn't come back properly when resumed from suspend.
+#                    slow-reset  A hub whose ports need longer to reset than USB allows, so devices fail to connect.
+#                    no-uas      An enclosure that returns errors or stalls under UAS.
+#   name             What the chip is, in our own words.
+#   source           Where the problem is recorded.
+#
+# Sourcing: every entry is a workaround the Linux kernel applies to the chip, from its USB quirk tables
+# (drivers/usb/core/quirks.c, drivers/usb/storage/unusual_uas.h), linked at the commit it was read from.
+# The kernel's maintainers review each one against a reported failure, so it's more than a forum report,
+# but it isn't the maker's errata, and it says what Linux does, not what Windows does. Only the facts are
+# taken (the IDs and the kind of workaround); the names and descriptions here are our own. Kernel
+# workarounds that only matter to Linux's own stack, such as SCSI commands Windows never sends, or
+# delays Linux adds while setting a device up, aren't listed.
+#
+# vendor	product	revisions	problem	name	source
+0424	3503	*	resume	Microchip (SMSC) USB3503 hub	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L224
+058F	9254	*	resume	Alcor Micro USB 2 hub	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L339
+05E3	0612	*	lpm	Genesys Logic hub	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L345
+05E3	0616	*	lpm	Genesys Logic hub	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L351
+0BDA	0487	*	lpm	Realtek hub, as in the Dell WD19 dock	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L463
+0BDA	8153	*	lpm	Realtek RTL8153 gigabit Ethernet, in many docks and adapters	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L466
+17EF	1018	*	resume	VIA Labs VL812 hub in the Lenovo ThinkPad OneLink+ Dock	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L507
+17EF	1019	*	resume	VIA Labs VL812 hub in the Lenovo ThinkPad OneLink+ Dock	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L508
+17EF	720C	*	lpm	Realtek RTL8153 Ethernet in Lenovo's USB-C Ethernet adapter	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L511
+17EF	721E	*	lpm	Realtek RTL8153 Ethernet in the Lenovo Powered USB-C Travel Hub	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L514
+17EF	A387	*	lpm	Realtek RTL8153 Ethernet in the Lenovo ThinkPad USB-C Dock Gen 2	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L521
+17EF	A391	*	lpm	USB 3 hub in the Lenovo ThinkPad USB-C Dock Gen 2	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L524
+17EF	A392	*	lpm	USB 2 hub in the Lenovo ThinkPad USB-C Dock Gen 2	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L525
+1A40	0101	*	slow-reset	Terminus Technology USB 2 hub	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L536
+2109	0711	*	lpm	VIA Labs VL711 drive enclosure bridge	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L584
+2109	2817	*	lpm	VIA Labs USB 2 hub	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/core/quirks.c#L587
+0781	55E8	*	no-uas	SanDisk drive	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/storage/unusual_uas.h#L56
+090C	2000	*	no-uas	Hiksemi external drive	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/storage/unusual_uas.h#L63
+0984	0301	1.28	no-uas	Apricorn drive enclosure, firmware 1.28	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/storage/unusual_uas.h#L73
+0B05	1932	*	no-uas	ASUS external drive	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/storage/unusual_uas.h#L80
+17EF	3899	*	no-uas	Thinkplus external drive	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/storage/unusual_uas.h#L157
+2537	1068	*	no-uas	Norelsys NS1068 drive enclosure bridge	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/storage/unusual_uas.h#L171
+357D	7788	*	no-uas	JMicron drive enclosure bridge	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/storage/unusual_uas.h#L181
+4971	1012	*	no-uas	Hitachi external drive	https://github.com/torvalds/linux/blob/f3988e68fc089f6a5883f4f807955a3825bb7d45/drivers/usb/storage/unusual_uas.h#L188

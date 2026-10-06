@@ -56,6 +56,11 @@ internal static class Uas
     // path runs from the host controller down to n. The likeliest cause leads: a USB 2 link, then what's in between.
     internal static Explanations.Explanation Explain(UsbNode n, IReadOnlyList<UsbNode> path)
     {
+        // Linux avoids UAS with some drives that return errors or stall under it; on those bulk-only isn't a fault.
+        if (KnownProblems.For(n) is { Problem: KnownProblems.NoUas } known)
+            return new($"This drive supports UAS, the faster protocol for USB drives, but Windows is using the older bulk-only protocol with it. {known.Name} is known to return errors or stall under UAS, so Linux uses bulk-only with it too.",
+                "Only its speed: transfers are slower than UAS could be, and bulk-only may be the safer choice on this drive.", "",
+                [$"Leave it as it is unless it's too slow. If it is, check its maker for a firmware update{(n.DeviceRevision.Length > 0 ? $"; its revision here is {n.DeviceRevision}" : "")}."]);
         var steps = new List<string>();
         if (n.LinkMbps is <= 480)
             steps.Add("It's connected at USB 2 speed, and many enclosures offer UAS only over USB 3. Plug it into a USB 3 port on the computer, with a cable rated 5 Gb/s or faster.");

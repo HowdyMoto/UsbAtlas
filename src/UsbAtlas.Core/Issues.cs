@@ -37,8 +37,11 @@ internal static class IssueRules
         if (n.WokeComputerAt != null) issues.Add((Severity.Note, Wake.WokeComputer));
         // Radio noise isn't measured, so a receiver beside a fast drive is a note.
         if (n.NoisyNeighbor != null) issues.Add((Severity.Note, Interference.Nearby));
-        // A drive that could use UAS but doesn't is slower than it could be, so it's a warning.
-        if (Uas.NotUsed(n)) issues.Add((Severity.Warning, Uas.NotInUse));
+        // A drive that could use UAS but doesn't is slower than it could be, so it's a warning; on a drive Linux
+        // avoids UAS with too, bulk-only may be the safer choice, so it's a note.
+        if (Uas.NotUsed(n)) issues.Add((KnownProblems.AvoidsUas(n) ? Severity.Note : Severity.Warning, Uas.NotInUse));
+        // A known chip problem is a lead, not a diagnosis, so it's a note, and only where something here looks like it.
+        if (KnownProblems.Raised(n)) issues.Add((Severity.Note, KnownProblems.Label));
         // A hub at the limit works; only another hub plugged into it won't.
         if (HubDepth.IsAtLimit(n)) issues.Add((Severity.Note, HubDepth.AtLimit));
         // Firmware describing a port wrongly changes nothing plugged into it, so each finding is a note.
