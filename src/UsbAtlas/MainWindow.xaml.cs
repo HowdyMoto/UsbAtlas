@@ -373,6 +373,7 @@ public partial class MainWindow : Window
         if (host) notes.Add("Port support summarizes reported logical-port capabilities, including empty ports. USB revision and a single negotiated upstream link do not apply to this host summary.");
         if (node.Kind is "Controller" or "Root hub" or "Hub" or "Empty port") notes.Add("Supply capacity, USB-C charging limits and Power Delivery contracts are not queried. Device-declared draw is not the hub's available supply.");
         if (node.Kind == "Device") notes.Add(node.TypeEvidence);
+        if (Interference.IsReceiver(node)) notes.Add("Taken to be a 2.4 GHz wireless receiver: " + (node.DeviceType == "Wireless" ? "it's a wireless controller, such as Bluetooth." : "its name says receiver, dongle or wireless.") + " USB 3 devices beside one can interfere with it.");
         if (node.InterfaceFunctions.Count > 0) notes.Add("Reported functions: " + string.Join(", ", node.InterfaceFunctions));
         if (node.HidUsages.Count > 0) notes.Add("HID collections: " + string.Join(", ", node.HidUsages) + ".");
         notes.AddRange(Billboard.Evidence(node));

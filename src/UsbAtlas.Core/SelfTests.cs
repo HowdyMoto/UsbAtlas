@@ -56,6 +56,23 @@ internal static class SelfTests
         Check(Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]).Cause.StartsWith("Its USB 3 connection didn't come up"), "Without DisplayPort entered, the cable is the likely cause.");
         stuck.HighSpeedCapable = false;
         Check(!HubRelationships.ReducedSpeed(stuck) && !HubRelationships.ReducedSpeed(new UsbNode { Kind = "Device", LinkMbps = 12 }), "A full-speed-only device at 12 Mb/s is where it belongs.");
+        // 2.4 GHz receivers beside a fast drive on the same hub get a note; elsewhere, or beside slow devices, they don't.
+        var dongle = new UsbNode { Id = "i/r/1/1", Kind = "Device", Port = 1, Name = "USB Receiver", DeviceType = "Mouse", LinkMbps = 12 };
+        var bluetooth = new UsbNode { Id = "i/r/1/2", Kind = "Device", Port = 2, Name = "Bluetooth Adapter", DeviceType = "Wireless", LinkMbps = 12 };
+        var keyboardOnly = new UsbNode { Id = "i/r/1/3", Kind = "Device", Port = 3, Name = "Mechanical keyboard", DeviceType = "Keyboard", LinkMbps = 12 };
+        var fastDrive = new UsbNode { Id = "i/r/1s/1", Kind = "Device", Port = 4, Name = "Portable SSD", DeviceType = "External drive", LinkMbps = 10000 };
+        var deskUsb2 = new UsbNode { Id = "i/r/1", Kind = "Hub", Name = "Desk hub", Port = 1, IsUsb2Companion = true, CompanionHubId = "i/r/1s", Children = [dongle, bluetooth, keyboardOnly] };
+        var deskUsb3 = new UsbNode { Id = "i/r/1s", Kind = "Hub", Name = "Desk hub", Port = 5, CompanionHubId = "i/r/1", Children = [fastDrive] };
+        var hostDongle = new UsbNode { Id = "i/r/2", Kind = "Device", Port = 2, Name = "Unifying Receiver", DeviceType = "Mouse", LinkMbps = 12 };
+        var radio = new Snapshot { Controllers = [new() { Id = "i", Kind = "Controller", Children = [new() { Id = "i/r", Kind = "Root hub", Children = [deskUsb2, hostDongle, deskUsb3] }] }] };
+        Interference.Analyze(radio);
+        Check(Interference.IsReceiver(dongle) && Interference.IsReceiver(bluetooth) && !Interference.IsReceiver(keyboardOnly) && Interference.IsReceiver(hostDongle), "Receivers are wireless controllers, or input devices named as receivers.");
+        Check(dongle.NoisyNeighbor == fastDrive && bluetooth.NoisyNeighbor == fastDrive && keyboardOnly.NoisyNeighbor == null && hostDongle.NoisyNeighbor == null,
+            "A receiver beside a fast drive on the same hub, including the other side of a USB 3 hub, gets the note; one on the computer's own ports doesn't.");
+        Check(IssueRules.For(dongle).Contains((Severity.Note, Interference.Nearby)) && Explanations.For(dongle, Interference.Nearby, Topology.FindPath(radio, dongle.Id)).What.Contains("Portable SSD next to it, linked at 10 Gb/s on Desk hub"),
+            "The note names the fast device and the hub.");
+        fastDrive.LinkMbps = 480; Interference.Analyze(radio);
+        Check(dongle.NoisyNeighbor == null, "A drive at USB 2 speed isn't a USB 3 noise source.");
         // UAS: offered in any alternate setting, used when Windows bound UASPStor, flagged only when offered and unused.
         byte[] enclosureConfig = [9, 2, 32, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 2, 8, 6, 0x50, 0, 9, 4, 0, 1, 4, 8, 6, 0x62, 0];
         Check(Uas.Offers(enclosureConfig) && !Uas.Offers(enclosureConfig[..18].Select((b, i) => i == 2 ? (byte)18 : b).ToArray()) && !Uas.Offers([9, 2, 18, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 2, 3, 1, 0x62, 0]),

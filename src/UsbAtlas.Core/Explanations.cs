@@ -159,6 +159,8 @@ internal static class Explanations
                 return DriverExplanation(n, noun);
             case Billboard.Failed or Billboard.NotEntered when n.Billboard != null:
                 return Billboard.Explain(n, issue);
+            case Interference.Nearby:
+                return Interference.Explain(n, path);
             case Uas.NotInUse:
                 return Uas.Explain(n, path);
             case HubDepth.AtLimit:

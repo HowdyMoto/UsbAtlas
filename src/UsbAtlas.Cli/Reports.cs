@@ -154,7 +154,7 @@ internal static class Reports
         var node = J.Obj(
             ("path", s.PathOf(n)), ("name", n.DisplayName), ("shortName", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("nodeKind", n.Kind),
             ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)), ("status", n.Status),
-            ("deviceType", n.Kind == "Device" ? n.DeviceType : null), ("typeEvidence", n.Kind == "Device" ? n.TypeEvidence : null),
+            ("deviceType", n.Kind == "Device" ? n.DeviceType : null), ("typeEvidence", n.Kind == "Device" ? n.TypeEvidence : null), ("wirelessReceiver", Interference.IsReceiver(n) ? true : null),
             ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("manufacturer", J.S(n.Manufacturer)), ("product", J.S(n.ReportedProduct)), ("windowsName", J.S(n.WindowsName)),
             ("lookup", J.S(string.Join(" · ", new[] { n.LookupVendor, n.LookupProduct }.Where(x => x.Length > 0)))), ("nameSource", n.NameSource),
             ("serial", J.S(n.Serial)), ("instanceId", J.S(n.InstanceId)), ("id", n.Id),

@@ -94,6 +94,9 @@ public sealed class UsbNode
     // Descriptors as read, only when a scan is asked to keep them.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RawDescriptors? Raw { get; set; }
+    // For a 2.4 GHz receiver, the fast drive or video device on its hub whose noise can reach it (Interference.cs).
+    [System.Text.Json.Serialization.JsonIgnore]
+    public UsbNode? NoisyNeighbor { get; set; }
     // A drive's protocol: UAS or Bulk-only, from the driver Windows bound, or empty when it isn't a drive or
     // the driver doesn't say; and whether its descriptors offer UAS. Null when they weren't read (Uas.cs).
     public string StorageProtocol { get; set; } = "";
