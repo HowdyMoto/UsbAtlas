@@ -89,7 +89,9 @@ internal static class Watch
             DateTime deadline = duration == TimeSpan.Zero ? DateTime.MaxValue : start + duration;
             DateTime? settleAt = null, wakeCheckAt = null, lastWake = null;
             Session? beforeSleep = null;
-            int rescans = 0, changes = 0, sleeps = 0, notBack = 0, slower = 0;
+            int rescans = 0, changes = 0, sleeps = 0, notBack = 0, slower = 0, returns = 0;
+            // The notifications since the last scan, to find what dropped and came back before it.
+            var burst = new List<(DateTime At, bool Arrived, string Instance)>();
             Session Settled() => ScanUntilSteady(current, () => { rescans++; return Scan(tracker, redact); }, () => !cancel.WaitHandle.WaitOne(Steady));
             // A change still settling at the deadline gets its rescan, and a wake its check, so the summary is current.
             while (!cancel.IsCancellationRequested && (DateTime.Now < deadline || settleAt != null || wakeCheckAt != null))
@@ -110,6 +112,7 @@ internal static class Watch
                 }
                 while (events.TryDequeue(out var e))
                 {
+                    burst.Add(e);
                     if (e.Arrived) tracker.Arrived(e.Instance, e.At); else tracker.Removed(e.Instance, e.At);
                     if (verbose) emit(J.Obj(("time", Time(e.At)), ("event", e.Arrived ? "arrival" : "removal"), ("instanceId", redact ? Session.RedactText(e.Instance) : e.Instance)));
                     if (DateTime.Now < deadline) settleAt = DateTime.Now + Settle;
@@ -123,7 +126,7 @@ internal static class Watch
                     var after = AfterWaking(beforeSleep ?? current, next, DateTime.Now);
                     notBack += after["notBack"]!.AsArray().Count; slower += after["slower"]!.AsArray().Count;
                     emit(after);
-                    current = next; beforeSleep = null;
+                    current = next; beforeSleep = null; burst.Clear();
                 }
                 if (settleAt is DateTime due && (DateTime.Now >= due || DateTime.Now >= deadline))
                 {
@@ -131,13 +134,16 @@ internal static class Watch
                     var next = Settled();
                     var diff = Diff.Compare(current, next, reported);
                     if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; emit(diff); }
+                    // A drop that's back before the scan leaves no difference, so it's reported from the notifications.
+                    if (Returns(next, burst, diff) is JsonObject back) { returns += back["returned"]!.AsArray().Count; back["time"] = Time(DateTime.Now); emit(back); }
+                    burst.Clear();
                     current = next;
                 }
             }
             if (trace != null) { etw!.Dispose(); etw = null; emit(trace.Summary(start, current)); }
             var unstable = current.Listed.Where(n => n.QuickReconnects > 0).ToList();
             return J.Obj(("time", Time(DateTime.Now)), ("event", "summary"), ("watchedSeconds", Math.Round((DateTime.Now - start).TotalSeconds)),
-                ("rescans", rescans), ("changes", changes),
+                ("rescans", rescans), ("changes", changes), ("droppedAndBack", returns > 0 ? returns : null),
                 ("sleeps", sleeps > 0 ? sleeps : null), ("notBackAfterWaking", sleeps > 0 ? notBack : null), ("slowerAfterWaking", sleeps > 0 ? slower : null),
                 ("unstable", J.Arr(unstable.Select(n => (JsonNode)J.Obj(("path", current.PathOf(n)), ("name", Topology.ShortName(n)), ("quickReconnects", n.QuickReconnects),
                     ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))))))),
@@ -218,6 +224,36 @@ internal static class Watch
     }
 
     // One line per event for people; --json writes one JSON object per line instead.
+    // Devices and hubs that dropped and came back between two scans: each removed and then arrived again, and
+    // connected now where the diff didn't already report it. A hub that came back with what's behind it is one
+    // entry, the topmost, with a count of what came back behind it.
+    internal static JsonObject? Returns(Session now, IReadOnlyList<(DateTime At, bool Arrived, string Instance)> burst, JsonObject diff)
+    {
+        var away = new Dictionary<string, (DateTime Gone, DateTime? Back)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (at, arrived, instance) in burst.OrderBy(b => b.At))
+            if (!arrived) { if (!away.ContainsKey(instance)) away[instance] = (at, null); }
+            else if (away.TryGetValue(instance, out var gone)) away[instance] = gone with { Back = at };
+        var reported = diff["connected"]?.AsArray().Select(c => c!["path"]?.ToString()).ToHashSet() ?? [];
+        var back = now.Listed.Where(n => n.InstanceId.Length > 0 && away.TryGetValue(n.InstanceId, out var t) && t.Back != null && !reported.Contains(now.PathOf(n))).ToHashSet();
+        var tops = back.Where(n => !now.Chain(n).SkipLast(1).Any(back.Contains)).OrderBy(now.PathOf, StringComparer.Ordinal).ToList();
+        if (tops.Count == 0) return null;
+        return J.Obj(("event", "returned"), ("returned", J.Arr(tops.Select(n =>
+        {
+            var (gone, came) = away[n.InstanceId];
+            var behind = n.Walk().Skip(1).Where(back.Contains).ToList();
+            return (JsonNode)J.Obj(("path", now.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)),
+                ("goneSeconds", Math.Round((came!.Value - gone).TotalSeconds, 1)),
+                ("behindDevices", behind.Count(b => b.Kind == "Device") is > 0 and var d ? d : null), ("behindHubs", behind.Count(b => b.Kind == "Hub") is > 0 and var h ? h : null));
+        }))));
+    }
+    private static string Behind(JsonNode? devices, JsonNode? hubs)
+    {
+        var parts = new List<string>();
+        if (devices is JsonNode d) parts.Add($"{d} device{(d.ToString() == "1" ? "" : "s")}");
+        if (hubs is JsonNode h) parts.Add($"{h} hub{(h.ToString() == "1" ? "" : "s")}");
+        return parts.Count == 0 ? "" : $", with {string.Join(" and ", parts)} behind it";
+    }
+
     internal static string Text(JsonObject e)
     {
         string time = e["time"]?.ToString() ?? "";
@@ -231,6 +267,8 @@ internal static class Watch
                 return UsbTrace.Text(e);
             case "arrival" or "removal":
                 return $"{time} {e["event"],-8} {e["instanceId"]}\n";
+            case "returned":
+                return string.Concat(e["returned"]!.AsArray().Select(r => $"{time} ↺ dropped and came back  {r!["path"]} {r["name"]}{Behind(r["behindDevices"], r["behindHubs"])} · gone {r["goneSeconds"]} s\n"));
             case "change":
                 return string.Concat(Diff.Text(e, false).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => $"{time} {line}\n"));
             case "sleep":
@@ -245,6 +283,7 @@ internal static class Watch
                 return lines.ToString();
             case "summary":
                 var sb = new System.Text.StringBuilder($"{time} done after {e["watchedSeconds"]} s · {Count(e["rescans"], "rescan")}, {e["changes"]} with changes\n");
+                if (e["droppedAndBack"] != null) sb.AppendLine($"  {e["droppedAndBack"]} dropped and came back before a scan could see them gone (↺ lines above)");
                 if (e["sleeps"] != null) sb.AppendLine($"  slept {(e["sleeps"]!.GetValue<int>() == 1 ? "once" : e["sleeps"] + " times")}: {e["notBackAfterWaking"]} not back after waking, {e["slowerAfterWaking"]} back slower");
                 foreach (var u in e["unstable"]!.AsArray())
                     sb.AppendLine($"  unstable: {u!["path"]} {u["name"]} dropped and came back {u["quickReconnects"]} times ({string.Join(", ", u["times"]!.AsArray().Select(t => t!.ToString()))})");

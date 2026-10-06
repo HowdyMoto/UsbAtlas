@@ -91,11 +91,14 @@ public sealed class UsbScanner
             node.ContainerId = devices.GetValueOrDefault(node.InstanceId)?.ContainerId ?? "";
         snapshot.Containers = [.. Containers.Read(snapshot.Nodes.Select(n => n.ContainerId)).Values];
         Containers.Analyze(snapshot);
+        Interference.Analyze(snapshot);
         PortMap.Analyze(snapshot);
         ReadRemembered();
         Remembered.Analyze(snapshot);
+        HubDepth.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
+        Uas.Apply(snapshot, devices);
         try
         {
             var (gpus, displays, billboards) = UsbAtlas.Displays.Read();
@@ -105,6 +108,8 @@ public sealed class UsbScanner
         catch (Exception ex) when (ex is Win32Exception or ExternalException or ArgumentException) { snapshot.Diagnostics.Add("Displays and graphics adapters unavailable: " + ex.Message); }
         PowerSaving.Read(snapshot, devices);
         PowerSaving.Analyze(snapshot);
+        Wake.Read(snapshot, devices);
+        Wake.Analyze(snapshot);
         if (snapshot.Controllers.Count == 0) snapshot.Diagnostics.Add("No USB host controllers were returned by Windows.");
         return snapshot;
     }
@@ -230,6 +235,7 @@ public sealed class UsbScanner
                         {
                             if (CaptureRaw) node.Raw!.Configuration = Convert.ToHexString(fullConfig);
                             node.InterfaceFunctions = DeviceIdentity.ReadInterfaceFunctions(fullConfig);
+                            node.OffersUas = Uas.Offers(fullConfig);
                             endpoints = UsbBudgets.ReadEndpoints(fullConfig);
                         }
                     }

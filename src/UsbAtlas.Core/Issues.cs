@@ -33,6 +33,14 @@ internal static class IssueRules
         if (n.ContainerIdShared) issues.Add((Severity.Note, Containers.SharedId));
         // Old entries for a device change nothing about it now, so they're a note.
         if (n.RememberedIssue.Length > 0) issues.Add((Severity.Note, n.RememberedIssue));
+        // Waking the computer is what a keyboard or mouse is for; only whether it was wanted is in question.
+        if (n.WokeComputerAt != null) issues.Add((Severity.Note, Wake.WokeComputer));
+        // Radio noise isn't measured, so a receiver beside a fast drive is a note.
+        if (n.NoisyNeighbor != null) issues.Add((Severity.Note, Interference.Nearby));
+        // A drive that could use UAS but doesn't is slower than it could be, so it's a warning.
+        if (Uas.NotUsed(n)) issues.Add((Severity.Warning, Uas.NotInUse));
+        // A hub at the limit works; only another hub plugged into it won't.
+        if (HubDepth.IsAtLimit(n)) issues.Add((Severity.Note, HubDepth.AtLimit));
         // Firmware describing a port wrongly changes nothing plugged into it, so each finding is a note.
         foreach (var finding in n.PortMapWarnings) issues.Add((Severity.Note, finding));
         // A nearly full link still fits everything on it, so it's a note; peaks that can't all fit are a warning.

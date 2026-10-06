@@ -29,13 +29,13 @@ public partial class MainWindow
     {
         string where = NodeVisuals.ShortName(CardNode(item.Node));
         var text = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
-        // The issue's name is status text, in its color, as on badges; the fix is plain text.
-        text.Inlines.Add(new Run(item.Issue) { FontWeight = FontWeights.SemiBold, Foreground = Brush(NodeVisuals.StatusColor(item.Severity)) });
-        text.Inlines.Add(new Run($" · {where}") { FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary") });
+        // The issue's name is a status badge, as on cards: glyph and status ink on its tinted surface. The
+        // place and the fix are plain text.
+        text.Inlines.Add(new Run(where) { FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary") });
         text.Inlines.Add(new Run($" — {item.Fix}") { Foreground = Brush("TextSecondary") });
         var row = new DockPanel { Margin = new Thickness(4, 2, 4, 2) };
-        var glyph = NodeVisuals.StatusGlyph(item.Severity); glyph.Margin = new Thickness(0, 0, 6, 0);
-        DockPanel.SetDock(glyph, Dock.Left); row.Children.Add(glyph); row.Children.Add(text);
+        var badge = NodeVisuals.StatusBadge(item.Severity, item.Issue); badge.Margin = new Thickness(0, 0, 7, 0); badge.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(badge, Dock.Left); row.Children.Add(badge); row.Children.Add(text);
         string also = item.Also.Count == 0 ? "" : " The same fix also resolves " + string.Join(", ", item.Also.Select(a => $"{a.Issue} on {NodeVisuals.ShortName(CardNode(a.Node))}")) + ".";
         var button = new Button
         {

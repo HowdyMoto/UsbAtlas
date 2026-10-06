@@ -36,7 +36,7 @@ internal static class Explanations
                     "Enumeration failed" or "General failure" => new("Something is plugged in here, but it didn't answer properly when Windows tried to set it up.", "Yes: Windows can't use it.", "",
                         ["Unplug it, wait a few seconds and plug it back in.", "Try another cable and another port.", "If it has its own power supply or switch, check that it's on. If it fails everywhere, the device may be faulty."]),
                     "Query failed" => new("USB Atlas couldn't read this port.", "Probably not: a device here may still be connected and working; this scan just can't see it.", "", ["Refresh (F5) to try again."]),
-                    "Hub nested too deeply" => new("This device is behind too many hubs in a row for USB to reach it.", "Yes: Windows can't use it.",
+                    "Hub nested too deeply" => new($"This device is behind too many hubs in a row for USB to reach it: {HubDepth.Chain(HubDepth.Above(path))}.", "Yes: Windows can't use it.",
                         "USB allows at most five hubs between a device and the computer, and monitors, docks and keyboards often have hubs inside.", ["Plug it, or the hub it's on, closer to the computer."]),
                     _ => new($"Windows reports this port as “{n.Status}”.", "Probably: Windows may not be able to use what's plugged in here.", "", ["Unplug the device and plug it back in.", "Try another port and cable."])
                 };
@@ -161,6 +161,14 @@ internal static class Explanations
                 return Billboard.Explain(n, issue);
             case Remembered.ComChanged or Remembered.OtherPorts when n.OtherEntries.Count > 0:
                 return Remembered.Explain(n, issue);
+            case Wake.WokeComputer:
+                return Wake.Explain(n);
+            case Interference.Nearby:
+                return Interference.Explain(n, path);
+            case Uas.NotInUse:
+                return Uas.Explain(n, path);
+            case HubDepth.AtLimit:
+                return HubDepth.Explain(n, path);
             case Containers.SharedId:
                 return Containers.Explain(n);
             case LinuxProblems.NoDriver or LinuxProblems.NotAuthorized:
@@ -355,7 +363,7 @@ internal static class Explanations
         {
             (true, "USB 2.0") => ("This port supports only USB 2.", [$"Plug it into {port}. {tongue}"]),
             (false, "5 Gb/s") => ("This port supports up to 5 Gb/s.", [$"Plug it into {port}. {tongue}"]),
-            (false, "≥5 Gb/s") => ("This port may support only 5 Gb/s; Windows doesn't say until something links faster.", ["Try a port labeled 10 Gb/s on the computer.", "If this port does support 10 Gb/s, use a cable rated 10 Gb/s or faster."]),
+            (false, "≥5 Gb/s") => ("This port may support only 5 Gb/s; Windows doesn't say until something links faster.", ["Try a port labeled 10 Gb/s on the computer.", "If this port does support 10 Gb/s, use a cable rated 10 Gb/s or faster, and set the socket's speed in USB Atlas's Properties so it knows."]),
             (_, "Not reported") => ("Windows didn't report what this port supports.", [$"Check that it's {port}. {tongue}", seat, cableStep]),
             _ => ($"The port supports {(usb2 ? "USB 3" : "10 Gb/s")}, so the cable or the plug is the likely cause.", [seat, cableStep])
         };

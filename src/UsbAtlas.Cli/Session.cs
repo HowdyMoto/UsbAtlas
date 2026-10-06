@@ -71,8 +71,11 @@ internal sealed class Session
             Normalize(snapshot);
             // Derived from what the file holds, so a snapshot saved before a rule existed is still checked by it.
             PortMap.Analyze(snapshot);
+            HubDepth.Analyze(snapshot);
             Containers.Analyze(snapshot);
             Remembered.Analyze(snapshot);
+            Wake.Analyze(snapshot);
+            Interference.Analyze(snapshot);
             if (snapshot.Controllers.Count == 0 && snapshot.Diagnostics.Count == 0) throw new CliException($"{file} has no controllers. Is it a USB Atlas snapshot (atlascli scan, or Export in the app)?");
             return snapshot;
         }
@@ -122,6 +125,7 @@ internal sealed class Session
         foreach (var n in snapshot.Nodes) if (Identifying(n.Serial)) n.Serial = Token(n.Serial);
         // Remembered devices aren't connected, so their serials are found in their instance IDs.
         foreach (var r in snapshot.Remembered ?? []) r.InstanceId = RedactText(r.InstanceId);
+        if (snapshot.LastWake is WakeInfo wake) wake.InstanceId = RedactText(wake.InstanceId);
         string json = JsonSerializer.Serialize(snapshot, Json.Compact);
         foreach (var serial in serials)
         {
@@ -131,6 +135,8 @@ internal sealed class Session
         var redacted = JsonSerializer.Deserialize<Snapshot>(json, Json.Options)!;
         // What isn't saved is worked out again.
         Remembered.Analyze(redacted);
+        Wake.Analyze(redacted);
+        Interference.Analyze(redacted);
         return redacted;
     }
     private static bool Identifying(string serial) => serial.Trim().Length >= 6 && serial.Distinct().Count() > 2 && !serial.StartsWith("redacted-", StringComparison.Ordinal);
