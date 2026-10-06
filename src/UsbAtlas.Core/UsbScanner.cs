@@ -53,6 +53,10 @@ public sealed class UsbScanner
                     // SPDRP_BUSNUMBER and SPDRP_ADDRESS; a PCI address is its device number over its function number.
                     if (controller.PciId.Length > 0 && DwordProperty(set, ref dev, 21) is uint bus && DwordProperty(set, ref dev, 28) is uint address)
                         controller.PciAddress = $"{bus:X2}:{address >> 16:X2}.{address & 0xFFFF:X}";
+                    // DEVPKEY_PciDevice_CurrentLinkSpeed and Width, MaxLinkSpeed and Width (pciprop.h): the PCIe link
+                    // everything on this controller shares to reach the computer.
+                    (controller.PcieGeneration, controller.PcieLanes) = (PciProperty(set, ref dev, 9), PciProperty(set, ref dev, 10));
+                    (controller.PcieMaxGeneration, controller.PcieMaxLanes) = (PciProperty(set, ref dev, 11), PciProperty(set, ref dev, 12));
                     controller.Location = "Host";
                     controller.LocationEvidence = "Host controller: motherboard or expansion hardware. Physical mounting is not reported.";
                     controller.Notes.Add("Controller ports may use separate USB 2 and USB 3 buses. Their link rates are not a single controller-wide bandwidth budget.");
@@ -168,6 +172,9 @@ public sealed class UsbScanner
             }
             if (hasV2) node.SuperSpeedPlusCapable = (flags & 8) != 0;
             node.SpeedLimited = ((flags & 2) != 0 && (flags & 1) == 0) || ((flags & 8) != 0 && (flags & 4) == 0);
+            // A device that supports high speed but linked at full speed answers a request for its device qualifier,
+            // its high-speed details; a full-speed-only one must refuse it (USB 2.0, 9.6.2).
+            if (node.LinkMbps == 12 && bcd >= 0x0200) node.HighSpeedCapable = HighSpeedQualifier(Descriptor(handle, port, 6, 0, 0, 10));
             if (node.Kind == "Hub" && node.LinkMbps == 480) node.TransactionTranslators = TransactionTranslators(data);
             node.DriverKey = QueryName(handle, 264, port, 8);
             node.DeviceClass = ClassName(data[8]);
@@ -263,6 +270,16 @@ public sealed class UsbScanner
     internal static string TransactionTranslators(byte[] connectionInfo) => connectionInfo[10] switch { 1 => "Single", 2 => "Per port", _ => "Not reported" };
     // The device descriptor follows the 4-byte port index: bLength 18, bDescriptorType 1 once Windows has read it.
     internal static bool DescriptorRead(byte[] connectionInfo) => connectionInfo[4] == 18 && connectionInfo[5] == 1;
+    // A device qualifier is 10 bytes, type 6, naming a USB version of 2.0 or later.
+    internal static bool HighSpeedQualifier(byte[]? qualifier) => qualifier is { Length: >= 10 } q && q[0] == 10 && q[1] == 6 && BitConverter.ToUInt16(q, 2) >= 0x0200;
+    private static readonly Guid PciDeviceProperties = new("3AB22E31-8264-4B4E-9AF5-A8D2D8E33E62");
+    private static int? PciProperty(IntPtr set, ref Native.DeviceData d, uint id)
+    {
+        var key = new Native.PropertyKey { Category = PciDeviceProperties, Id = id };
+        var bytes = new byte[4];
+        // DEVPROP_TYPE_UINT32.
+        return Native.SetupDiGetDeviceProperty(set, ref d, ref key, out uint type, bytes, (uint)bytes.Length, out _, 0) && type == 7 && BitConverter.ToInt32(bytes) is > 0 and var value ? value : null;
+    }
     internal static int DecodePower(byte maxPower, ushort bcdUsb) => maxPower * (bcdUsb >= 0x0300 ? 8 : 2);
     private static int SpeedClass(byte speed, int flags) => (flags & 5) != 0 ? 3 : speed;
 
@@ -421,6 +438,8 @@ internal static class Native
 {
     [StructLayout(LayoutKind.Sequential)] internal struct InterfaceData { public int Size; public Guid Guid; public int Flags; public UIntPtr Reserved; }
     [StructLayout(LayoutKind.Sequential)] internal struct DeviceData { public int Size; public Guid Guid; public uint DevInst; public UIntPtr Reserved; }
+    [StructLayout(LayoutKind.Sequential)] internal struct PropertyKey { public Guid Category; public uint Id; }
+    [DllImport("setupapi.dll", EntryPoint = "SetupDiGetDevicePropertyW", SetLastError = true)] internal static extern bool SetupDiGetDeviceProperty(IntPtr set, ref DeviceData dev, ref PropertyKey key, out uint type, byte[] buffer, uint size, out uint needed, uint flags);
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern IntPtr SetupDiGetClassDevs(ref Guid guid, string? enumerator, IntPtr parent, uint flags);
     [DllImport("setupapi.dll", EntryPoint = "SetupDiGetClassDevsW", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern IntPtr SetupDiGetClassDevsNoGuid(IntPtr guid, string? enumerator, IntPtr parent, uint flags);
     [DllImport("setupapi.dll", SetLastError = true)] internal static extern bool SetupDiEnumDeviceInterfaces(IntPtr set, IntPtr dev, ref Guid guid, uint index, ref InterfaceData data);

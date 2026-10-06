@@ -286,6 +286,13 @@ public partial class MainWindow : Window
             var controller = node.Kind == "Controller" ? node : snapshot.Controllers.FirstOrDefault(c => c.Children.Contains(node)) ?? node;
             Field("PCI device", controller.PciId.Length > 0 ? string.Join(" · ", new[] { Topology.PciVendor(controller.PciId), controller.PciId, controller.PciAddress }.Where(x => x.Length > 0)) : "Not reported",
                 "The host controller chip's PCI vendor:device IDs and its bus:device.function address, which tell apart controllers that share a name.");
+            bool heldBack = controller.PcieMaxGeneration > controller.PcieGeneration || controller.PcieMaxLanes > controller.PcieLanes;
+            Field("PCIe link", UsbBudgets.PcieMbps(controller.PcieGeneration, controller.PcieLanes) is double uplink
+                ? $"{UsbBudgets.PcieText(controller.PcieGeneration!.Value, controller.PcieLanes!.Value)} · about {UsbBudgets.Rate(uplink)}"
+                    + (heldBack ? $" · can do {UsbBudgets.PcieText(controller.PcieMaxGeneration ?? controller.PcieGeneration.Value, controller.PcieMaxLanes ?? controller.PcieLanes.Value)}" : "") : "Not reported",
+                "The PCIe connection this controller reaches the computer over, shared by all its ports: the most they can move together. Built-in controllers often report a wide internal link.");
+            Field("Endpoints", $"{UsbBudgets.ControllerLoad(controller).Endpoints} in use",
+                "The channels this controller keeps open for its devices: one for each device's control plus one for each open pipe. Controllers hold only so many, and Windows doesn't say how many; some common ones top out at 96.");
             Field("Port support", ProtocolSummary(node));
             Field("Ports", roots.Sum(r => r.PortCount).ToString(), PortsHelp);
             Field("In use", roots.Sum(r => r.Children.Count(c => c.Kind != "Empty port")).ToString());

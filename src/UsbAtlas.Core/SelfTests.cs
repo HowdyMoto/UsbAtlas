@@ -17,6 +17,44 @@ internal static class SelfTests
         Check(UsbScanner.TransactionTranslators(hubInfo) == "Per port", "bDeviceProtocol 2 is one TT per port.");
         hubInfo[10] = 1; Check(UsbScanner.TransactionTranslators(hubInfo) == "Single", "bDeviceProtocol 1 is one TT for all ports.");
         Check(UsbScanner.DescriptorRead(hubInfo) && !UsbScanner.DescriptorRead(new byte[35]), "A port whose device descriptor Windows hasn't read yet isn't a device.");
+        // A device qualifier: 10 bytes, type 6, USB 2.0; a full-speed-only device refuses the request.
+        Check(UsbScanner.HighSpeedQualifier([10, 6, 0x00, 0x02, 0, 0, 0, 64, 1, 0]) && !UsbScanner.HighSpeedQualifier([10, 6, 0x10, 0x01, 0, 0, 0, 64, 1, 0])
+            && !UsbScanner.HighSpeedQualifier([10, 6, 0x00]) && !UsbScanner.HighSpeedQualifier(null), "Only a well-formed USB 2.0 device qualifier shows high-speed support.");
+        // A USB 2 device stuck at 12 Mb/s: behind a USB 1.1 hub, or on a connection that couldn't hold high speed.
+        var stuck = new UsbNode { Id = "fs/1/1", Kind = "Device", Name = "Webcam", LinkMbps = 12, HighSpeedCapable = true, SocketSpeed = "USB 2.0" };
+        var oldHub = new UsbNode { Id = "fs/1", Kind = "Hub", Name = "Old hub", LinkMbps = 12, Children = [stuck] };
+        var stuckSpeed = Explanations.Speed(stuck, [new() { Kind = "Root hub" }, oldHub, stuck]);
+        Check(HubRelationships.ReducedSpeed(stuck) && Explanations.SpeedLabel(stuck) == "Running at 12 Mb/s" && Explanations.SpeedSeverity(stuck) == Severity.Warning
+            && stuckSpeed.What == "This device is connected at 12 Mb/s (USB 1 speed), though it supports USB 2 (480 Mb/s)." && stuckSpeed.Affects == "Yes: its transfers are limited to 12 Mb/s."
+            && stuckSpeed.Cause.StartsWith("The hub it's plugged into runs at 12 Mb/s"), "A USB 2 device behind a USB 1.1 hub runs at 12 Mb/s, and the hub is named as the cause.");
+        Check(Explanations.HeldBack(oldHub).SequenceEqual([stuck]), "A USB 1.1 hub holds back a high-speed device behind it.");
+        Check(Explanations.Speed(stuck, [new() { Kind = "Root hub" }, new UsbNode { Id = "hs", Kind = "Hub", LinkMbps = 480 }, stuck]).Cause.StartsWith("Its connection couldn't hold USB 2's high speed"),
+            "Behind a high-speed hub, a 12 Mb/s link means the connection couldn't hold high speed.");
+        stuck.HighSpeedCapable = false;
+        Check(!HubRelationships.ReducedSpeed(stuck) && !HubRelationships.ReducedSpeed(new UsbNode { Kind = "Device", LinkMbps = 12 }), "A full-speed-only device at 12 Mb/s is where it belongs.");
+        // A controller's PCIe link is shared by everything on its ports.
+        Check(UsbBudgets.PcieMbps(2, 1) == 4000 && UsbBudgets.PcieMbps(4, 16) == 15754 * 16 && UsbBudgets.PcieMbps(null, 4) == null && UsbBudgets.PcieMbps(7, 1) == null
+            && UsbBudgets.PcieText(3, 4) == "PCIe 3.0 ×4", "PCIe links are read after line encoding.");
+        UsbNode Card(int generation, int lanes, params UsbNode[] ports) => new() { Kind = "Controller", PcieGeneration = generation, PcieLanes = lanes, PcieMaxGeneration = 3, PcieMaxLanes = 2,
+            Children = [new UsbNode { Kind = "Root hub", Children = [.. ports] }] };
+        UsbNode Linked(double mbps) => new() { Kind = "Device", Name = "SSD", DeviceType = "External drive", LinkMbps = mbps };
+        var capped = Card(2, 1, Linked(10000));
+        Check(UsbBudgets.UplinkSeverity(capped) == Severity.Warning && IssueRules.For(capped).Contains((Severity.Warning, "Limited by PCIe link")), "A 10 Gb/s device on a PCIe 2.0 ×1 card is held back.");
+        var cappedWhy = Explanations.For(capped, "Limited by PCIe link", [capped]);
+        Check(cappedWhy.What.Contains("PCIe 2.0 ×1, about 4 Gb/s") && cappedWhy.What.Contains("It can do PCIe 3.0 ×2") && cappedWhy.Affects.StartsWith("Yes: your external drive is linked at 10 Gb/s")
+            && cappedWhy.Steps![0].Contains("slot"), "The explanation names the link, what it could do, and what it holds back.");
+        Check(UsbBudgets.UplinkSeverity(Card(2, 1, Linked(5000), Linked(5000))) == Severity.Note && UsbBudgets.UplinkSeverity(Card(2, 1, new UsbNode { Kind = "Empty port", SocketSpeed = "≥10 Gb/s" })) == Severity.Note,
+            "Ports that could outrun the link together, or one day, are a note.");
+        Check(UsbBudgets.UplinkSeverity(Card(3, 4, Linked(10000))) == null && UsbBudgets.UplinkSeverity(new UsbNode { Kind = "Controller" }) == null, "A link with room to spare, or none reported, says nothing.");
+        // Endpoints are what a controller runs out of; each device has a control endpoint plus one per open pipe.
+        UsbNode Busy(int pipes) => new() { Kind = "Device", Name = "Interface", ReservedMbps = 0, OpenPipes = [.. Enumerable.Repeat("pipe", pipes)] };
+        var crowded = new UsbNode { Kind = "Controller", Children = [new UsbNode { Kind = "Root hub", Children = [Busy(30), Busy(30), new UsbNode { Kind = "Device" }] }] };
+        Check(UsbBudgets.ControllerLoad(crowded) == (3, 63, 1) && !UsbBudgets.EndpointsRunningHigh(crowded), "Endpoints are counted per device: control plus open pipes; unread devices are counted as unreported.");
+        crowded.Children[0].Children.Add(Busy(0));
+        Check(IssueRules.For(crowded).Contains((Severity.Note, "Many endpoints in use")) && Explanations.For(crowded, "Many endpoints in use", [crowded]).Affects.StartsWith("Not right now"),
+            "A controller with many endpoints open is a note while everything works.");
+        crowded.Children[0].Children[0].DriverProblems.Add(new DeviceProblem { Code = 10 });
+        Check(Explanations.For(crowded, "Many endpoints in use", [crowded]).Affects.StartsWith("Maybe: Interface isn't working"), "A failing device on a crowded controller points to the endpoints.");
         var connecting = new UsbNode { Kind = "Unavailable", Status = "Enumerating" };
         Check(IssueRules.For(connecting).SequenceEqual([(Severity.Note, "Still connecting")]) && Explanations.For(connecting, "Still connecting", [connecting]).What.Contains("still setting it up"),
             "A port still being set up is a calm note, not a port error.");

@@ -147,7 +147,7 @@ internal static class Reports
             ("deviceClass", J.S(n.DeviceClass)), ("interfaceFunctions", J.Some(n.InterfaceFunctions.Select(x => (JsonNode)x))), ("hidUsages", J.Some(n.HidUsages.Select(x => (JsonNode)x))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["link"] = J.Obj(("usbVersion", n.UsbVersion), ("speed", n.Speed), ("linkMbps", J.N(n.LinkMbps)), ("lanes", n.LinkLanes), ("superSpeedPlusCapable", n.SuperSpeedPlusCapable),
-                ("slowerThanSupported", n.SpeedLimited ? true : null), ("protocols", n.Protocols));
+                ("slowerThanSupported", n.SpeedLimited || HubRelationships.FullSpeedOnly(n) ? true : null), ("highSpeedCapable", n.HighSpeedCapable), ("protocols", n.Protocols));
         else node["protocols"] = J.Obj(("ports", n.Protocols), ("downstream", J.S(n.DownstreamProtocols)));
         if (parent != null || n.Port > 0)
             node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("evidence", J.S(n.SocketEvidence)),
@@ -155,7 +155,9 @@ internal static class Reports
                 ("sharesSocketWith", n.CompanionId.Length > 0 && s.ById(n.CompanionId) is UsbNode c ? s.PathOf(c) : null),
                 ("alsoSharesSocketWith", J.Some(n.MoreCompanions.Where(m => m.Id.Length > 0 && s.ById(m.Id) != null).Select(m => (JsonNode)s.PathOf(s.ById(m.Id)!)))));
         if (n.PciId.Length > 0)
-            node["controller"] = J.Obj(("pciId", n.PciId), ("vendor", J.S(Topology.PciVendor(n.PciId))), ("subsystem", J.S(n.PciSubsystem)), ("revision", J.S(n.PciRevision)), ("pciAddress", J.S(n.PciAddress)));
+            node["controller"] = J.Obj(("pciId", n.PciId), ("vendor", J.S(Topology.PciVendor(n.PciId))), ("subsystem", J.S(n.PciSubsystem)), ("revision", J.S(n.PciRevision)), ("pciAddress", J.S(n.PciAddress)),
+                ("pcieLink", n.PcieGeneration is int g && n.PcieLanes is int l ? J.Obj(("generation", g), ("lanes", l), ("maxGeneration", n.PcieMaxGeneration), ("maxLanes", n.PcieMaxLanes), ("mbps", J.N(UsbBudgets.PcieMbps(g, l)))) : null),
+                ("endpointsInUse", UsbBudgets.ControllerLoad(n).Endpoints));
         node["location"] = J.Obj(("where", n.Location), ("evidence", n.LocationEvidence));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable),

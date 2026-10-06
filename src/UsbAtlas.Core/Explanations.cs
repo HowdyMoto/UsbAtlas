@@ -40,6 +40,28 @@ internal static class Explanations
                         "USB allows at most five hubs between a device and the computer, and monitors, docks and keyboards often have hubs inside.", ["Plug it, or the hub it's on, closer to the computer."]),
                     _ => new($"Windows reports this port as “{n.Status}”.", "Probably: Windows may not be able to use what's plugged in here.", "", ["Unplug the device and plug it back in.", "Try another port and cable."])
                 };
+            case "Limited by PCIe link" when UsbBudgets.Uplink(n) is (var uplink, _, var linked, var capped):
+            {
+                bool held = n.PcieMaxGeneration > n.PcieGeneration || n.PcieMaxLanes > n.PcieLanes;
+                string what = $"This controller reaches the computer over {UsbBudgets.PcieText(n.PcieGeneration!.Value, n.PcieLanes!.Value)}, about {UsbBudgets.Rate(uplink)} for all its ports together."
+                    + (held ? $" It can do {UsbBudgets.PcieText(n.PcieMaxGeneration ?? n.PcieGeneration.Value, n.PcieMaxLanes ?? n.PcieLanes.Value)}, so its slot or a setting is holding it back." : "");
+                string affects = capped != null ? $"Yes: {Kinds([capped])} is linked at {UsbBudgets.Rate(capped.LinkMbps!.Value)} but can move only about {UsbBudgets.Rate(uplink)} through this controller."
+                    : linked > uplink ? $"Only when they're busy together: what's plugged into its ports is linked at {UsbBudgets.Rate(linked)} in all, so transfers at the same time share about {UsbBudgets.Rate(uplink)}."
+                    : $"Not right now: a fast device on its quickest port would be held to about {UsbBudgets.Rate(uplink)}.";
+                var steps = new List<string>();
+                if (held) steps.Add("If it's a card in the computer, a slot with more lanes or a newer PCIe version lets it run at full speed; the motherboard's manual says which slots do.");
+                steps.Add("For fast drives, use a port on another controller: another host card here.");
+                return new(what, affects, "", steps);
+            }
+            case "Many endpoints in use":
+            {
+                var failing = n.Walk().Where(d => d.Kind is "Device" or "Hub" && d.DriverProblems.Count > 0).ToList();
+                return new($"Devices on this controller have {UsbBudgets.ControllerLoad(n).Endpoints} endpoints open: the channels it keeps for each device, one for control plus one for each pipe. Controllers hold only so many, and Windows doesn't say how many; some common ones top out at 96.",
+                    failing.Count > 0 ? $"Maybe: {Kinds(failing)} {(failing.Count == 1 ? "isn't" : "aren't")} working, and running out of endpoints is a common reason. Windows then shows “Not enough USB controller resources”."
+                        : "Not right now: everything plugged in is working. If it runs out, Windows refuses the next device with “Not enough USB controller resources”.", "",
+                    ["If a device shows “Not enough USB controller resources”, plug it into a port on another controller: another host card here.",
+                     "Unplug devices you aren't using. Webcams, audio interfaces, VR headsets, docks and hubs use the most endpoints."]);
+            }
             case "Still connecting":
                 return new("Something is plugged in here, and Windows was still setting it up when USB Atlas looked.", "Probably not: this usually finishes within seconds.", "",
                     ["Refresh (F5) in a moment. If it stays this way, unplug it and plug it back in."]);
@@ -191,11 +213,15 @@ internal static class Explanations
     private static string Percent(double part, double whole) => UsbBudgets.Share(part, whole).Split(' ')[0];
 
     // A device or hub linked slower than it supports: USB 2 when it supports USB 3, or 5 Gb/s when it supports 10.
-    internal static string SpeedLabel(UsbNode n) => n.LinkMbps == 5000 ? "Running at 5 Gb/s" : "Running at USB 2";
+    internal static string SpeedLabel(UsbNode n) => n.LinkMbps switch { 5000 => "Running at 5 Gb/s", 12 => "Running at 12 Mb/s", _ => "Running at USB 2" };
 
     // Devices behind a slow hub that support more than its link, so the hub holds them back.
-    internal static List<UsbNode> HeldBack(UsbNode hub) => hub.Walk().Skip(1).Where(d => d.Kind == "Device" && d.SpeedLimited
-        && (hub.LinkMbps != 5000 || d.SuperSpeedPlusCapable == true && d.LinkMbps == 5000)).ToList();
+    internal static List<UsbNode> HeldBack(UsbNode hub) => hub.Walk().Skip(1).Where(d => d.Kind == "Device" && hub.LinkMbps switch
+    {
+        12 => d.SpeedLimited || d.HighSpeedCapable == true,
+        5000 => d.SpeedLimited && d.SuperSpeedPlusCapable == true && d.LinkMbps == 5000,
+        _ => d.SpeedLimited
+    }).ToList();
 
     // A slow hub that slows nothing plugged into it is worth knowing, not a warning, and so is a built-in
     // connection, which there's no way to change.
@@ -205,10 +231,10 @@ internal static class Explanations
     // path runs from the host controller down to n.
     internal static Explanation Speed(UsbNode n, IReadOnlyList<UsbNode> path)
     {
-        bool usb2 = n.LinkMbps != 5000, hub = n.Kind == "Hub";
-        string noun = hub ? "hub" : "device", limit = usb2 ? "USB 2 speed" : "5 Gb/s";
-        string now = n.LinkMbps switch { 5000 => "5 Gb/s", 480 => "USB 2 (480 Mb/s)", double rate => UsbBudgets.Rate(rate), null => "a slower speed" };
-        string supports = n.SuperSpeedPlusCapable == true ? "10 Gb/s or faster" : "USB 3 (5 Gb/s)";
+        bool usb2 = n.LinkMbps != 5000, fullSpeed = n.LinkMbps == 12, hub = n.Kind == "Hub";
+        string noun = hub ? "hub" : "device", limit = fullSpeed ? "12 Mb/s" : usb2 ? "USB 2 speed" : "5 Gb/s";
+        string now = n.LinkMbps switch { 5000 => "5 Gb/s", 480 => "USB 2 (480 Mb/s)", 12 => "12 Mb/s (USB 1 speed)", double rate => UsbBudgets.Rate(rate), null => "a slower speed" };
+        string supports = n.SuperSpeedPlusCapable == true ? "10 Gb/s or faster" : n.SpeedLimited ? "USB 3 (5 Gb/s)" : "USB 2 (480 Mb/s)";
         string what = $"This {noun} is connected at {now}, though it supports {supports}.";
 
         string affects;
@@ -219,6 +245,7 @@ internal static class Explanations
         {
             var devices = n.Walk().Skip(1).Where(d => d.Kind == "Device").ToList();
             string fine = devices.Count == 0 ? "nothing is plugged into it"
+                : fullSpeed ? $"{Kinds(devices)} {(devices.Count == 1 ? "needs no more than 12 Mb/s, so it loses" : "need no more than 12 Mb/s, so they lose")} nothing"
                 : usb2 ? $"{Kinds(devices)} {(devices.Count == 1 ? "is a USB 2 device, so it loses" : "are USB 2 devices, so they lose")} nothing"
                 : $"{Kinds(devices)} {(devices.Count == 1 ? "doesn't" : "don't")} support more than 5 Gb/s";
             affects = $"Not right now: {fine}. A drive, camera or network adapter plugged in here would be limited to {limit}.";
@@ -246,6 +273,17 @@ internal static class Explanations
                     ["If this hub is in a monitor and the picture comes through the same cable, the cable is fine: the monitor is using the cable's fast lanes for the display. Some monitors have a menu setting, such as USB-C Prioritization, that gives some of them to USB at a cost in resolution or refresh rate. Without one, USB over this cable stays at USB 2: plug drives and other fast devices into the computer instead.",
                      "Otherwise, the cable probably carries only USB 2, as many charging cables do. Use one rated 5 Gb/s or faster."])
                 : ("Its USB 3 connection didn't come up; only its USB 2 side is connected.", [seat, cableStep]);
+        // At 12 Mb/s where high speed was possible: a USB 1.1 hub on the way, or a connection that couldn't hold
+        // high speed's faster signaling.
+        if (n.LinkMbps == 12)
+        {
+            var before = path.TakeWhile(p => p.Id != n.Id).ToList();
+            if (before.LastOrDefault(p => p.Kind == "Hub" && p.LinkMbps is <= 12) is UsbNode slow)
+                return ((slow == before.LastOrDefault() ? "The hub it's plugged into" : $"It's connected through {Topology.ShortName(slow)}, which") + " runs at 12 Mb/s (USB 1 speed); old hubs and some KVM switches carry only that.",
+                    [$"Plug this {noun} into a port on the computer, or a USB 2 or USB 3 hub."]);
+            return ("Its connection couldn't hold USB 2's high speed. Long, thin or damaged cables, extension cables and some adapters cause this.",
+                [seat, "Use a shorter, good-quality cable.", "Try another port."]);
+        }
         // A hub upstream that runs slower holds everything behind it back. A paired USB 3 hub's USB 2 side
         // isn't one: the device could have used its USB 3 side.
         var upstream = path.TakeWhile(p => p.Id != n.Id).LastOrDefault(p => p.Kind == "Hub" && !p.IsUsb2Companion && (usb2 ? p.LinkMbps is <= 480 : p.LinkMbps == 5000));

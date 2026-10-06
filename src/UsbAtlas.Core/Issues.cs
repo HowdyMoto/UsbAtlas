@@ -22,6 +22,8 @@ internal static class IssueRules
         // A hub that drops takes everything behind it along, as switching a KVM, changing monitor inputs or
         // undocking does, so it's a note; a device dropping on its own is much more likely a fault.
         if (n.QuickReconnects > 0) issues.Add((n.Kind == "Hub" ? Severity.Note : Severity.Warning, "Unstable connection"));
+        if (UsbBudgets.UplinkSeverity(n) is Severity uplink) issues.Add((uplink, "Limited by PCIe link"));
+        if (UsbBudgets.EndpointsRunningHigh(n)) issues.Add((Severity.Note, "Many endpoints in use"));
         // Firmware describing a port wrongly changes nothing plugged into it, so each finding is a note.
         foreach (var finding in n.PortMapWarnings) issues.Add((Severity.Note, finding));
         // A nearly full link still fits everything on it, so it's a note; peaks that can't all fit are a warning.

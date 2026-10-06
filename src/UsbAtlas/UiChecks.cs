@@ -583,6 +583,7 @@ public partial class MainWindow
             SelectNode(wheel); UpdateLayout();
             SelectNode(snapshot.Controllers[0]); UpdateLayout();
             Check(Row("Power saving") == "On" && Row("Power plan") == "Selective suspend on", "Host properties must show the root hub's power-saving setting and the power plan.");
+            Check(Row("PCIe link") == "PCIe 3.0 ×4 · about 31.5 Gb/s" && Row("Endpoints").EndsWith(" in use"), "Host properties must show the controller's PCIe link and endpoints in use.");
             snapshot.UsbSuspendPluggedIn = false; SelectNode(wheel); UpdateLayout();
             Check(Row("Power saving") == "On · plan disables it", "A device's power saving must say when the power plan disables it.");
             snapshot.UsbSuspendPluggedIn = true;

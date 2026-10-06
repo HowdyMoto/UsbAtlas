@@ -10,6 +10,8 @@ obj/
 /scan*.json
 /usb-atlas-*.json
 /preview*.png
+# Watch logs from usbatlas-cli watch --out, which run-cli.ps1 writes to the folder it starts in
+/*.jsonl
 /ui-test.txt
 /self-test.txt
 

@@ -69,6 +69,12 @@ public sealed class UsbNode
     public string PciSubsystem { get; set; } = "";
     public string PciRevision { get; set; } = "";
     public string PciAddress { get; set; } = "";
+    // The PCIe link a controller reaches the computer over, now and at most: its generation (1 is 2.5 GT/s,
+    // 2 is 5, 3 is 8, 4 is 16, 5 is 32, 6 is 64) and lanes. Null when Windows reports none.
+    public int? PcieGeneration { get; set; }
+    public int? PcieLanes { get; set; }
+    public int? PcieMaxGeneration { get; set; }
+    public int? PcieMaxLanes { get; set; }
     // The driver Windows loaded for the device itself, from its driver key: service, package version and
     // date, provider and INF. Empty when Windows has none recorded.
     public string DriverService { get; set; } = "";
@@ -101,6 +107,9 @@ public sealed class UsbNode
     public string SocketSpeed { get; set; } = "Not reported";
     public string SocketEvidence { get; set; } = "";
     public bool? SuperSpeedPlusCapable { get; set; }
+    // Linked at full speed: true when it answers a request for its device qualifier, so it supports high speed;
+    // false when it doesn't, as a full-speed-only device must refuse it, or couldn't be asked.
+    public bool? HighSpeedCapable { get; set; }
     public string Location { get; set; } = "Unknown";
     public string LocationEvidence { get; set; } = "Physical placement is not reported.";
     public string DeviceType { get; set; } = "USB device";

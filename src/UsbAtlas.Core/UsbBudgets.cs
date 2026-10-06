@@ -201,6 +201,44 @@ internal static class UsbBudgets
 
     internal static bool SuperSpeed(UsbNode n) => n.LinkMbps >= 5000 || n.Speed.StartsWith("SuperSpeed", StringComparison.Ordinal);
 
+    // A device takes one of its xHCI controller's device slots, and an endpoint for its control pipe plus one for
+    // each open pipe. Controllers hold only so many endpoints and don't say how many; some common Intel ones top
+    // out at 96, and Windows then refuses the next device with "Not enough USB controller resources".
+    internal static (int Devices, int Endpoints, int Unreported) ControllerLoad(UsbNode controller)
+    {
+        var connected = controller.Walk().Where(n => n.Kind is "Device" or "Hub").ToList();
+        return (connected.Count, connected.Sum(n => n.OpenPipes.Count + 1), connected.Count(n => n.ReservedMbps == null));
+    }
+    // Two thirds of the 96 some controllers allow: early enough to point at the controller before it runs out.
+    internal const int ManyEndpoints = 64;
+    internal static bool EndpointsRunningHigh(UsbNode n) => n.Kind == "Controller" && ControllerLoad(n).Endpoints >= ManyEndpoints;
+
+    // A PCIe link after line encoding: 8b/10b up to 5 GT/s, 128b/130b up to 32 GT/s, and FLIT at 64 GT/s.
+    internal static double? PcieMbps(int? generation, int? lanes) => generation is >= 1 and <= 6 && lanes is > 0
+        ? new[] { 2000.0, 4000, 7877, 15754, 31508, 60500 }[generation.Value - 1] * lanes.Value : null;
+    internal static string PcieText(int generation, int lanes) => $"PCIe {generation}.0 ×{lanes}";
+    // What a USB link carries after line encoding: 8b/10b at 5 Gb/s, 128b/132b beyond.
+    internal static double? UsbDataMbps(UsbNode n) => n.LinkMbps switch { 5000 => 4000, > 5000 and double rate => rate * 128 / 132, _ => null };
+    // The most a socket can carry, from a device linked there or the socket's own speed.
+    private static double? SocketDataMbps(UsbNode port) => UsbDataMbps(port) ?? port.SocketSpeed switch { "≥10 Gb/s" => 10000 * 128.0 / 132, "≥5 Gb/s" or "5 Gb/s" => 4000, _ => null };
+
+    // Everything on a controller's root ports shares its PCIe link to the computer: its usable rate, what its
+    // fastest port could carry, what's linked to its ports now, and a device linked faster than it alone.
+    internal static (double Uplink, double Fastest, double Linked, UsbNode? Capped)? Uplink(UsbNode controller)
+    {
+        if (controller.Kind != "Controller" || PcieMbps(controller.PcieGeneration, controller.PcieLanes) is not double uplink) return null;
+        var ports = controller.Children.Where(r => r.Kind == "Root hub").SelectMany(r => r.Children).ToList();
+        var links = ports.Where(p => p.Kind is "Device" or "Hub" && UsbDataMbps(p) != null).ToList();
+        return (uplink, ports.Select(SocketDataMbps).Max() ?? 0, links.Sum(p => UsbDataMbps(p)!.Value), links.FirstOrDefault(p => UsbDataMbps(p) > uplink));
+    }
+    // A device held back every time it's busy is a warning; ports that could only together, or one day, outrun it, a note.
+    internal static Severity? UplinkSeverity(UsbNode controller) => Uplink(controller) switch
+    {
+        (_, _, _, not null) => Severity.Warning,
+        (var uplink, var fastest, var linked, null) when fastest > uplink || linked > uplink => Severity.Note,
+        _ => null
+    };
+
     internal static void AnalyzePower(Snapshot snapshot)
     {
         foreach (var hub in snapshot.Nodes.Where(n => n.Kind == "Hub").ToList())

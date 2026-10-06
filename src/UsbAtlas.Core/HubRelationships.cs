@@ -70,7 +70,11 @@ internal static class HubRelationships
     // A USB 3 hub's USB 2 side reports the SuperSpeed capability of its other side, but 480 Mb/s is its
     // native rate, so only pairing, known after Analyze, says whether a slower link is a problem: it is
     // when the USB 3 side is missing.
-    internal static bool ReducedSpeed(UsbNode node) => node.SpeedLimited && !node.IsUsb2Companion && (!Usb2HubAtNativeSpeed(node) || node.Usb3SideMissing);
+    internal static bool ReducedSpeed(UsbNode node) => node.SpeedLimited && !node.IsUsb2Companion && (!Usb2HubAtNativeSpeed(node) || node.Usb3SideMissing)
+        || FullSpeedOnly(node);
+    // A device that supports USB 2's high speed, linked at 12 Mb/s.
+    internal static bool FullSpeedOnly(UsbNode node) => node.LinkMbps == 12 && node.HighSpeedCapable == true;
+    internal const string FullSpeedNote = "Speed evidence: this device answers the request for its high-speed details (its device qualifier), so it supports USB 2's 480 Mb/s, but it is connected at 12 Mb/s.";
     // Evidence for Detection details; what it means and what to do lead Properties (Explanations.Speed).
     internal const string ReducedSpeedNote = "Speed evidence: Windows reports that this device supports a faster link than its current connection.";
     internal const string Usb3SideMissingNote = "Speed evidence: this hub reports USB 3 support but is connected at 480 Mb/s, no USB 3 side of it appears in this scan, and Windows reports the USB 3 half of its socket empty.";
@@ -79,7 +83,7 @@ internal static class HubRelationships
     {
         foreach (var node in snapshot.Nodes.Where(ReducedSpeed))
         {
-            var note = node.Usb3SideFailed ? Usb3SideFailedNote : node.Usb3SideMissing ? Usb3SideMissingNote : ReducedSpeedNote;
+            var note = node.Usb3SideFailed ? Usb3SideFailedNote : node.Usb3SideMissing ? Usb3SideMissingNote : FullSpeedOnly(node) && !node.SpeedLimited ? FullSpeedNote : ReducedSpeedNote;
             if (!node.Notes.Contains(note)) node.Notes.Add(note);
         }
     }

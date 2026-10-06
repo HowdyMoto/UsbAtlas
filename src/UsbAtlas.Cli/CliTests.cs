@@ -79,6 +79,9 @@ internal static class CliTests
         Check(show["issues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Over power budget"), "show explains the node's issues.");
         Check(TextOut.Render(show).Contains("transactionTranslators: Share one link · single TT"), "show renders as key: value text.");
         var host = Reports.Show(s, s.Resolve("H01"));
+        var pciHost = DemoData.Create(); pciHost.Controllers[0].PciId = "1B21:2142";
+        var pcie = Reports.Show(new Session(pciHost, "demo"), pciHost.Controllers[0])["node"]!["controller"]!;
+        Check(pcie["pcieLink"]!["generation"]!.GetValue<int>() == 3 && pcie["pcieLink"]!["lanes"]!.GetValue<int>() == 4 && pcie["endpointsInUse"]!.GetValue<int>() > 0, "show reports a controller's PCIe link and endpoints in use.");
         Check(host["node"]!["hub"]!["ports"]!.GetValue<int>() == 9 && host["children"]!.AsArray().Count == 9, "A merged host shows its root ports.");
 
         var budget = Reports.Budget(s, null);
