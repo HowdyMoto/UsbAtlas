@@ -97,6 +97,9 @@ internal static class Reports
         return string.Join(" · ", parts);
     }
 
+    // The hub whose USB 3 side belongs on this empty or failed port, by path.
+    private static string? HalfOf(Session s, UsbNode port) => HubRelationships.MissingUsb3HubFor(port, s.Snapshot) is UsbNode hub ? s.PathOf(hub) : null;
+
     internal static JsonObject Tree(Session s, bool ports)
     {
         JsonObject Node(UsbNode n)
@@ -104,11 +107,13 @@ internal static class Reports
             var children = (Topology.MergedRoot(n) ?? n).Children;
             var o = J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("figures", J.S(Figures(n))),
                 ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)),
-                ("issues", J.Some(IssuesOf(s, n).Select(i => (JsonNode)$"{i.Severity.ToString().ToLowerInvariant()}: {i.Text}"))));
+                ("issues", J.Some(IssuesOf(s, n).Select(i => (JsonNode)$"{i.Severity.ToString().ToLowerInvariant()}: {i.Text}"))),
+                ("usb3HalfOf", HalfOf(s, n)));
             var shown = children.Where(c => ports || c.Kind != "Empty port").OrderBy(c => c.Port).ToList();
             if (shown.Count > 0) o["children"] = J.Arr(shown.Select(c => (JsonNode)Node(c)));
-            var empty = children.Where(c => c.Kind == "Empty port").OrderBy(c => c.Port).Select(c => c.Port).ToList();
-            if (!ports && empty.Count > 0) o["emptyPorts"] = J.Arr(empty.Select(p => (JsonNode)p.ToString("00")));
+            var empty = children.Where(c => c.Kind == "Empty port").OrderBy(c => c.Port).ToList();
+            // An empty port isn't always idle: it may be where a hub's USB 3 side should have connected.
+            if (!ports && empty.Count > 0) o["emptyPorts"] = J.Arr(empty.Select(p => (JsonNode)(p.Port.ToString("00") + (HalfOf(s, p) is string hub ? $" (USB 3 half of {hub}'s socket, not connected)" : ""))));
             return o;
         }
         var report = Header(s, "tree");
@@ -147,7 +152,8 @@ internal static class Reports
             ("deviceClass", J.S(n.DeviceClass)), ("interfaceFunctions", J.Some(n.InterfaceFunctions.Select(x => (JsonNode)x))), ("hidUsages", J.Some(n.HidUsages.Select(x => (JsonNode)x))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["link"] = J.Obj(("usbVersion", n.UsbVersion), ("speed", n.Speed), ("linkMbps", J.N(n.LinkMbps)), ("lanes", n.LinkLanes), ("superSpeedPlusCapable", n.SuperSpeedPlusCapable),
-                ("slowerThanSupported", n.SpeedLimited || HubRelationships.FullSpeedOnly(n) ? true : null), ("highSpeedCapable", n.HighSpeedCapable), ("protocols", n.Protocols));
+                ("slowerThanSupported", n.SpeedLimited || HubRelationships.FullSpeedOnly(n) ? true : null), ("highSpeedCapable", n.HighSpeedCapable), ("protocols", n.Protocols),
+                ("typicalBestTransfer", UsbBudgets.BestTransfer(n.LinkMbps) is { Length: > 0 } best ? $"{best} for a fast drive; typical, not measured" : null));
         else node["protocols"] = J.Obj(("ports", n.Protocols), ("downstream", J.S(n.DownstreamProtocols)));
         if (parent != null || n.Port > 0)
             node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("evidence", J.S(n.SocketEvidence)),
@@ -197,7 +203,17 @@ internal static class Reports
                 ("modes", J.Arr(b.Modes.Select(m => (JsonNode)J.Obj(("index", m.Index), ("svid", m.Svid), ("name", m.Name), ("description", J.S(m.Description)), ("state", m.State.ToLowerInvariant()), ("vdo", J.S(m.Vdo)))))));
         if (n.QuickReconnects > 0)
             node["reconnects"] = J.Obj(("count", n.QuickReconnects), ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))));
+        if (n.Display is DisplayFinding f)
+            node["display"] = J.Obj(("finding", UsbAtlas.Displays.NotShowing), ("lastDisplay", J.S(f.DisplayName)), ("lastShownThrough", J.S(f.GpuName)),
+                ("lastShown", f.LastShown?.ToString("yyyy-MM-dd HH:mm")), ("adapterHasDriver", f.GpuName.Length > 0 ? !f.GpuWithoutDriver : null));
         report["node"] = node;
+        // An empty socket half where a hub's USB 3 side should be explains that first, as the app does.
+        if (HubRelationships.MissingUsb3HubFor(n, s.Snapshot) is UsbNode lost)
+        {
+            var e = Explanations.MissingUsb3Half(lost, s.Chain(lost));
+            report["usb3HalfOf"] = J.Obj(("hub", s.PathOf(lost)), ("name", Topology.ShortName(lost)), ("severity", Explanations.SpeedSeverity(lost).ToString().ToLowerInvariant()),
+                ("what", e.What), ("affects", J.S(e.Affects)), ("cause", J.S(e.Cause)), ("steps", J.Some((e.Steps ?? []).Select(x => (JsonNode)x))));
+        }
         report["upstream"] = J.Arr(chain.SkipLast(1).Select(c => (JsonNode)J.Obj(("path", s.PathOf(c)), ("name", Topology.ShortName(c)), ("kind", Topology.Label(c)), ("figures", J.S(Figures(c))))));
         if (parent != null)
             report["siblings"] = J.Arr((Topology.MergedRoot(parent) ?? parent).Children.Where(c => c != n && c.Kind != "Empty port").OrderBy(c => c.Port)
@@ -205,10 +221,29 @@ internal static class Reports
         var children = (Topology.MergedRoot(n) ?? n).Children;
         if (children.Count > 0)
             report["children"] = J.Arr(children.OrderBy(c => c.Port).Select(c => (JsonNode)(c.Kind == "Empty port"
-                ? J.Obj(("path", s.PathOf(c)), ("kind", "Empty port"), ("connector", c.Connector), ("socketSpeed", c.SocketSpeed))
+                ? J.Obj(("path", s.PathOf(c)), ("kind", "Empty port"), ("connector", c.Connector), ("socketSpeed", c.SocketSpeed), ("usb3HalfOf", HalfOf(s, c)))
                 : J.Obj(("path", s.PathOf(c)), ("name", Topology.ShortName(c)), ("kind", Topology.Label(c)), ("figures", J.S(Figures(c)))))));
         report["issues"] = J.Arr(IssuesOf(s, n).Select(i => (JsonNode)Explain(s, i.Severity, i.Text, i.Node, false)));
         report["notes"] = J.Some(n.Notes.Select(x => (JsonNode)x));
+        return report;
+    }
+
+    // Graphics adapters, every monitor Windows has known and the USB-C displays whose picture is missing.
+    // A USB-C monitor's picture doesn't travel as USB, so this is where a dark monitor with working USB leads.
+    internal static JsonObject Displays(Session s)
+    {
+        var report = Header(s, "displays");
+        report["note"] = "A USB-C monitor's picture travels in a USB-C alternate mode, beside its USB, so its hub, keyboard and mouse can work while it shows nothing. The adapter a monitor was last shown through is a hint at which one drives that port: laptops that can switch adapters may use either.";
+        report["adapters"] = J.Arr(s.Snapshot.Gpus.Select(g => (JsonNode)J.Obj(("name", UsbAtlas.Displays.GpuLabel(g)), ("vendor", J.S(g.Vendor)),
+            ("driver", g.HasDriver ? $"running ({g.Service})" : g.Service.Length == 0 ? "none" : $"not running (Code {g.ProblemCode})"), ("instanceId", g.InstanceId))));
+        string Through(DisplayInfo d) => s.Snapshot.Gpus.FirstOrDefault(g => g.InstanceId.Equals(d.GpuInstanceId, StringComparison.OrdinalIgnoreCase)) is GpuInfo g ? UsbAtlas.Displays.GpuLabel(g) : d.GpuInstanceId;
+        report["monitors"] = J.Arr(s.Snapshot.Displays.OrderByDescending(d => d.Present).ThenByDescending(d => d.LastRemoval ?? d.LastArrival).Select(d => (JsonNode)J.Obj(
+            ("name", UsbAtlas.Displays.MonitorName(d.Name)), ("where", d.External ? "external" : "built in"), ("connected", d.Present),
+            (d.Present ? "shownThrough" : "lastShownThrough", J.S(Through(d))), ("lastConnected", d.LastArrival?.ToString("yyyy-MM-dd HH:mm")),
+            ("lastRemoved", d.Present ? null : d.LastRemoval?.ToString("yyyy-MM-dd HH:mm")), ("instanceId", d.InstanceId))));
+        report["usbCDisplays"] = J.Arr(s.Listed.Where(n => n.Display != null).Select(n => (JsonNode)Explain(s, UsbAtlas.Displays.SeverityOf(n), UsbAtlas.Displays.NotShowing, n, true)));
+        if (s.Snapshot.Gpus.Count == 0 && s.Snapshot.Displays.Count == 0)
+            report["note"] = s.Source == "live" ? "Windows reported no graphics adapters or monitors to this scan." : "This snapshot has no display information; take one with a current atlascli scan.";
         return report;
     }
 

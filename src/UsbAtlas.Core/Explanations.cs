@@ -153,6 +153,8 @@ internal static class Explanations
                     "Not yet, while some are idle. When they stream at the same time, Windows may refuse one and it stops working.", "",
                     [$"Move {Names(busiest)} to another hub or straight to the computer.", "Or use a hub with one translator per port (Multi-TT)."]);
             }
+            case Displays.NotShowing:
+                return Displays.Explain(n);
             case DriverProblem:
                 return DriverExplanation(n, noun);
             case Billboard.Failed or Billboard.NotEntered when n.Billboard != null:
@@ -233,6 +235,39 @@ internal static class Explanations
     // connection, which there's no way to change.
     internal static Severity SpeedSeverity(UsbNode n) =>
         n.Kind == "Hub" && HeldBack(n).Count == 0 || n.Connector == "Internal" ? Severity.Note : Severity.Warning;
+
+    // The empty or failed USB 3 half of the socket a hub's USB 2 side uses, where its USB 3 side should
+    // be. Windows lists it as just another port; the hub's speed explanation says why and what to do.
+    // hubPath runs from the host controller down to the hub.
+    internal static Explanation MissingUsb3Half(UsbNode hub, IReadOnlyList<UsbNode> hubPath)
+    {
+        var speed = Speed(hub, hubPath);
+        string name = Topology.ShortName(hub);
+        string what = hub.Usb3SideFailed
+            ? $"This is the USB 3 half of the socket {name} is plugged into. The hub's USB 3 side tried to connect here and failed, so the hub runs at USB 2."
+            : $"This is the USB 3 half of the socket {name} is plugged into. The hub's USB 3 side should connect here, but nothing did, so the hub runs at USB 2.";
+        return new(what, speed.Affects, speed.Cause, speed.Steps);
+    }
+
+    // A connection on the canvas: what its width, dashes and color say about the link it stands for.
+    internal static string LinkHelp(UsbNode n, string fromPath)
+    {
+        string rate = n.LinkMbps switch { 1.5 => "1.5 Mb/s (low speed)", 12 => "12 Mb/s (full speed, USB 1)", 480 => "480 Mb/s (high speed, USB 2)", 5000 => "5 Gb/s (SuperSpeed, USB 3)",
+            _ => n.Speed.StartsWith("SuperSpeedPlus", StringComparison.Ordinal) ? "10 Gb/s or faster (SuperSpeedPlus)" : "an unreported rate" };
+        var lines = new List<string>
+        {
+            $"{Topology.ShortName(n)} connects to {fromPath} at {rate}.",
+            "Width is the negotiated link rate, the most the connection can signal, shared with everything upstream. Wider is faster: 12 Mb/s, 480 Mb/s, 5 Gb/s and 10 Gb/s+.",
+        };
+        if (HubRelationships.ReducedSpeed(n))
+            lines.Add($"Dashed: it runs slower than it supports ({SpeedLabel(n)}). " + (SpeedSeverity(n) == Severity.Warning
+                ? "Amber because that slows something plugged in now."
+                : n.Connector == "Internal" ? "Gray because it's built in, so there's nothing to change."
+                : "Gray because nothing plugged in is slowed by it now."));
+        lines.Add("It turns blue along the path to the selected card.");
+        lines.Add($"Click to select {Topology.ShortName(n)}.");
+        return string.Join("\n", lines);
+    }
 
     // path runs from the host controller down to n.
     internal static Explanation Speed(UsbNode n, IReadOnlyList<UsbNode> path)

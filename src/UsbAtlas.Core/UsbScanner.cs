@@ -94,6 +94,13 @@ public sealed class UsbScanner
         PortMap.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
+        try
+        {
+            var (gpus, displays, billboards) = UsbAtlas.Displays.Read();
+            snapshot.Gpus = gpus; snapshot.Displays = displays;
+            UsbAtlas.Displays.Analyze(snapshot, billboards);
+        }
+        catch (Exception ex) when (ex is Win32Exception or ExternalException or ArgumentException) { snapshot.Diagnostics.Add("Displays and graphics adapters unavailable: " + ex.Message); }
         PowerSaving.Read(snapshot, devices);
         PowerSaving.Analyze(snapshot);
         if (snapshot.Controllers.Count == 0) snapshot.Diagnostics.Add("No USB host controllers were returned by Windows.");

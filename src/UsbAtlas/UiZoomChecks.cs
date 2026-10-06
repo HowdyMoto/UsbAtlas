@@ -79,6 +79,29 @@ public partial class MainWindow
             Check(FramingShortcut(System.Windows.Input.Key.D2) && detail == CardDetail.Full && GraphScale.ScaleX == 1 && cards.ContainsKey("big/root/4/6"), "Shift+2 must center the selection at full size.");
             var found = new Rect(cards["big/root/4/6"].Point, new Size(cards["big/root/4/6"].Card.Width, cards["big/root/4/6"].Card.Height));
             Check(new Rect(0, 0, GraphScroll.ViewportWidth, GraphScroll.ViewportHeight).Contains(Graph.TranslatePoint(new Point(found.X + found.Width / 2, found.Y + found.Height / 2), GraphScroll)), "Shift+2 must bring the selection into view.");
+            // The view controls are glyph buttons, each with a short tooltip, a few words and its shortcut as a key.
+            var viewButtons = VisualDescendants(ViewControls).OfType<System.Windows.Controls.Button>().ToList();
+            Check(viewButtons.Count == 6, "The view controls must be the two layouts, find selection, fit all, zoom in and zoom out.");
+            foreach (var button in viewButtons)
+            {
+                string name = System.Windows.Automation.AutomationProperties.GetName(button);
+                var tip = button.ToolTip as System.Windows.Controls.StackPanel;
+                var words = tip?.Children.OfType<System.Windows.Controls.TextBlock>().FirstOrDefault()?.Text ?? "";
+                var key = tip?.Children.OfType<System.Windows.Controls.Border>().FirstOrDefault(b => Equals(b.Tag, ShortcutKeyTag))?.Child as System.Windows.Controls.TextBlock;
+                Check(words.Length > 0 && words.Split(' ').Length <= 3 && key != null && (key.Text.StartsWith("Shift+") || key.Text.StartsWith("Ctrl+")),
+                    $"The {name} button's tooltip must be a few words with its shortcut drawn as a key.");
+            }
+            // A tooltip opens in a popup of its own, so its preview is drawn on its own: the zoom-in tip on the tooltip surface.
+            var tipShown = new System.Windows.Controls.Border { Child = ShortcutTip("Zoom in", "Ctrl+="), Padding = new Thickness(8, 5, 8, 5), BorderThickness = new Thickness(1), Background = Brush("Surface"), BorderBrush = Brush("Border") };
+            tipShown.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); tipShown.Arrange(new Rect(tipShown.DesiredSize)); tipShown.UpdateLayout();
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)Math.Ceiling(tipShown.ActualWidth), (int)Math.Ceiling(tipShown.ActualHeight), 96, 96, System.Windows.Media.PixelFormats.Pbgra32); bitmap.Render(tipShown);
+            var png = new System.Windows.Media.Imaging.PngBitmapEncoder(); png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+            using (var file = System.IO.File.Create("tooltip-preview.png")) png.Save(file);
+            Check(tipShown.ActualWidth < 160, $"A view control's tooltip must stay short; the zoom-in tip is {tipShown.ActualWidth:0} px wide.");
+            double scale = GraphScale.ScaleX;
+            Check(ZoomShortcut(System.Windows.Input.Key.OemPlus) && GraphScale.ScaleX > scale, "Ctrl+= must zoom in.");
+            scale = GraphScale.ScaleX;
+            Check(ZoomShortcut(System.Windows.Input.Key.OemMinus) && GraphScale.ScaleX < scale && !ZoomShortcut(System.Windows.Input.Key.A), "Ctrl+− must zoom out, and other keys must pass through.");
             Check(FramingShortcut(System.Windows.Input.Key.D0) && readableView && !FramingShortcut(System.Windows.Input.Key.A), "Shift+0 must show 100%, and other keys must pass through.");
             // Keyboard navigation from far cards reads the next card at full size.
             OverviewClick(this, new RoutedEventArgs());

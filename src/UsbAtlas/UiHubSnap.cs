@@ -17,7 +17,7 @@ public partial class MainWindow
     {
         var stages = layout.SnappedStages!;
         double firstX = left + stages[0].X, lastX = stages.Max(s => left + s.X + s.Width), tallest = stages.Max(s => HeightFor(s.Node));
-        var enclosure = new Border { Width = lastX - firstX + 20, Height = 28 + tallest + TopologyLayout.FrameBelow, CornerRadius = new CornerRadius(8), BorderBrush = Brush("Accent"), BorderThickness = new Thickness(1), Background = Brush("Selection"), IsHitTestVisible = false, Tag = StageFrameTag, Child = new TextBlock { Text = "Linked hub stages", FontSize = 12, Foreground = Brush("TextSecondary"), Margin = new Thickness(10, 4, 0, 0), VerticalAlignment = VerticalAlignment.Top } };
+        var enclosure = new Border { Width = lastX - firstX + 20, Height = 28 + tallest + TopologyLayout.FrameBelow, CornerRadius = new CornerRadius(8), BorderBrush = Brush("Accent"), BorderThickness = new Thickness(1), Background = Brush("Selection"), Tag = StageFrameTag, ToolTip = "Linked hub stages: hub chips you snapped together as one enclosure, with Snap to upstream hub. The connections and port numbers inside are the real ones. Select a stage to unlink it.", Child = new TextBlock { Text = "Linked hub stages", FontSize = 12, Foreground = Brush("TextSecondary"), Margin = new Thickness(10, 4, 0, 0), VerticalAlignment = VerticalAlignment.Top } };
         // The frame lies beneath every connection, so the host's reaches the first stage's card through it.
         Canvas.SetLeft(enclosure, firstX - 10); Canvas.SetTop(enclosure, top); Panel.SetZIndex(enclosure, -1); Graph.Children.Add(enclosure);
         foreach (var stage in stages) Place(stage, left + stage.X, top + stage.Y);
