@@ -63,9 +63,9 @@ internal static class PortMapFile
         try { node = JsonNode.Parse(File.ReadAllText(file)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { throw new CliException($"Can't load {file}: {ex.Message}"); }
         if (node is not JsonObject map || map["controllers"] is not JsonArray)
-            throw new CliException($"{file} isn't a USB Atlas port map. Make one with usbatlas-cli map --out FILE.");
+            throw new CliException($"{file} isn't a USB Atlas port map. Make one with atlascli map --out FILE.");
         if (Str(map["kind"]) != Kind)
-            throw new CliException($"{file} is a snapshot, not a port map. Make a map from it with usbatlas-cli map --input {file} --out FILE.");
+            throw new CliException($"{file} is a snapshot, not a port map. Make a map from it with atlascli map --input {file} --out FILE.");
         return map;
     }
 

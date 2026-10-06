@@ -42,7 +42,7 @@ internal static class TextOut
             if (i["cause"] is JsonNode cause) sb.AppendLine("  Cause: " + Str(cause));
             if (i["steps"] is JsonArray steps) { sb.AppendLine("  Do:"); foreach (var step in steps) sb.AppendLine("    - " + Str(step)); }
         }
-        if (issues.Count > 0) { sb.AppendLine(); sb.AppendLine("Details and evidence for any of these: usbatlas-cli show <path>"); }
+        if (issues.Count > 0) { sb.AppendLine(); sb.AppendLine("Details and evidence for any of these: atlascli show <path>"); }
         return sb.ToString();
     }
     private static string Plural(JsonNode? count, string word) => $"{Str(count)} {word}{(Str(count) == "1" ? "" : "s")}";

@@ -69,7 +69,7 @@ internal sealed class Session
             Normalize(snapshot);
             // Derived from what the file holds, so a snapshot saved before a rule existed is still checked by it.
             PortMap.Analyze(snapshot);
-            if (snapshot.Controllers.Count == 0 && snapshot.Diagnostics.Count == 0) throw new CliException($"{file} has no controllers. Is it a USB Atlas snapshot (usbatlas-cli scan, or Export in the app)?");
+            if (snapshot.Controllers.Count == 0 && snapshot.Diagnostics.Count == 0) throw new CliException($"{file} has no controllers. Is it a USB Atlas snapshot (atlascli scan, or Export in the app)?");
             return snapshot;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
@@ -150,7 +150,7 @@ internal sealed class Session
         return found.Count switch
         {
             1 => found[0],
-            0 => throw new CliException($"Nothing matches “{target}”. Run usbatlas-cli tree to see paths."),
+            0 => throw new CliException($"Nothing matches “{target}”. Run atlascli tree to see paths."),
             _ => throw new CliException($"“{target}” matches {found.Count} nodes; name one by path:\n" + string.Join("\n", found.Take(12).Select(n => $"  {PathOf(n)}  {Topology.ShortName(n)} ({Topology.Label(n)})")) + (found.Count > 12 ? $"\n  … and {found.Count - 12} more" : ""))
         };
     }
