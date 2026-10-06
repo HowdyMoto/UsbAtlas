@@ -147,7 +147,8 @@ internal static class Reports
             ("deviceClass", J.S(n.DeviceClass)), ("interfaceFunctions", J.Some(n.InterfaceFunctions.Select(x => (JsonNode)x))), ("hidUsages", J.Some(n.HidUsages.Select(x => (JsonNode)x))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["link"] = J.Obj(("usbVersion", n.UsbVersion), ("speed", n.Speed), ("linkMbps", J.N(n.LinkMbps)), ("lanes", n.LinkLanes), ("superSpeedPlusCapable", n.SuperSpeedPlusCapable),
-                ("slowerThanSupported", n.SpeedLimited || HubRelationships.FullSpeedOnly(n) ? true : null), ("highSpeedCapable", n.HighSpeedCapable), ("protocols", n.Protocols));
+                ("slowerThanSupported", n.SpeedLimited || HubRelationships.FullSpeedOnly(n) ? true : null), ("highSpeedCapable", n.HighSpeedCapable), ("protocols", n.Protocols),
+                ("typicalBestTransfer", UsbBudgets.BestTransfer(n.LinkMbps) is { Length: > 0 } best ? $"{best} for a fast drive; typical, not measured" : null));
         else node["protocols"] = J.Obj(("ports", n.Protocols), ("downstream", J.S(n.DownstreamProtocols)));
         if (parent != null || n.Port > 0)
             node["socket"] = J.Obj(("port", n.Port), ("connector", n.Connector), ("socketSpeed", n.SocketSpeed), ("evidence", J.S(n.SocketEvidence)),
