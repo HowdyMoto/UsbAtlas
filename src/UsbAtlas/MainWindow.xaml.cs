@@ -259,6 +259,7 @@ public partial class MainWindow : Window
             Field("Polling rate", node.Kind == "Device" ? node.PollIntervalMs is double ms ? $"{UsbBudgets.PollingRate(ms)} · {UsbBudgets.PollingInterval(ms)}" : node.ReservedMbps != null ? NotApplicable : "Not reported" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable);
             Field("Power source", Reported(node.PowerSource));
             Field("Power saving", attached ? PowerSavingText(node) : Reported(""));
+            Field("Wakes computer", attached ? node.WakeSetting : Reported(""), "Device Manager's “Allow this device to wake the computer”: whether this device may wake the computer from sleep. Not supported means no driver for it offers the setting.");
             Field("Power at 5 V", attached && node.MaxPowerMa is int draw ? $"{draw * 0.005:0.##} W declared" : Reported(""), "Its power request at USB's nominal 5 volts, from its descriptor (MaxPower). A declared maximum, not a measurement.");
             Field("Reserved at peak", attached && node.PeakReservedMbps is double peak ? $"Up to {UsbBudgets.Rate(peak)} when active" : Reported(""), "The most bus time it would hold when fully active, such as a camera while streaming, from its busiest alternate settings.");
             if (UsbBudgets.LinkUse(node) is (var use, var room, _))

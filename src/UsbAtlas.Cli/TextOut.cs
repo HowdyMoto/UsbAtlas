@@ -29,6 +29,7 @@ internal static class TextOut
         sb.AppendLine($"{Plural(summary["errors"], "error")}, {Plural(summary["warnings"], "warning")}, {Plural(summary["notes"], "note")}");
         var plan = r["powerPlan"]!.AsObject();
         sb.AppendLine($"USB selective suspend in the power plan: plugged in {Str(plan["pluggedIn"])}, battery {Str(plan["onBattery"])}; now {Str(plan["powerSource"])}");
+        if (r["lastWake"] is JsonObject wake) sb.AppendLine($"Last woke from sleep {Str(wake["time"])}: {Str(wake["source"])}{(wake["path"] is JsonNode at ? $" ({Str(at)} {Str(wake["name"])})" : "")}");
         foreach (var d in r["scanDiagnostics"]?.AsArray() ?? []) sb.AppendLine("Scan: " + Str(d));
         if (r["fixFirst"] is JsonArray { Count: > 0 } first)
         {

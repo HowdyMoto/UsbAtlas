@@ -75,6 +75,12 @@ internal static class Reports
         report["fixFirst"] = FixFirst(s);
         report["counts"] = Counts(s);
         report["powerPlan"] = PowerPlan(s.Snapshot);
+        if (s.Snapshot.LastWake is WakeInfo wake)
+        {
+            var source = s.Snapshot.Nodes.FirstOrDefault(n => wake.InstanceId.Length > 0 && n.InstanceId.Equals(wake.InstanceId, StringComparison.OrdinalIgnoreCase));
+            report["lastWake"] = J.Obj(("time", wake.Time.ToString("yyyy-MM-dd HH:mm")), ("source", wake.Source.Length > 0 ? wake.Source : "Not recorded by Windows"),
+                ("path", source != null ? s.PathOf(source) : null), ("name", source != null ? Topology.ShortName(source) : null));
+        }
         if (s.Snapshot.Diagnostics.Count > 0) report["scanDiagnostics"] = J.Arr(s.Snapshot.Diagnostics.Select(d => (JsonNode)d));
         report["issues"] = J.Arr(shown.Select(i => (JsonNode)Explain(s, i.Severity, i.Text, i.Node, evidence)));
         return report;
@@ -182,7 +188,8 @@ internal static class Reports
             node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable),
                 ("drawThroughPortMa", n.Kind == "Hub" ? UsbBudgets.Demand(n).Known : null), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))));
         if (n.Kind is "Device" or "Hub" or "Root hub" or "Controller")
-            node["powerSaving"] = J.Obj(("setting", Topology.PowerSavingText(Topology.MergedRoot(n) ?? n, s.Snapshot)), ("plan", PowerSaving.PlanSummary(s.Snapshot)));
+            node["powerSaving"] = J.Obj(("setting", Topology.PowerSavingText(Topology.MergedRoot(n) ?? n, s.Snapshot)), ("plan", PowerSaving.PlanSummary(s.Snapshot)),
+                ("canWakeComputer", n.Kind is "Device" or "Hub" ? n.WakeSetting : null), ("wokeComputerAt", n.WokeComputerAt?.ToString("yyyy-MM-dd HH:mm")));
         if (n.ReservedMbps != null || n.PollIntervalMs != null || n.OpenPipes.Count > 0)
             node["bandwidth"] = J.Obj(("reservedMbps", J.N(n.ReservedMbps, 4)), ("peakReservedMbps", J.N(n.PeakReservedMbps, 4)),
                 ("pollIntervalMs", J.N(n.PollIntervalMs)), ("pollingRate", n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : null),

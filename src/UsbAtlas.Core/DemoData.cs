@@ -69,6 +69,7 @@ internal static class DemoData
             node.NameSource = "Illustrative sample data";
             if (node.Kind is "Device" or "Hub") node.ReportedProduct = node.Name;
             if (node.Kind is "Device" or "Hub" or "Root hub") node.PowerSaving = "On";
+            if (node.Kind is "Device" or "Hub") node.WakeSetting = node.DeviceType is "Keyboard" or "Mouse" ? "On" : "Not supported";
         }
         DeviceIdentity.ClassifySockets(snapshot);
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);

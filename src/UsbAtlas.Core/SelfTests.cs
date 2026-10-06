@@ -42,6 +42,29 @@ internal static class SelfTests
             "Behind a high-speed hub, a 12 Mb/s link means the connection couldn't hold high speed.");
         stuck.HighSpeedCapable = false;
         Check(!HubRelationships.ReducedSpeed(stuck) && !HubRelationships.ReducedSpeed(new UsbNode { Kind = "Device", LinkMbps = 12 }), "A full-speed-only device at 12 Mb/s is where it belongs.");
+        // Waking the computer: a device may when any function may, and the last wake's source is placed on the
+        // device that has its name, when one does.
+        Check(Wake.Classify([]) == "Not supported" && Wake.Classify([false, true]) == "On" && Wake.Classify([false]) == "Off", "A device can wake the computer when any of its functions may.");
+        var wakeXml = "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><EventData><Data Name='WakeTime'>2026-10-06T15:06:09.6465576Z</Data><Data Name='WakeSourceText'>Device -HID-compliant mouse</Data></EventData></Event>";
+        var woke = Wake.Parse(wakeXml)!;
+        Check(woke.Source == "Device -HID-compliant mouse" && woke.Time.ToUniversalTime() == new DateTime(2026, 10, 6, 15, 6, 9, DateTimeKind.Utc).AddTicks(6465576) && Wake.Parse(wakeXml.Replace("WakeTime", "Other")) == null,
+            "A wake event gives its time and source.");
+        var wakeDevices = new Dictionary<string, UsbScanner.DevNode>(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"USB\VID_046D&PID_C52B\5&1"] = new("", "usbccgp", [], "USB Composite Device"),
+            [@"HID\VID_046D&PID_C52B&MI_01\7&1"] = new(@"USB\VID_046D&PID_C52B\5&1", "mouhid", [], "HID-compliant mouse"),
+            [@"HID\VID_1234&PID_0001\7&2"] = new(@"USB\VID_1234&PID_0001\5&2", "kbdhid", [], "HID Keyboard Device"),
+            [@"HID\VID_5678&PID_0002\7&3"] = new(@"USB\VID_5678&PID_0002\5&3", "kbdhid", [], "HID Keyboard Device")
+        };
+        Check(Wake.SourceDevice(woke.Source, wakeDevices) == @"USB\VID_046D&PID_C52B\5&1" && Wake.SourceDevice("Device -HID Keyboard Device", wakeDevices) == null && Wake.SourceDevice("Unknown", wakeDevices) == null,
+            "A wake source is placed on the one USB device with its name, never on one of several.");
+        var receiver = new UsbNode { Id = "w/r/1", Kind = "Device", InstanceId = @"USB\VID_046D&PID_C52B\5&1" };
+        var slept = new Snapshot { CapturedAt = woke.Time.AddDays(1), LastWake = new() { Time = woke.Time, InstanceId = receiver.InstanceId }, Controllers = [new() { Id = "w", Kind = "Controller", Children = [receiver] }] };
+        Wake.Analyze(slept);
+        Check(receiver.WokeComputerAt == woke.Time && IssueRules.For(receiver).Contains((Severity.Note, Wake.WokeComputer)) && Explanations.For(receiver, Wake.WokeComputer, []).What.StartsWith("This device woke the computer from sleep at "),
+            "The device that woke the computer in the last week gets a note.");
+        slept.CapturedAt = woke.Time.AddDays(8); Wake.Analyze(slept);
+        Check(receiver.WokeComputerAt == null && !IssueRules.For(receiver).Any(i => i.Text == Wake.WokeComputer), "A wake more than a week ago isn't flagged.");
         // A controller's PCIe link is shared by everything on its ports.
         Check(UsbBudgets.PcieMbps(2, 1) == 4000 && UsbBudgets.PcieMbps(4, 16) == 15754 * 16 && UsbBudgets.PcieMbps(null, 4) == null && UsbBudgets.PcieMbps(7, 1) == null
             && UsbBudgets.PcieText(3, 4) == "PCIe 3.0 ×4", "PCIe links are read after line encoding.");

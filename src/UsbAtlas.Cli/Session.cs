@@ -72,6 +72,7 @@ internal sealed class Session
             // Derived from what the file holds, so a snapshot saved before a rule existed is still checked by it.
             PortMap.Analyze(snapshot);
             Containers.Analyze(snapshot);
+            Wake.Analyze(snapshot);
             if (snapshot.Controllers.Count == 0 && snapshot.Diagnostics.Count == 0) throw new CliException($"{file} has no controllers. Is it a USB Atlas snapshot (atlascli scan, or Export in the app)?");
             return snapshot;
         }
@@ -119,13 +120,17 @@ internal sealed class Session
         // values, so they stay; hashing them would also make them look unique. Hashes aren't hashed again.
         var serials = snapshot.Nodes.Select(n => n.Serial).Where(Identifying).Distinct().OrderByDescending(s => s.Length).ToList();
         foreach (var n in snapshot.Nodes) if (Identifying(n.Serial)) n.Serial = Token(n.Serial);
+        if (snapshot.LastWake is WakeInfo wake) wake.InstanceId = RedactText(wake.InstanceId);
         string json = JsonSerializer.Serialize(snapshot, Json.Compact);
         foreach (var serial in serials)
         {
             string escaped = JsonSerializer.Serialize(serial, Json.Compact)[1..^1];
             json = json.Replace(escaped, Token(serial), StringComparison.OrdinalIgnoreCase);
         }
-        return JsonSerializer.Deserialize<Snapshot>(json, Json.Options)!;
+        var redacted = JsonSerializer.Deserialize<Snapshot>(json, Json.Options)!;
+        // What isn't saved is worked out again.
+        Wake.Analyze(redacted);
+        return redacted;
     }
     private static bool Identifying(string serial) => serial.Trim().Length >= 6 && serial.Distinct().Count() > 2 && !serial.StartsWith("redacted-", StringComparison.Ordinal);
     private static string Token(string serial) => "redacted-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(serial.ToUpperInvariant())))[..8].ToLowerInvariant();
