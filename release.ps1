@@ -143,7 +143,7 @@ if ($Linux) {
         if ($LASTEXITCODE -ne 0) { throw "Publishing for $rid failed." }
         Copy-Item "$root\LICENSE", "$root\THIRD-PARTY-NOTICES.md" $dir
         Copy-Item "$dotnet\LICENSE.txt" "$dir\DotNet-LICENSE.txt"; Copy-Item "$dotnet\ThirdPartyNotices.txt" "$dir\DotNet-THIRD-PARTY-NOTICES.txt"
-        $tar = Join-Path $out "usbatlas-cli-$version-$rid.tar.gz"
+        $tar = Join-Path $out "$cli-$version-$rid.tar.gz"
         Write-TarGz $dir $tar $cli
         $packages += $tar
     }

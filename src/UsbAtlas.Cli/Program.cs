@@ -9,10 +9,10 @@ internal static class Program
     internal static string Version => typeof(Program).Assembly.GetName().Version is Version v ? $"{v.Major}.{v.Minor}.{v.Build}" : "unknown";
 
     private const string Help = """
-        usbatlas-cli: USB Atlas on the command line. Reads this PC's USB controllers, hubs, ports and
+        atlascli: USB Atlas on the command line. Reads this PC's USB controllers, hubs, ports and
         devices, and explains problems in plain words. Read-only; no administrator rights needed.
 
-        Usage: usbatlas-cli <command> [arguments] [options]
+        Usage: atlascli <command> [arguments] [options]
 
         Commands
           issues                 Every issue, most severe first, with what it means, whether it affects
@@ -75,12 +75,12 @@ internal static class Program
              load, or a scan Windows refused.
 
         Examples
-          usbatlas-cli issues
-          usbatlas-cli show H01/02 --json
-          usbatlas-cli scan --out before.json   (change something)   usbatlas-cli diff before.json
-          usbatlas-cli watch --for 30s
-          usbatlas-cli map --out board.json   (on another unit)   usbatlas-cli check board.json
-          claude mcp add usb-atlas -- "C:\path\to\usbatlas-cli.exe" mcp
+          atlascli issues
+          atlascli show H01/02 --json
+          atlascli scan --out before.json   (change something)   atlascli diff before.json
+          atlascli watch --for 30s
+          atlascli map --out board.json   (on another unit)   atlascli check board.json
+          claude mcp add usb-atlas -- "C:\path\to\atlascli.exe" mcp
         """;
 
     private static int Main(string[] args)
@@ -92,7 +92,7 @@ internal static class Program
         if (args.Length > 0 && args[0].Equals("mcp", StringComparison.OrdinalIgnoreCase))
         {
             try { Options.Parse(args); }
-            catch (CliException ex) { Console.Error.WriteLine("usbatlas-cli: " + ex.Message); return 3; }
+            catch (CliException ex) { Console.Error.WriteLine("atlascli: " + ex.Message); return 3; }
             return Mcp.Serve(args.Skip(1).ToList(), Console.In, Console.Out, cancel.Token);
         }
         return Execute(args, Console.Out, Console.Error, cancel.Token);
@@ -110,7 +110,7 @@ internal static class Program
             switch (o.Command)
             {
                 case "version" or "--version":
-                    output.WriteLine("usbatlas-cli " + Version); return 0;
+                    output.WriteLine("atlascli " + Version); return 0;
                 case "issues":
                 {
                     var s = Session.Open(o);
@@ -160,7 +160,7 @@ internal static class Program
                     if (o.Get("out") is string file)
                     {
                         Save(file, Json.Write(map));
-                        output.WriteLine($"Saved the port map of {map["controllers"]!.AsArray().Count} controllers and {PortMapFile.PortCount(map)} ports to {file}. Check a machine against it with usbatlas-cli check {file}.");
+                        output.WriteLine($"Saved the port map of {map["controllers"]!.AsArray().Count} controllers and {PortMapFile.PortCount(map)} ports to {file}. Check a machine against it with atlascli check {file}.");
                     }
                     else output.WriteLine(Json.Write(map));
                     return 0;
@@ -208,17 +208,17 @@ internal static class Program
                     output.WriteLine("All checks passed.");
                     return 0;
                 case "mcp":
-                    throw new CliException("mcp must be the first argument: usbatlas-cli mcp [--demo | --input FILE] [--redact].");
+                    throw new CliException("mcp must be the first argument: atlascli mcp [--demo | --input FILE] [--redact].");
                 default:
-                    throw new CliException($"Unknown command “{o.Command}”. Run usbatlas-cli help.");
+                    throw new CliException($"Unknown command “{o.Command}”. Run atlascli help.");
             }
         }
-        catch (CliException ex) { error.WriteLine("usbatlas-cli: " + ex.Message); return 3; }
+        catch (CliException ex) { error.WriteLine("atlascli: " + ex.Message); return 3; }
         // Anything else is a bug or hardware Windows describes unexpectedly; it still exits 3 with a message,
         // and the MCP server keeps serving.
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            error.WriteLine($"usbatlas-cli: {ex.GetType().Name}: {ex.Message}"); return 3;
+            error.WriteLine($"atlascli: {ex.GetType().Name}: {ex.Message}"); return 3;
         }
     }
 
@@ -232,5 +232,5 @@ internal static class Program
         try { return new StreamWriter(file, true, new UTF8Encoding(false)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new CliException($"Can't write {file}: {ex.Message}"); }
     }
-    private static string Need(string value, string usage) => value.Length > 0 ? value : throw new CliException("Usage: usbatlas-cli " + usage);
+    private static string Need(string value, string usage) => value.Length > 0 ? value : throw new CliException("Usage: atlascli " + usage);
 }

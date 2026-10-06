@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Compiles usbatlas-cli from source and runs it, without a release build or packaging.
+    Compiles atlascli from source and runs it, without a release build or packaging.
 
 .DESCRIPTION
     Builds the command line in the Debug configuration and runs it with any arguments
@@ -29,13 +29,13 @@
 $ErrorActionPreference = 'Stop'
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'The .NET 10 SDK is required: https://dotnet.microsoft.com/download' }
 $project = Join-Path $PSScriptRoot 'src\UsbAtlas.Cli\UsbAtlas.Cli.csproj'
-$exe = Join-Path $PSScriptRoot 'artifacts\bin\UsbAtlas.Cli\debug\usbatlas-cli.exe'
+$exe = Join-Path $PSScriptRoot 'artifacts\bin\UsbAtlas.Cli\debug\atlascli.exe'
 
 # Build output would mix with the CLI's, so it's shown only when the build fails.
 $build = dotnet build $project -c Debug --nologo -v quiet 2>&1
 if ($LASTEXITCODE -ne 0) {
     $build | Write-Host
-    Write-Error 'usbatlas-cli failed to build.' -ErrorAction Continue
+    Write-Error 'atlascli failed to build.' -ErrorAction Continue
     exit 1
 }
 

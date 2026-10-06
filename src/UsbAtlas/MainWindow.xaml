@@ -1,42 +1,27 @@
 <Window x:Class="UsbAtlas.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  Title="USB Atlas" Width="1500" Height="940" MinWidth="1050" MinHeight="650" Background="{DynamicResource WindowSurface}" FontFamily="{StaticResource UiFont}" FontSize="13" WindowStartupLocation="CenterScreen" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" PreviewKeyDown="WindowKeyDown">
  <Grid>
-  <Grid.RowDefinitions><RowDefinition Height="44"/><RowDefinition Height="42"/><RowDefinition/><RowDefinition Height="30"/></Grid.RowDefinitions>
+  <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition/><RowDefinition Height="30"/></Grid.RowDefinitions>
   <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="16,0">
-   <DockPanel>
-    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+   <Grid x:Name="TitleBar" SizeChanged="TitleBarSizeChanged">
+    <StackPanel x:Name="TitleLeft" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" SizeChanged="TitleBarSizeChanged">
+     <TextBlock Text="USB Atlas" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
+     <Button x:Name="TreeButton" Visibility="Collapsed" Content="Show devices" Click="TreePanelClick" Padding="8,4" Margin="14,0,0,0" ToolTip="Show or hide the device tree"/>
+    </StackPanel>
+    <Grid x:Name="SearchBox" Width="340" Height="30" HorizontalAlignment="Center" VerticalAlignment="Center">
+     <TextBox x:Name="Search" TextChanged="SearchChanged" KeyDown="SearchKeyDown" ToolTip="Search names, IDs, serials, types, paths or issues. Enter: next; Shift+Enter: previous; Escape: clear." Padding="32,0,9,0" VerticalContentAlignment="Center" AutomationProperties.Name="Search devices"/>
+     <ContentControl x:Name="SearchIcon" Width="16" Height="16" Margin="9,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False" Focusable="False"/>
+     <TextBlock Text="Find a device…" Foreground="{DynamicResource TextMuted}" Margin="33,0,9,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=Search}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+    </Grid>
+    <StackPanel x:Name="TitleRight" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" SizeChanged="TitleBarSizeChanged">
      <Button x:Name="InspectorButton" Visibility="Collapsed" Content="Show properties" Click="InspectorClick" Margin="0,0,6,0" Padding="8,4"/>
      <Button x:Name="ThemeButton" Content="Dark mode" Click="ThemeClick" Margin="0,0,6,0" Padding="8,4" Background="Transparent" BorderBrush="Transparent"/>
      <Button Content="Export…" Click="ExportClick" Margin="0,0,6,0" Padding="8,4"/>
      <Button x:Name="RefreshButton" Click="RefreshClick" Padding="10,4" ToolTip="Refresh devices (F5)" Style="{StaticResource PrimaryButton}"><TextBlock Text="Refresh" Foreground="White"/></Button>
     </StackPanel>
-    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-     <TextBlock Text="USB Atlas" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center" Margin="0"/>
-    </StackPanel>
-   </DockPanel>
+   </Grid>
   </Border>
-  <Border Grid.Row="1" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Background="{DynamicResource Surface}" Padding="16,6">
-   <DockPanel>
-    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-     <StackPanel Orientation="Horizontal" Margin="0,0,8,0" AutomationProperties.Name="Layout">
-      <TextBlock Text="Layout" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-      <Button x:Name="HorizontalLayoutButton" Content="Horizontal" Click="LayoutChoiceClick" ToolTip="Host on the left, devices to the right" Padding="8,4"/>
-      <Button x:Name="VerticalLayoutButton" Content="Vertical" Click="LayoutChoiceClick" ToolTip="Host at the top, devices below" Padding="8,4" Margin="-1,0,0,0"/>
-     </StackPanel>
-     <Button Content="−" Click="ZoomOut" Padding="10,3" Margin="4,0,0,0" ToolTip="Zoom out (wheel)"/>
-     <Button Click="ActualSizeClick" Padding="0" BorderBrush="Transparent" Background="Transparent" ToolTip="Full cards at 100%, laid out for the window (Shift+0)"><TextBlock x:Name="ZoomLabel" FontFamily="{StaticResource MonoFont}" Text="100%" Width="52" TextAlignment="Center"/></Button>
-     <Button Content="+" Click="ZoomIn" Padding="10,3" ToolTip="Zoom in"/>
-     <Button Content="Fit all" Click="OverviewClick" Padding="10,3" Margin="8,0,0,0" ToolTip="The whole topology, at the most detailed cards that fit (Shift+1). Shift+2 centers the selection."/>
-    </StackPanel>
-    <Button x:Name="TreeButton" Visibility="Collapsed" Content="Show devices" Click="TreePanelClick" DockPanel.Dock="Left" Padding="8,3" Margin="0,0,10,0" ToolTip="Show or hide the device tree"/>
-    <Grid Width="210" DockPanel.Dock="Left" HorizontalAlignment="Left">
-     <TextBox x:Name="Search" TextChanged="SearchChanged" KeyDown="SearchKeyDown" ToolTip="Search names, IDs, serials, types, paths or issues. Enter: next; Shift+Enter: previous; Escape: clear." Padding="32,0,9,0" VerticalContentAlignment="Center" AutomationProperties.Name="Search devices"/>
-     <ContentControl x:Name="SearchIcon" Width="16" Height="16" Margin="9,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False" Focusable="False"/>
-     <TextBlock Text="Find a device…" Foreground="{DynamicResource TextMuted}" Margin="33,0,9,0" VerticalAlignment="Center" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=Search}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
-    </Grid>
-   </DockPanel>
-  </Border>
-  <Grid Grid.Row="2" SizeChanged="SidePanelsSizeChanged">
+  <Grid Grid.Row="1" SizeChanged="SidePanelsSizeChanged">
    <Grid.ColumnDefinitions><ColumnDefinition x:Name="TreeColumn" Width="280" MinWidth="180"/><ColumnDefinition x:Name="TreeSplitterColumn" Width="5"/><ColumnDefinition MinWidth="390"/><ColumnDefinition x:Name="SplitterColumn" Width="5"/><ColumnDefinition x:Name="InspectorColumn" Width="330" MinWidth="260" MaxWidth="520"/></Grid.ColumnDefinitions>
    <Border x:Name="TreePanel" Background="{DynamicResource Surface}">
     <Grid><Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition/></Grid.RowDefinitions>
@@ -91,6 +76,22 @@
     </ScrollViewer>
     <ProgressBar x:Name="RefreshProgress" Grid.Row="1" Panel.ZIndex="5" Height="4" VerticalAlignment="Top" Foreground="{DynamicResource Accent}" Background="{DynamicResource Selection}" BorderThickness="0" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False" Focusable="False" AutomationProperties.Name="Refreshing USB topology"/>
     <TextBlock Grid.Row="1" x:Name="EmptyMessage" Text="Reading your USB connections…" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="14" IsHitTestVisible="False"/>
+    <Grid x:Name="ViewControls" Grid.Row="1" Panel.ZIndex="4" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,12,12" AutomationProperties.Name="View controls">
+     <Border Background="{DynamicResource Surface}" CornerRadius="6"><Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="2" Direction="270" Opacity="0.14"/></Border.Effect></Border>
+     <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="4">
+      <StackPanel Orientation="Horizontal">
+       <StackPanel Orientation="Horizontal" AutomationProperties.Name="Layout">
+        <Button x:Name="HorizontalLayoutButton" Content="Horizontal" Click="LayoutChoiceClick" ToolTip="Layout: host on the left, devices to the right" Padding="8,3"/>
+        <Button x:Name="VerticalLayoutButton" Content="Vertical" Click="LayoutChoiceClick" ToolTip="Layout: host at the top, devices below" Padding="8,3" Margin="-1,0,0,0"/>
+       </StackPanel>
+       <Border Width="1" Margin="8,3" Background="{DynamicResource Divider}"/>
+       <Button Content="−" Click="ZoomOut" Padding="10,3" ToolTip="Zoom out (wheel)" AutomationProperties.Name="Zoom out"/>
+       <Button Click="ActualSizeClick" Padding="0" BorderBrush="Transparent" Background="Transparent" ToolTip="Full cards at 100%, laid out for the window (Shift+0)"><TextBlock x:Name="ZoomLabel" FontFamily="{StaticResource MonoFont}" Text="100%" Width="52" TextAlignment="Center"/></Button>
+       <Button Content="+" Click="ZoomIn" Padding="10,3" ToolTip="Zoom in (wheel)" AutomationProperties.Name="Zoom in"/>
+       <Button Content="Fit all" Click="OverviewClick" Padding="10,3" Margin="6,0,0,0" ToolTip="The whole topology, at the most detailed cards that fit (Shift+1). Shift+2 centers the selection."/>
+      </StackPanel>
+     </Border>
+    </Grid>
     <StackPanel Grid.Row="2" Margin="16,3,0,0"><WrapPanel x:Name="SocketLegend" Margin="0,0,16,0"/><TextBlock x:Name="GraphHint" TextTrimming="CharacterEllipsis" Text="Drag to pan · Scroll to zoom · Tab / arrows to navigate" Margin="0,2,0,0" FontSize="12" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></StackPanel>
    </Grid>
    <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
@@ -109,7 +110,7 @@
     </Grid>
    </Border>
   </Grid>
-  <Border Grid.Row="3" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Background="{DynamicResource Surface}" Padding="16,0">
+  <Border Grid.Row="2" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Background="{DynamicResource Surface}" Padding="16,0">
    <DockPanel><CheckBox x:Name="AutoRefresh" DockPanel.Dock="Right" Content="Auto-refresh · 10 s" FontSize="12" Margin="15,0,0,0"/><TextBlock x:Name="StatusText" Text="Starting…" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="12" TextTrimming="CharacterEllipsis"/></DockPanel>
   </Border>
  </Grid>

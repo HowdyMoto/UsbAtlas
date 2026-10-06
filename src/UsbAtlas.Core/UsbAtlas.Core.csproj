@@ -12,7 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="UsbAtlas" />
-    <InternalsVisibleTo Include="usbatlas-cli" />
+    <InternalsVisibleTo Include="atlascli" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\UsbIds\usb.ids" LogicalName="UsbAtlas.usb.ids" />

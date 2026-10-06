@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- usbatlas-cli: the app's scan, issues and explanations on the command line, and as an MCP server. -->
+  <!-- atlascli: the app's scan, issues and explanations on the command line, and as an MCP server. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>UsbAtlas.Cli</RootNamespace>
-    <AssemblyName>usbatlas-cli</AssemblyName>
+    <AssemblyName>atlascli</AssemblyName>
     <Version>1.3.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Authors>Wright Bagwell</Authors>

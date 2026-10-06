@@ -116,6 +116,12 @@ public partial class MainWindow
                 throw new Exception("Search text is not vertically centered.");
             if (start.Left < SearchIcon.Margin.Left + SearchIcon.ActualWidth + 4)
                 throw new Exception("Search text overlaps the magnifying glass.");
+            // One bar: search centered, clear of the title on the left and the buttons on the right.
+            double left = SearchBox.TranslatePoint(new Point(), TitleBar).X, right = left + SearchBox.ActualWidth;
+            if (Math.Abs(left + right - TitleBar.ActualWidth) > 1)
+                throw new Exception("Search is not centered in the title bar.");
+            if (left < TitleLeft.ActualWidth + 8 || right > TitleBar.ActualWidth - TitleRight.ActualWidth - 8)
+                throw new Exception("Search runs under the title bar's buttons.");
             var box = (FrameworkElement)Search.Parent;
             var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)box.ActualWidth, (int)box.ActualHeight, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(box);

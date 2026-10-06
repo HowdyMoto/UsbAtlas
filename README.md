@@ -21,14 +21,14 @@ To check a download, compare its hash with the release's `SHA256SUMS.txt`, and, 
 
 ```powershell
 (Get-FileHash .\UsbAtlas-1.3.0-win-x64.zip).Hash      # matches the line in SHA256SUMS.txt
-Get-AuthenticodeSignature .\UsbAtlas.exe, .\usbatlas-cli.exe | Format-List Status, SignerCertificate, TimeStamperCertificate
+Get-AuthenticodeSignature .\UsbAtlas.exe, .\atlascli.exe | Format-List Status, SignerCertificate, TimeStamperCertificate
 ```
 
 A signed executable reads `Valid`, signed by the publisher named in the release notes. The .NET runtime's own files carry Microsoft's signature.
 
 ## Releasing
 
-`release.ps1` makes a release: it publishes the self-contained win-x64 package (the app, `usbatlas-cli.exe` beside it, and the license and notice files, the .NET runtime's included), signs USB Atlas's own binaries when a certificate is configured, verifies every signature, runs both self-tests and the off-screen UI checks from the package, zips it, and writes `SHA256SUMS.txt` to `artifacts\releases\v<version>`. `-Linux` adds the command line for linux-x64 and linux-arm64 as `.tar.gz` files with the right permissions. `Get-Help .\release.ps1` describes it.
+`release.ps1` makes a release: it publishes the self-contained win-x64 package (the app, `atlascli.exe` beside it, and the license and notice files, the .NET runtime's included), signs USB Atlas's own binaries when a certificate is configured, verifies every signature, runs both self-tests and the off-screen UI checks from the package, zips it, and writes `SHA256SUMS.txt` to `artifacts\releases\v<version>`. `-Linux` adds the command line for linux-x64 and linux-arm64 as `.tar.gz` files with the right permissions. `Get-Help .\release.ps1` describes it.
 
 Signing uses `signtool` from the Windows SDK with SHA-256 and an RFC 3161 timestamp, and either a code-signing certificate in the certificate store (`-CertificateThumbprint`, or `USBATLAS_SIGN_THUMBPRINT`) or Azure Artifact Signing (`-ArtifactSigningDlib` and `-ArtifactSigningMetadata`, or `USBATLAS_SIGN_DLIB` and `USBATLAS_SIGN_METADATA`). Without either it still packages, and warns that the build is unsigned; `-RequireSigning` makes that an error, for official releases.
 
@@ -60,7 +60,7 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 
 ## Command line and AI agents
 
-`usbatlas-cli.exe` ships beside `UsbAtlas.exe` and gives the same scan, issues and explanations as text or JSON, for scripts, for support, and for AI agents doing diagnostics. Like the app, it only reads; it needs no administrator rights and makes no network requests.
+`atlascli.exe` ships beside `UsbAtlas.exe` and gives the same scan, issues and explanations as text or JSON, for scripts, for support, and for AI agents doing diagnostics. Like the app, it only reads; it needs no administrator rights and makes no network requests.
 
 | Command | What it gives |
 | --- | --- |
@@ -77,12 +77,12 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 | `map` | This machine's port map as a JSON file: each host controller's ports as the firmware describes them to Windows, and what is wired in. |
 | `check [<map>]` | Pass or fail: the firmware's port map has no contradictions and, given a map from a known-good unit, this machine matches it. |
 
-A target is a path such as `H01/04/02` (host 1, port 4, port 2, as `tree` shows them), a VID:PID, an instance ID or words from the name. `--json` gives the same content as JSON; `--input FILE` reads a saved snapshot, including one exported from the app, and `--demo` uses the sample topology; `--redact` replaces serial numbers with stable hashes before sharing. `issues` exits 0 when it finds nothing worse than notes, 1 for warnings and 2 for errors; `check` exits 0 when it passes and 1 when it doesn't; every command exits 3 when it fails. `usbatlas-cli help` lists everything. To build from source and run it in one step, use `.\run-cli.ps1` with the same arguments, for example `.\run-cli.ps1 issues`.
+A target is a path such as `H01/04/02` (host 1, port 4, port 2, as `tree` shows them), a VID:PID, an instance ID or words from the name. `--json` gives the same content as JSON; `--input FILE` reads a saved snapshot, including one exported from the app, and `--demo` uses the sample topology; `--redact` replaces serial numbers with stable hashes before sharing. `issues` exits 0 when it finds nothing worse than notes, 1 for warnings and 2 for errors; `check` exits 0 when it passes and 1 when it doesn't; every command exits 3 when it fails. `atlascli help` lists everything. To build from source and run it in one step, use `.\run-cli.ps1` with the same arguments, for example `.\run-cli.ps1 issues`.
 
-`usbatlas-cli mcp` serves the commands as [Model Context Protocol](https://modelcontextprotocol.io) tools over stdin and stdout, so an agent can call them directly. For Claude Code:
+`atlascli mcp` serves the commands as [Model Context Protocol](https://modelcontextprotocol.io) tools over stdin and stdout, so an agent can call them directly. For Claude Code:
 
 ```powershell
-claude mcp add usb-atlas -- "C:\path\to\usbatlas-cli.exe" mcp
+claude mcp add usb-atlas -- "C:\path\to\atlascli.exe" mcp
 ```
 
 ### Linux
@@ -102,8 +102,8 @@ Linux doesn't report some of what Windows does: power-saving settings, driver ve
 `trace` records what Windows' USB 3 hub driver (USBHUB3, which also runs the USB 2 ports of xHCI controllers) logs through Event Tracing for Windows, the events Device Manager and the event logs never show. It starts a real-time session on the driver's error, enumeration and rundown events, reads them with the Windows trace-decoding API (no packages), and places each one on the topology: the driver's rundown names each hub's and device's controller and port path, and a device being set up is placed at the port being set up. Each port's status changes are decoded from the hub's `wPortStatus` and `wPortChange`, so a USB 3 link that drops to SS.Inactive or compliance mode, a link that couldn't be trained, a warm reset or overcurrent reads as what it is. Routine resumes, resets and set-up steps appear with `--verbose`, which also prints each event's fields. At the end it counts each port's events, busiest first.
 
 ```powershell
-usbatlas-cli trace --for 60s          # replug or wiggle the device meanwhile
-usbatlas-cli watch --trace --for 0    # changes and the hub driver's account of them, until Ctrl+C
+atlascli trace --for 60s          # replug or wiggle the device meanwhile
+atlascli watch --trace --for 0    # changes and the hub driver's account of them, until Ctrl+C
 ```
 
 Starting an event session needs administrator rights or membership in the Performance Log Users group; `trace` says so when it can't, and the rest of USB Atlas still needs neither. The events come from USBHUB3; hubs and controllers run by older drivers (USBHUB, USBPORT) log nothing here.
@@ -113,9 +113,9 @@ Starting an event session needs administrator rights or membership in the Perfor
 For people who build or test boards and their firmware. A computer's firmware tells Windows which USB ports can be plugged into, which are USB-C, and which USB 2 and USB 3 ports are the two halves of one socket. `check` reads that description back and fails when it is wrong:
 
 ```powershell
-usbatlas-cli check                    # the port map contradicts itself nowhere
-usbatlas-cli map --out board.json     # on a known-good unit
-usbatlas-cli check board.json         # on another unit, or after a firmware change
+atlascli check                    # the port map contradicts itself nowhere
+atlascli map --out board.json     # on a known-good unit
+atlascli check board.json         # on another unit, or after a firmware change
 ```
 
 Without a map, `check` reports the contradictions listed under **Port map** below. With one, it also compares every port with the map: what it speaks (USB 2 or USB 3), whether it can be plugged into, whether it is USB-C, whether it can be the host's debug port, and which port is the other half of its socket. Hubs and devices that are wired in, such as a webcam or a built-in hub, are expected to be present at no less than the link rate they had, and a built-in hub's ports are checked like the host's. `map --devices` also expects whatever is plugged in, for a test fixture with a known device in every socket. Each mismatch is one line naming the port, what differs, what the map says and what was found.
@@ -128,7 +128,7 @@ The map is meant to be edited: delete a field and it is no longer checked, and s
 | --- | --- |
 | `src/UsbAtlas/` | The app: C#, XAML, manifest, project file, and bundled `Assets/` (fonts, icon and their license files). |
 | `src/UsbAtlas.Core/` | Scanning, analysis, issues and their explanations, shared by the app and the command line, with the bundled USB ID database and its license files. No WPF. |
-| `src/UsbAtlas.Cli/` | `usbatlas-cli`: the command line and MCP server. |
+| `src/UsbAtlas.Cli/` | `atlascli`: the command line and MCP server. |
 | `docs/` | Release notes. |
 | `artifacts/` | Generated and untracked: builds, publishes, release packages, previews, scans, and test results. `Directory.Build.props` routes all build output here. |
 | Root | This README, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `run-dev.ps1` (compile and run), `release.ps1` (package, sign and check a release), `UsbAtlas.slnx`, and `Directory.Build.props`. |
@@ -304,14 +304,14 @@ dotnet build -c Release
 $exe = Resolve-Path artifacts\bin\UsbAtlas\release\UsbAtlas.exe
 $out = New-Item -ItemType Directory -Force artifacts\diagnostics
 Start-Process $exe '--self-test' -WorkingDirectory $out -Wait
-artifacts\bin\UsbAtlas.Cli\release\usbatlas-cli.exe self-test
+artifacts\bin\UsbAtlas.Cli\release\atlascli.exe self-test
 Start-Process $exe '--scan scan.json' -WorkingDirectory $out -Wait
 Start-Process $exe '--demo --render' -WorkingDirectory $out -Wait
 Start-Process $exe '--demo --render --verify-ui --compact' -WorkingDirectory $out -Wait
 Start-Process $exe '--demo --render --verify-ui --vertical' -WorkingDirectory $out -Wait
 ```
 
-The app writes these files to its working directory, so the commands above keep them in `artifacts\diagnostics`. `--self-test` writes `self-test.txt` and exits. `usbatlas-cli self-test` runs the same checks and the command line's own (every command against the sample topology, diff, redaction, descriptor decoding and the MCP protocol) and prints the result. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits; add `--select TEXT` to preview Properties for the first node whose search text matches, such as `--render --select 0BDA:5411` on live hardware.
+The app writes these files to its working directory, so the commands above keep them in `artifacts\diagnostics`. `--self-test` writes `self-test.txt` and exits. `atlascli self-test` runs the same checks and the command line's own (every command against the sample topology, diff, redaction, descriptor decoding and the MCP protocol) and prints the result. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits; add `--select TEXT` to preview Properties for the first node whose search text matches, such as `--render --select 0BDA:5411` on live hardware.
 
 ## API references
 

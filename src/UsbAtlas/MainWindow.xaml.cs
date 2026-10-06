@@ -512,6 +512,9 @@ public partial class MainWindow : Window
     }
     private async void RefreshClick(object sender, RoutedEventArgs e) => await Refresh();
     private void SearchChanged(object sender, TextChangedEventArgs e) { searchTimer.Stop(); searchTimer.Start(); }
+    // Search stays centered in the title bar, narrowing rather than running under the buttons on either side.
+    private void TitleBarSizeChanged(object sender, SizeChangedEventArgs e) =>
+        SearchBox.Width = Math.Clamp(TitleBar.ActualWidth - 2 * Math.Max(TitleLeft.ActualWidth, TitleRight.ActualWidth) - 32, 160, 340);
     private void SetZoom(double value) { readableView = overviewView = false; value = Math.Clamp(value, 0.15, 2); GraphScale.ScaleX = GraphScale.ScaleY = value; ZoomLabel.Text = $"{value:P0}"; }
     private void ZoomIn(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX * 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
     private void ZoomOut(object sender, RoutedEventArgs e) => ZoomAt(GraphScale.ScaleX / 1.2, new Point(GraphScroll.ViewportWidth / 2, GraphScroll.ViewportHeight / 2));
