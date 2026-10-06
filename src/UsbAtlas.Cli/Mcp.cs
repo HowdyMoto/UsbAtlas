@@ -40,6 +40,8 @@ internal static class Mcp
             a => ["budget", .. Arg(a, "target") is string t ? new[] { t } : []]),
         new("usb_descriptors", "Raw USB descriptors for one node, decoded field by field with their hex: device, configuration (interfaces, endpoints, class-specific), BOS capabilities (USB 2.0 LPM, SuperSpeed, SuperSpeedPlus lane speeds, platform), hub descriptor, and connection and connector flags.",
             J.Obj(("target", Prop("string", "A path, VID:PID or name."))), ["target"], a => ["raw", Arg(a, "target") ?? ""]),
+        new("usb_displays", "Graphics adapters and whether each has a driver, every monitor Windows has known with the adapter it was last shown through, and USB-C displays whose USB is connected but whose picture isn't. Use it when a monitor is dark, especially one on USB-C whose keyboard, mouse or hub still work.",
+            new JsonObject(), [], _ => ["displays"]),
         new("usb_events", "Recent USB history from the Windows event logs: devices set up, started, failing to start (Kernel-PnP 411) or removed, drivers that failed to load (219), and USB host and hub driver events, each matched to where the device is now when it's connected.",
             J.Obj(("hours", Prop("number", "How far back to look. Default 24.")), ("max", Prop("integer", "Most events to return, newest first. Default 100.")), ("errors_only", Prop("boolean", "Only critical, error and warning events."))), [],
             a => ["events", "--since", (Arg(a, "hours") ?? "24") + "h", "--max", Arg(a, "max") ?? "100", .. Flag(a, "errors_only") ? new[] { "--errors" } : []]),

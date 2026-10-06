@@ -70,6 +70,8 @@ public partial class MainWindow
             monitor.SpeedLimited = true; monitor.Connector = "USB-C"; monitor.CompanionId = "demo/root/7";
             HubRelationships.Analyze(snapshot);
             Check(monitor.Usb3SideMissing, "The sample monitor hub must be missing its USB 3 side.");
+            // Its picture is missing too: the adapter it was last shown through has no driver.
+            monitor.Display = new() { GpuWithoutDriver = true, DisplayName = "DELL U3818DW", GpuName = "NVIDIA GPU", GpuVendor = "NVIDIA", LastShown = DateTime.Now.AddMinutes(-30) };
             foreach (var horizontal in new[] { true, false })
                 foreach (var level in new[] { CardDetail.Full, CardDetail.Compact, CardDetail.Far })
                 {
@@ -79,6 +81,10 @@ public partial class MainWindow
 
             // The stub and the empty half it marks both name the hub, and lead to its explanation.
             horizontalTree = true; detail = CardDetail.Full; Draw(); UpdateLayout();
+            Check(VisualDescendants(cards[monitor.Id].Card).OfType<TextBlock>().Any(t => t.Text == Displays.NotShowing), "A USB-C display without a picture must show a badge on its hub's card.");
+            SelectNode(monitor); UpdateLayout();
+            var display = ExplanationText(Displays.NotShowing);
+            Check(display.Contains("isn't showing it as a display") && display.Contains("NVIDIA GPU"), "The badge must explain the missing picture and the driverless adapter.");
             var hit = Graph.Children.OfType<Line>().Single(h => h.Uid == MissingUsb3HitUid);
             var tip = (string)hit.ToolTip;
             Check(hit.Tag == monitor && tip.Contains("USB 3 side isn't connected") && tip.Contains("USB 3 half of the socket") && tip.Contains("Click for what to do"),

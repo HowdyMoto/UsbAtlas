@@ -128,6 +128,8 @@ public sealed class UsbNode
     // A USB-C device's Billboard: the alternate modes it offers and how each went. Null for anything else.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public BillboardInfo? Billboard { get; set; }
+    // A USB-C display whose USB is connected but which Windows isn't showing as a display, on its hub.
+    public DisplayFinding? Display { get; set; }
     public List<string> Notes { get; set; } = [];
     public List<UsbNode> Children { get; set; } = [];
     public IEnumerable<UsbNode> Walk() { yield return this; foreach (var c in Children) foreach (var n in c.Walk()) yield return n; }
@@ -172,6 +174,10 @@ public sealed class Snapshot
     public List<string> Diagnostics { get; set; } = [];
     // The device containers USB devices belong to, with the names Windows gives them.
     public List<DeviceContainer> Containers { get; set; } = [];
+    // Graphics adapters present now, and every monitor Windows has known, so a USB-C display's missing
+    // picture can be traced to the adapter it was last shown through.
+    public List<GpuInfo> Gpus { get; set; } = [];
+    public List<DisplayInfo> Displays { get; set; } = [];
     // The active power plan's USB selective suspend setting, plugged in and on battery, and which applies now.
     public bool? UsbSuspendPluggedIn { get; set; }
     public bool? UsbSuspendOnBattery { get; set; }

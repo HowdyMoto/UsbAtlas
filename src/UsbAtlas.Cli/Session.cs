@@ -84,7 +84,8 @@ internal sealed class Session
     // A file may hold nulls where the model expects values: empty lists and strings stand in for them.
     private static void Normalize(Snapshot snapshot)
     {
-        snapshot.Controllers ??= []; snapshot.Diagnostics ??= []; snapshot.Containers ??= [];
+        snapshot.Controllers ??= []; snapshot.Diagnostics ??= []; snapshot.Containers ??= []; snapshot.Gpus ??= []; snapshot.Displays ??= [];
+        snapshot.Gpus.RemoveAll(g => g == null); snapshot.Displays.RemoveAll(d => d == null);
         snapshot.Controllers.RemoveAll(c => c == null);
         snapshot.Containers.RemoveAll(c => c == null);
         foreach (var c in snapshot.Containers) { c.Id ??= ""; c.Name ??= ""; c.Manufacturer ??= ""; c.Model ??= ""; }

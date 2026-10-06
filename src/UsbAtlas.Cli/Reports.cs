@@ -198,6 +198,9 @@ internal static class Reports
                 ("modes", J.Arr(b.Modes.Select(m => (JsonNode)J.Obj(("index", m.Index), ("svid", m.Svid), ("name", m.Name), ("description", J.S(m.Description)), ("state", m.State.ToLowerInvariant()), ("vdo", J.S(m.Vdo)))))));
         if (n.QuickReconnects > 0)
             node["reconnects"] = J.Obj(("count", n.QuickReconnects), ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))));
+        if (n.Display is DisplayFinding f)
+            node["display"] = J.Obj(("finding", UsbAtlas.Displays.NotShowing), ("lastDisplay", J.S(f.DisplayName)), ("lastShownThrough", J.S(f.GpuName)),
+                ("lastShown", f.LastShown?.ToString("yyyy-MM-dd HH:mm")), ("adapterHasDriver", f.GpuName.Length > 0 ? !f.GpuWithoutDriver : null));
         report["node"] = node;
         // An empty socket half where a hub's USB 3 side should be explains that first, as the app does.
         if (HubRelationships.MissingUsb3HubFor(n, s.Snapshot) is UsbNode lost)
@@ -217,6 +220,25 @@ internal static class Reports
                 : J.Obj(("path", s.PathOf(c)), ("name", Topology.ShortName(c)), ("kind", Topology.Label(c)), ("figures", J.S(Figures(c)))))));
         report["issues"] = J.Arr(IssuesOf(s, n).Select(i => (JsonNode)Explain(s, i.Severity, i.Text, i.Node, false)));
         report["notes"] = J.Some(n.Notes.Select(x => (JsonNode)x));
+        return report;
+    }
+
+    // Graphics adapters, every monitor Windows has known and the USB-C displays whose picture is missing.
+    // A USB-C monitor's picture doesn't travel as USB, so this is where a dark monitor with working USB leads.
+    internal static JsonObject Displays(Session s)
+    {
+        var report = Header(s, "displays");
+        report["note"] = "A USB-C monitor's picture travels in a USB-C alternate mode, beside its USB, so its hub, keyboard and mouse can work while it shows nothing. The adapter a monitor was last shown through is a hint at which one drives that port: laptops that can switch adapters may use either.";
+        report["adapters"] = J.Arr(s.Snapshot.Gpus.Select(g => (JsonNode)J.Obj(("name", UsbAtlas.Displays.GpuLabel(g)), ("vendor", J.S(g.Vendor)),
+            ("driver", g.HasDriver ? $"running ({g.Service})" : g.Service.Length == 0 ? "none" : $"not running (Code {g.ProblemCode})"), ("instanceId", g.InstanceId))));
+        string Through(DisplayInfo d) => s.Snapshot.Gpus.FirstOrDefault(g => g.InstanceId.Equals(d.GpuInstanceId, StringComparison.OrdinalIgnoreCase)) is GpuInfo g ? UsbAtlas.Displays.GpuLabel(g) : d.GpuInstanceId;
+        report["monitors"] = J.Arr(s.Snapshot.Displays.OrderByDescending(d => d.Present).ThenByDescending(d => d.LastRemoval ?? d.LastArrival).Select(d => (JsonNode)J.Obj(
+            ("name", UsbAtlas.Displays.MonitorName(d.Name)), ("where", d.External ? "external" : "built in"), ("connected", d.Present),
+            (d.Present ? "shownThrough" : "lastShownThrough", J.S(Through(d))), ("lastConnected", d.LastArrival?.ToString("yyyy-MM-dd HH:mm")),
+            ("lastRemoved", d.Present ? null : d.LastRemoval?.ToString("yyyy-MM-dd HH:mm")), ("instanceId", d.InstanceId))));
+        report["usbCDisplays"] = J.Arr(s.Listed.Where(n => n.Display != null).Select(n => (JsonNode)Explain(s, UsbAtlas.Displays.SeverityOf(n), UsbAtlas.Displays.NotShowing, n, true)));
+        if (s.Snapshot.Gpus.Count == 0 && s.Snapshot.Displays.Count == 0)
+            report["note"] = s.Source == "live" ? "Windows reported no graphics adapters or monitors to this scan." : "This snapshot has no display information; take one with a current atlascli scan.";
         return report;
     }
 

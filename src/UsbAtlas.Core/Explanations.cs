@@ -153,6 +153,8 @@ internal static class Explanations
                     "Not yet, while some are idle. When they stream at the same time, Windows may refuse one and it stops working.", "",
                     [$"Move {Names(busiest)} to another hub or straight to the computer.", "Or use a hub with one translator per port (Multi-TT)."]);
             }
+            case Displays.NotShowing:
+                return Displays.Explain(n);
             case DriverProblem:
                 return DriverExplanation(n, noun);
             case Billboard.Failed or Billboard.NotEntered when n.Billboard != null:
