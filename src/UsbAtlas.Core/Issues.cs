@@ -31,6 +31,8 @@ internal static class IssueRules
         if (n.Display != null) issues.Add((Displays.SeverityOf(n), Displays.NotShowing));
         // Unrelated hardware grouped as one device by Windows still works, so it's a note.
         if (n.ContainerIdShared) issues.Add((Severity.Note, Containers.SharedId));
+        // Waking the computer is what a keyboard or mouse is for; only whether it was wanted is in question.
+        if (n.WokeComputerAt != null) issues.Add((Severity.Note, Wake.WokeComputer));
         // Radio noise isn't measured, so a receiver beside a fast drive is a note.
         if (n.NoisyNeighbor != null) issues.Add((Severity.Note, Interference.Nearby));
         // A drive that could use UAS but doesn't is slower than it could be, so it's a warning.

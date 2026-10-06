@@ -23,7 +23,7 @@ internal static class EventLog
     private static readonly string[] DisplayProviders = ["Display", "nvlddmkm", "amdkmdag", "amdwddmg", "igfx", "igfxn", "Microsoft-Windows-DxgKrnl"];
     private static readonly Regex Graphics = new(@"nvlddmkm|NVIDIA|amdkmdag|amdwddmg|\bAMD\b|Radeon|igfx|Intel\(R\)[^;]*Graphics|Display", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     internal sealed record Entry(DateTime Time, string Channel, string Provider, int Id, int Level, string Category, string InstanceId, string Message);
-    internal const string Usb = "usb", Display = "display", Restart = "restart";
+    internal const string Usb = "usb", Display = "display", Restart = "restart", Wake = "wake";
 
     internal static JsonObject Report(Session s, TimeSpan since, int max, bool errorsOnly, bool redact = false, bool usbOnly = false)
     {
@@ -44,6 +44,8 @@ internal static class EventLog
             entries.AddRange(Read("System", $"*[System[Provider[{Names(DisplayProviders)}] and {recent}]]", problems, Keep));
             // Service changes (7040 start type, 7045 installed) and Windows Update installs, kept when they're about graphics.
             entries.AddRange(Read("System", $"*[System[((Provider[@Name='Service Control Manager'] and (EventID=7040 or EventID=7045)) or Provider[@Name='Microsoft-Windows-WindowsUpdateClient']) and {recent}]]", problems, Keep));
+            // Waking from sleep, with what Windows names as the cause (Power-Troubleshooter 1).
+            entries.AddRange(Read("System", $"*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1 and {recent}]]", problems, Keep));
             // A program that restarted the computer (1074), and a restart nothing asked for (41).
             entries.AddRange(Read("System", $"*[System[((Provider[@Name='User32'] and EventID=1074) or (Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41)) and {recent}]]", problems, Keep));
         }
@@ -101,6 +103,7 @@ internal static class EventLog
         if (display.Length > 0) return (Display, display);
         if (provider.Contains("USB", StringComparison.OrdinalIgnoreCase)) return (Usb, "");
         if (provider == "User32" && id == 1074 || provider == "Microsoft-Windows-Kernel-Power" && id == 41) return (Restart, "");
+        if (provider == "Microsoft-Windows-Power-Troubleshooter" && id == 1) return (Wake, "");
         if (DisplayProviders.Contains(provider)) return (Display, "");
         if (provider is "Service Control Manager" or "Microsoft-Windows-WindowsUpdateClient" && data.Any(d => Graphics.IsMatch(d.Value))) return (Display, "");
         return null;

@@ -103,6 +103,18 @@ internal static class CliTests
         Check(show["node"]!["hub"]!["transactionTranslators"]!.ToString().Contains("single TT") && show["children"]!.AsArray().Count == 4 && show["siblings"]!.AsArray().Count > 0 && show["upstream"]!.AsArray().Count == 1, "show includes the hub, its children, its siblings and the chain to the host.");
         Check(show["issues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Over power budget"), "show explains the node's issues.");
         Check(TextOut.Render(show).Contains("transactionTranslators: Share one link · single TT"), "show renders as key: value text.");
+        // Waking: show reports the setting, search finds devices that can, and issues opens with the last wake.
+        Check(Reports.Show(s, s.Resolve("Mechanical keyboard"))["node"]!["powerSaving"]!["canWakeComputer"]!.ToString() == "On" && s.Find("wakes computer").Select(n => n.Name).Order().SequenceEqual(["Mechanical keyboard", "Wireless mouse receiver"]),
+            "show reports whether a device can wake the computer, and search finds those that can.");
+        var woken = DemoData.Create();
+        var wakingMouse = woken.Nodes.First(n => n.Name == "Wireless mouse receiver");
+        wakingMouse.InstanceId = @"USB\VID_046D&PID_C52B\5&1&0&4";
+        woken.LastWake = new() { Time = woken.CapturedAt.AddHours(-2), Source = "Device -HID-compliant mouse", InstanceId = wakingMouse.InstanceId };
+        Wake.Analyze(woken);
+        var wokenIssues = TextOut.Render(Reports.Issues(new Session(woken, "demo")));
+        Check(wokenIssues.Contains("Last woke from sleep") && wokenIssues.Contains("Device -HID-compliant mouse (H01/04 Wireless mouse receiver)") && wokenIssues.Contains("NOTE: Woke the computer — H01/04"),
+            "issues opens with the last wake, placed on the device, and notes it.");
+        Check(Session.Redact(woken).Nodes.First(n => n.Name == "Wireless mouse receiver").WokeComputerAt != null, "Redaction keeps which device woke the computer.");
         Check(Reports.Show(s, s.Resolve("NVMe SSD enclosure"))["node"]!["storage"]!["protocol"]!.ToString() == "UAS" && s.Find("UAS").Any(n => n.Name == "NVMe SSD enclosure") && Reports.Show(s, s.Resolve("Mechanical keyboard"))["node"]!["storage"] == null,
             "show reports a drive's protocol, search finds UAS, and other devices have none.");
         var flash = Reports.Show(s, s.Resolve("H01/05/01"))["node"]!["hubsAbove"]!;

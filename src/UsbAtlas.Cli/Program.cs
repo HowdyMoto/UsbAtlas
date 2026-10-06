@@ -34,9 +34,9 @@ internal static class Program
                                  USB is connected but whose picture isn't. Start here when a monitor is dark.
           events                 Recent events from the Windows logs: USB devices and drivers, USB-C
                                  controller (UCSI) failures, displays and graphics drivers (installed,
-                                 disabled, reset), and restarts a program started. --since 24h (default),
-                                 --max 100, --errors for critical, error and warning events only,
-                                 --usb-only for USB events only.
+                                 disabled, reset), restarts a program started, and waking from sleep.
+                                 --since 24h (default), --max 100, --errors for critical, error and
+                                 warning events only, --usb-only for USB events only.
           watch                  Report devices connecting, disconnecting and changing as it happens, and
                                  devices that drop and come back. When the computer sleeps and wakes, it
                                  reports what didn't come back or came back slower. --for 60s (default; 0

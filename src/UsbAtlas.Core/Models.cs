@@ -43,6 +43,11 @@ public sealed class UsbNode
     // Device Manager's "Allow the computer to turn off this device to save power": On, Off, Unused by
     // driver (on, but its HID driver doesn't use selective suspend), Not offered or Not reported.
     public string PowerSaving { get; set; } = "Not reported";
+    // Device Manager's "Allow this device to wake the computer": On, Off, Not supported (no function offers
+    // it) or Not reported, and when it last woke the computer, if that was recent (Wake.cs).
+    public string WakeSetting { get; set; } = "Not reported";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? WokeComputerAt { get; set; }
     public string InstanceId { get; set; } = "";
     public string HubSymbolicLink { get; set; } = "";
     public string CompanionHubSymbolicLink { get; set; } = "";
@@ -194,6 +199,8 @@ public sealed class Snapshot
     public List<string> Diagnostics { get; set; } = [];
     // The device containers USB devices belong to, with the names Windows gives them.
     public List<DeviceContainer> Containers { get; set; } = [];
+    // The last time the computer woke from sleep and what Windows named as the cause. Null when not read.
+    public WakeInfo? LastWake { get; set; }
     // The computer's USB4 host routers and the USB4 devices, such as docks, connected through them, by name,
     // and whether a USB-C connector manager (UCSI) runs its USB-C ports (UsbC.cs). Null when not read: a
     // snapshot saved before they were, or Linux.
