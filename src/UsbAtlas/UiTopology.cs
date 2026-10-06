@@ -320,6 +320,7 @@ public partial class MainWindow
     private void Draw()
     {
         if (Graph == null) return;
+        UpdateFixFirst();
         string? focusId = null;
         for (var hit = Keyboard.FocusedElement as DependencyObject; hit != null; hit = hit is Visual ? VisualTreeHelper.GetParent(hit) : LogicalTreeHelper.GetParent(hit))
             if (hit is FrameworkElement { Tag: UsbNode n }) { focusId = n.Id; break; }
@@ -737,17 +738,22 @@ public partial class MainWindow
         InspectorButton.Visibility = hide ? Visibility.Visible : Visibility.Collapsed;
         UpdateLayout(); FitSidePanels();
     }
-    private void UpdateIssues()
+    // Notes are worth knowing but affect nothing now, so they are counted apart from what needs attention.
+    private (int Attention, int Notes, Severity Worst, string Summary) IssueCounts()
     {
-        // Notes are worth knowing but affect nothing now, so they are counted apart from what needs attention.
         var worstOf = snapshot.Nodes.Select(n => Issues(n).Select(i => i.Severity).DefaultIfEmpty((Severity)(-1)).Max()).ToList();
         int notes = worstOf.Count(s => s == Severity.Note), attention = worstOf.Count(s => s > Severity.Note) + snapshot.Diagnostics.Count;
         var worst = attention > 0 ? worstOf.Append(Severity.Warning).Max() : Severity.Note;
-        static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n} {noun}s";
-        string summary = string.Join(" · ", new[] { attention > 0 ? Count(attention, "issue") : "", notes > 0 ? Count(notes, "note") : "" }.Where(s => s.Length > 0));
+        return (attention, notes, worst, string.Join(" · ", new[] { attention > 0 ? Count(attention, "issue") : "", notes > 0 ? Count(notes, "note") : "" }.Where(s => s.Length > 0)));
+    }
+    private static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n} {noun}s";
+    private void UpdateIssues()
+    {
+        var (attention, notes, worst, summary) = IssueCounts();
         if (summary.Length == 0) { IssuesButton.Content = new TextBlock { Text = "No issues", Foreground = Brush("TextMuted") }; IssuesButton.ClearValue(BackgroundProperty); }
         else { IssuesButton.Content = NodeVisuals.StatusContent(worst, summary); IssuesButton.Background = Brush(NodeVisuals.StatusColor(worst) + "Surface"); }
         IssuesButton.IsEnabled = summary.Length > 0;
+        UpdateFixFirst(force: true);
         StatusText.Text = (snapshot.IsDemo ? "Demo hardware" : "Local scan") + $" · Updated {snapshot.CapturedAt:T}"
             + (attention > 0 ? $" · {Count(attention, "item")} {(attention == 1 ? "needs" : "need")} attention" : " · No issues detected") + (notes > 0 ? $" · {Count(notes, "note")}" : "");
         if (snapshot.Diagnostics.Count > 0) StatusText.Text += " · " + string.Join(" · ", snapshot.Diagnostics);
@@ -759,7 +765,7 @@ public partial class MainWindow
         foreach (var node in snapshot.Nodes.Where(n => Issue(n).Length > 0))
         {
             var item = new MenuItem { Header = $"{Issue(node)} — {node.DisplayName} ({pathLabels.GetValueOrDefault(node.Id)})", Icon = NodeVisuals.StatusGlyph(Issues(node).Max(i => i.Severity)) };
-            item.Click += (_, _) => { Search.Clear(); searchTimer.Stop(); foreach (var ancestor in FindPath(node.Id)) { folded.Remove(ancestor.Id); folded.Remove(DrawnAs(ancestor).Id); } Draw(); ShowOnCanvas(node); };
+            item.Click += (_, _) => RevealIssue(node);
             menu.Items.Add(item);
         }
         foreach (var diagnostic in snapshot.Diagnostics) menu.Items.Add(new MenuItem { Header = diagnostic, IsEnabled = false, Icon = NodeVisuals.StatusGlyph(Severity.Warning) });

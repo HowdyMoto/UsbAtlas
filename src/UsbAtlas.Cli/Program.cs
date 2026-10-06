@@ -15,7 +15,8 @@ internal static class Program
         Usage: atlascli <command> [arguments] [options]
 
         Commands
-          issues                 Every issue, most severe first, with what it means, whether it affects
+          issues                 The few issues to fix first, each with its most likely fix, then every
+                                 issue, most severe first, with what it means, whether it affects
                                  anything now, the likely cause and what to do. Start here.
                                  --min note|warning|error leaves out less severe ones.
           tree                   The topology as an indented tree: path, name, kind, link rate, polling

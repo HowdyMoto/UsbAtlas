@@ -70,6 +70,15 @@ internal static class CliTests
         Check(Reports.HealthCode(s) == 2, "Errors exit 2.");
         Check(Reports.Issues(s, Severity.Error)["issues"]!.AsArray().All(i => i!["severity"]!.ToString() == "error") && (int)issues["summary"]!["errors"]! >= 1, "--min leaves out less severe issues but the summary counts them all.");
         Check(TextOut.Render(issues).Contains("ERROR: Insufficient power — H01/05/03"), "Issue text leads each issue with severity, name and path.");
+        var first = issues["fixFirst"]!.AsArray();
+        Check(first.Count is > 1 and <= Triage.Shown && first[0]!["severity"]!.ToString() == "error" && first.All(f => f!["severity"]!.ToString() != "note" && f["fix"]!.ToString().Length > 0),
+            "Fix first leads with errors, leaves out notes and gives each one fix.");
+        Check(first[0]!["alsoFixes"]!.AsArray().Select(a => a!["path"]!.ToString()).Order().SequenceEqual(["H01/05", "H01/05", "H01/05/01", "H01/05/02"]) && first.Skip(1).All(f => !f!["path"]!.ToString().StartsWith("H01/05")),
+            "A bus-powered hub's findings and the devices it can't power are one fix, not several.");
+        Check(TextOut.Render(issues).Contains("Fix first:\n  1. Insufficient power — H01/05/03".Replace("\n", Environment.NewLine)), "Issue text opens with what to fix first, numbered.");
+        var calm = DemoData.Create();
+        foreach (var n in calm.Nodes) { n.PowerWarnings.Clear(); n.QuickReconnects = 0; }
+        Check(Reports.FixFirst(new Session(calm, "demo")).All(f => f!["severity"]!.ToString() != "note"), "Notes never make the fix-first list.");
 
         var tree = Reports.Tree(s, false);
         string text = TextOut.Render(tree);

@@ -67,8 +67,9 @@
    </Border>
    <GridSplitter x:Name="TreeSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Grid Grid.Column="2" Background="{DynamicResource CanvasSurface}">
-    <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition/><RowDefinition Height="Auto" MinHeight="44"/></Grid.RowDefinitions>
-    <DockPanel Margin="16,0">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto" MinHeight="44"/></Grid.RowDefinitions>
+    <StackPanel>
+    <DockPanel Margin="16,0" Height="32">
      <TextBlock x:Name="TopologyTitle" Text="TOPOLOGY" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
       <TextBlock x:Name="MatchCount" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
@@ -77,6 +78,17 @@
       <Button x:Name="IssuesButton" Content="No issues" Click="IssuesClick" Padding="6,1" Margin="8,0,0,0"/>
      </StackPanel>
     </DockPanel>
+    <!-- What to fix first: the few issues that matter most, each with its most likely fix (UiFixFirst). -->
+    <Border x:Name="FixFirstPanel" Visibility="Collapsed" Margin="16,0,16,6" Padding="10,5,6,6" Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" AutomationProperties.Name="Fix first">
+     <DockPanel>
+      <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
+       <Button DockPanel.Dock="Right" Content="Hide" Click="HideFixFirstClick" Padding="6,1" FontSize="12" ToolTip="Hide until the issues change; the issue list keeps them" AutomationProperties.Name="Hide fix first"/>
+       <TextBlock Text="FIX FIRST" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+      </DockPanel>
+      <StackPanel x:Name="FixFirstList"/>
+     </DockPanel>
+    </Border>
+    </StackPanel>
     <ScrollViewer Grid.Row="1" x:Name="GraphScroll" SizeChanged="GraphSizeChanged" ScrollChanged="GraphScrollChanged" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" PreviewMouseWheel="GraphWheel" PreviewMouseDown="PanStart" PreviewMouseMove="PanMove" PreviewMouseUp="PanEnd" LostMouseCapture="PanCaptureLost" Background="Transparent">
      <Border Background="Transparent" HorizontalAlignment="Center" VerticalAlignment="Top"><Border.RenderTransform><TranslateTransform x:Name="PanTransform"/></Border.RenderTransform>
       <Canvas x:Name="Graph" Width="900" Height="600" VerticalAlignment="Top" HorizontalAlignment="Center" UseLayoutRounding="False" TextOptions.TextFormattingMode="Ideal" TextOptions.TextRenderingMode="Grayscale"><Canvas.LayoutTransform><ScaleTransform x:Name="GraphScale" ScaleX="1" ScaleY="1"/></Canvas.LayoutTransform></Canvas>
