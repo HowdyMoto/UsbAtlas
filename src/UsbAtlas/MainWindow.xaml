@@ -74,7 +74,7 @@
    </Border>
    <GridSplitter x:Name="TreeSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Grid Grid.Column="2" Background="{DynamicResource CanvasSurface}">
-    <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition/><RowDefinition Height="44"/></Grid.RowDefinitions>
+    <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition/><RowDefinition Height="Auto" MinHeight="44"/></Grid.RowDefinitions>
     <DockPanel Margin="16,0">
      <TextBlock x:Name="TopologyTitle" Text="TOPOLOGY" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -91,7 +91,7 @@
     </ScrollViewer>
     <ProgressBar x:Name="RefreshProgress" Grid.Row="1" Panel.ZIndex="5" Height="4" VerticalAlignment="Top" Foreground="{DynamicResource Accent}" Background="{DynamicResource Selection}" BorderThickness="0" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False" Focusable="False" AutomationProperties.Name="Refreshing USB topology"/>
     <TextBlock Grid.Row="1" x:Name="EmptyMessage" Text="Reading your USB connections…" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="14" IsHitTestVisible="False"/>
-    <StackPanel Grid.Row="2" Margin="16,3,0,0"><StackPanel x:Name="SocketLegend" Orientation="Horizontal" ClipToBounds="True"/><TextBlock x:Name="GraphHint" TextTrimming="CharacterEllipsis" Text="Drag to pan · Scroll to zoom · Tab / arrows to navigate" Margin="0,2,0,0" FontSize="12" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></StackPanel>
+    <StackPanel Grid.Row="2" Margin="16,3,0,0"><WrapPanel x:Name="SocketLegend" Margin="0,0,16,0"/><TextBlock x:Name="GraphHint" TextTrimming="CharacterEllipsis" Text="Drag to pan · Scroll to zoom · Tab / arrows to navigate" Margin="0,2,0,0" FontSize="12" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></StackPanel>
    </Grid>
    <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Border x:Name="InspectorPanel" Grid.Column="4" Background="{DynamicResource Surface}">

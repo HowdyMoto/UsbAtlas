@@ -120,4 +120,44 @@ public partial class MainWindow
             Draw(); ShowDetails();
         }
     }
+
+    // On full cards, a name too long for one line wraps onto a second before it's shortened,
+    // and a card never states its issue twice: a port Windows couldn't configure keeps its status in its badge.
+    private void VerifyCardTitles()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        var oldSnapshot = snapshot; var oldSelection = selected; bool oldHorizontal = horizontalTree;
+        try
+        {
+            snapshot = DemoData.Create();
+            var camera = snapshot.Nodes.First(n => n.Id == "demo/root/1/2");
+            var drive = snapshot.Nodes.First(n => n.Id == "demo/root/1/1");
+            camera.Name = "SunplusIT Integrated RGB Camera";
+            drive.Name = "Portable SSD enclosure with an unusually long reported product name";
+            TextBlock Name(UsbNode node) => VisualDescendants(cards[node.Id].Card).OfType<TextBlock>().First(t => t.Text == node.Name);
+            // How tall the name needs to be at its drawn width.
+            double Needed(TextBlock name) => new System.Windows.Media.FormattedText(name.Text, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+                new System.Windows.Media.Typeface(name.FontFamily, name.FontStyle, name.FontWeight, name.FontStretch), name.FontSize, name.Foreground, 1) { MaxTextWidth = name.ActualWidth }.Height;
+            void Fits(UsbNode node, string where) => Check(cards[node.Id].Card.Child.DesiredSize.Height <= cards[node.Id].Card.Height - cards[node.Id].Card.Padding.Top - cards[node.Id].Card.Padding.Bottom + 1, $"{node.Name}'s title must fit its card ({where}).");
+            // Laid out from the left, a card widens for its name and keeps it on one line; only a name too
+            // long even for the widest card wraps, at full detail. Compact cards keep to one line.
+            horizontalTree = true;
+            detail = CardDetail.Compact; Draw();
+            Check(TitleLines(camera) == 1 && TitleLines(drive) == 1, "Compact cards must keep their names to one line.");
+            detail = CardDetail.Full; Draw(); UpdateLayout();
+            Check(cards[camera.Id].Card.Width > CardWidth && TitleLines(camera) == 1 && Needed(Name(camera)) <= TitleLine + 0.5, "A long name must widen its card and show in full on one line.");
+            Check(cards[drive.Id].Card.Width <= CardWidth + 100 + 0.5 && TitleLines(drive) == 2 && Name(drive).ActualHeight >= 2 * TitleLine - 0.5, "A name too long for the widest card must wrap onto two lines.");
+            Fits(camera, "horizontal"); Fits(drive, "horizontal");
+            // Laid out from the top, width is scarce, so a full card's long name wraps instead.
+            horizontalTree = false; Draw(); UpdateLayout();
+            Check(cards[camera.Id].Card.Width == CardWidth && TitleLines(camera) == 2 && Name(camera).ActualHeight >= 2 * TitleLine - 0.5 && Needed(Name(camera)) <= Name(camera).ActualHeight + 0.5,
+                "In the vertical layout a long name must wrap onto two lines and show in full.");
+            Fits(camera, "vertical");
+            horizontalTree = oldHorizontal; Draw(); UpdateLayout();
+            var failed = snapshot.Nodes.First(n => n.Id == "demo/root/5/3");
+            var texts = VisualDescendants(cards[failed.Id].Card).OfType<TextBlock>().Select(t => t.Text).ToList();
+            Check(texts.Contains("Portable hard drive") && texts.Count(t => t.Contains("Insufficient power")) == 1, "A card must state its issue once, in its badge, not also in its title.");
+        }
+        finally { snapshot = oldSnapshot; selected = oldSelection; horizontalTree = oldHorizontal; detail = CardDetail.Full; Draw(); ShowDetails(); }
+    }
 }

@@ -126,6 +126,45 @@ public partial class MainWindow
         }
         finally { Search.Text = original; searchTimer.Stop(); }
     }
+    // Narrowing the window folds the device tree away before the canvas gets less than half the width, and
+    // widening brings it back, unless it was shown or hidden by hand in between. The legend wraps by group.
+    private void VerifySmallWindow()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        double width = Width, treeWidth = TreePanel.Visibility == Visibility.Visible ? TreeColumn.ActualWidth : treePanelWidth, inspector = InspectorColumn.ActualWidth;
+        bool Folded() => TreePanel.Visibility == Visibility.Collapsed && TreeButton.Visibility == Visibility.Visible;
+        double Canvas() => ((Grid)TreePanel.Parent).ColumnDefinitions[2].ActualWidth;
+        void Resize(double to) { Width = to; UpdateLayout(); }
+        try
+        {
+            Resize(1500);
+            Check(!Folded(), "The device tree must show at the default window width.");
+            Resize(1050);
+            Check(Folded() && treeFoldedForRoom && Canvas() >= ActualWidth / 2 - 20 && Canvas() > InspectorColumn.ActualWidth, $"At the minimum width the tree must fold so the canvas has the most room ({Canvas():0} px).");
+            foreach (var group in SocketLegend.Children.OfType<FrameworkElement>())
+            {
+                var right = group.TranslatePoint(new Point(group.ActualWidth, 0), SocketLegend).X;
+                Check(Equals(group.Tag, NodeVisuals.LegendGroupTag) && right <= SocketLegend.ActualWidth + 0.5, "Every legend group must show whole, wrapping when the legend is narrow.");
+            }
+            Resize(1500);
+            Check(!Folded() && !treeFoldedForRoom, "Widening the window must bring the folded tree back.");
+            // Dragging the tree wide leaves it shown, however little room that leaves the canvas.
+            TreeSplitter.RaiseEvent(new System.Windows.Controls.Primitives.DragStartedEventArgs(0, 0));
+            TreeSplitter.RaiseEvent(new System.Windows.Controls.Primitives.DragDeltaEventArgs(600, 0));
+            TreeSplitter.RaiseEvent(new System.Windows.Controls.Primitives.DragCompletedEventArgs(600, 0, false));
+            UpdateLayout();
+            Check(!Folded() && TreeColumn.ActualWidth > 500, "Dragging the tree's splitter must never fold it.");
+            TreeColumn.Width = new GridLength(280); UpdateLayout();
+            Resize(1050); TreePanelClick(this, new RoutedEventArgs()); Resize(1060);
+            Check(!Folded(), "A tree shown by hand must stay shown while the window stays narrow.");
+            Resize(1500); Resize(1050);
+        }
+        finally
+        {
+            Resize(width); if (Folded()) TreePanelClick(this, new RoutedEventArgs());
+            TreeColumn.Width = new GridLength(treeWidth); InspectorColumn.Width = new GridLength(inspector); UpdateLayout(); FitSidePanels();
+        }
+    }
     private void VerifyDeviceTree()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
