@@ -30,6 +30,17 @@ internal static class TextOut
         var plan = r["powerPlan"]!.AsObject();
         sb.AppendLine($"USB selective suspend in the power plan: plugged in {Str(plan["pluggedIn"])}, battery {Str(plan["onBattery"])}; now {Str(plan["powerSource"])}");
         foreach (var d in r["scanDiagnostics"]?.AsArray() ?? []) sb.AppendLine("Scan: " + Str(d));
+        if (r["fixFirst"] is JsonArray { Count: > 0 } first)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Fix first:");
+            int number = 0;
+            foreach (var f in first)
+            {
+                sb.AppendLine($"  {++number}. {Str(f!["issue"])} — {Str(f["path"])} {Str(f["name"])}: {Str(f["fix"])}");
+                if (f["alsoFixes"] is JsonArray also) sb.AppendLine("     Also fixes " + string.Join(", ", also.Select(a => $"{Str(a!["issue"])} on {Str(a["path"])} {Str(a["name"])}")) + ".");
+            }
+        }
         var issues = r["issues"]!.AsArray();
         if (issues.Count == 0) { sb.AppendLine(); sb.AppendLine("No issues to show."); }
         foreach (var node in issues)

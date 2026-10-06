@@ -33,6 +33,11 @@ internal static class SelfTests
             && stuckSpeed.What == "This device is connected at 12 Mb/s (USB 1 speed), though it supports USB 2 (480 Mb/s)." && stuckSpeed.Affects == "Yes: its transfers are limited to 12 Mb/s."
             && stuckSpeed.Cause.StartsWith("The hub it's plugged into runs at 12 Mb/s"), "A USB 2 device behind a USB 1.1 hub runs at 12 Mb/s, and the hub is named as the cause.");
         Check(Explanations.HeldBack(oldHub).SequenceEqual([stuck]), "A USB 1.1 hub holds back a high-speed device behind it.");
+        oldHub.HighSpeedCapable = true;
+        var slowFirst = Triage.FixFirst(new Snapshot { Controllers = [new() { Id = "fs", Kind = "Controller", Children = [oldHub] }] });
+        Check(slowFirst.Count == 1 && slowFirst[0].Node == oldHub && slowFirst[0].Also.SequenceEqual([(Explanations.SpeedLabel(stuck), stuck)]),
+            "A device a slow hub holds back is fixed at the hub, so fix first lists them once.");
+        oldHub.HighSpeedCapable = null;
         Check(Explanations.Speed(stuck, [new() { Kind = "Root hub" }, new UsbNode { Id = "hs", Kind = "Hub", LinkMbps = 480 }, stuck]).Cause.StartsWith("Its connection couldn't hold USB 2's high speed"),
             "Behind a high-speed hub, a 12 Mb/s link means the connection couldn't hold high speed.");
         stuck.HighSpeedCapable = false;

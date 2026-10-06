@@ -72,12 +72,21 @@ internal static class Reports
         var shown = all.Where(i => i.Severity >= min).OrderByDescending(i => i.Severity).ToList();
         var report = Header(s, "issues");
         report["summary"] = J.Obj(("errors", all.Count(i => i.Severity == Severity.Error)), ("warnings", all.Count(i => i.Severity == Severity.Warning)), ("notes", all.Count(i => i.Severity == Severity.Note)));
+        report["fixFirst"] = FixFirst(s);
         report["counts"] = Counts(s);
         report["powerPlan"] = PowerPlan(s.Snapshot);
         if (s.Snapshot.Diagnostics.Count > 0) report["scanDiagnostics"] = J.Arr(s.Snapshot.Diagnostics.Select(d => (JsonNode)d));
         report["issues"] = J.Arr(shown.Select(i => (JsonNode)Explain(s, i.Severity, i.Text, i.Node, evidence)));
         return report;
     }
+    // The few issues to fix first, each with its most likely fix, as the app's Fix first strip shows them.
+    internal static JsonArray FixFirst(Session s) => J.Arr(Triage.FixFirst(s.Snapshot).Select(i =>
+    {
+        var shown = s.IsMergedRoot(i.Node) ? s.Parent(i.Node)! : i.Node;
+        return (JsonNode)J.Obj(("severity", i.Severity.ToString().ToLowerInvariant()), ("issue", i.Issue), ("path", s.PathOf(shown)), ("name", Topology.ShortName(shown)),
+            ("fix", i.Fix), ("affectsNow", i.AffectsNow),
+            ("alsoFixes", J.Some(i.Also.Select(a => (JsonNode)J.Obj(("issue", a.Issue), ("path", s.PathOf(s.IsMergedRoot(a.Node) ? s.Parent(a.Node)! : a.Node)), ("name", Topology.ShortName(a.Node)))))));
+    }));
     // 0 clean or notes only, 1 warnings, 2 errors. A scan diagnostic, such as a problem Windows reports on
     // something the scan couldn't place, counts as a warning, as in the app's issue list.
     internal static int HealthCode(Session s) => s.Listed.SelectMany(n => IssuesOf(s, n)).Select(i => (Severity?)i.Severity).Max() switch

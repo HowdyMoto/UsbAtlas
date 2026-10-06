@@ -44,7 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); File.WriteAllText("ui-test.txt", "UI checks passed: device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyFixFirst(); File.WriteAllText("ui-test.txt", "UI checks passed: what to fix first and the exported image, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -636,13 +636,6 @@ public partial class MainWindow : Window
         if (GraphScroll.IsMouseCaptured) GraphScroll.ReleaseMouseCapture();
     }
     private void ResetPan() { FinishPan(); PanTransform.X = PanTransform.Y = 0; }
-    private void ExportClick(object sender, RoutedEventArgs e)
-    {
-        var dialog = new SaveFileDialog { Filter = "JSON snapshot|*.json", FileName = $"usb-atlas-{DateTime.Now:yyyyMMdd-HHmmss}.json" };
-        if (dialog.ShowDialog() != true) return;
-        try { File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true })); StatusText.Text = "Snapshot exported to " + dialog.FileName; }
-        catch (Exception ex) { StatusText.Text = "Export failed: " + ex.Message; }
-    }
     private void VerifyUi()
     {
         VerifyWireRouting();

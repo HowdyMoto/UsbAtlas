@@ -24,7 +24,7 @@ internal static class Mcp
 
     private static List<Tool> Tools(string baseline) =>
     [
-        new("usb_issues", "List every USB issue on this PC, most severe first: devices linked slower than they support, power and bandwidth budgets, Windows driver problem codes, port errors, unstable connections, game controllers Windows may suspend, contradictions in the firmware's port map. Each comes with what it means, whether it affects anything now, the likely cause and steps to fix it. Start here.",
+        new("usb_issues", "List every USB issue on this PC, most severe first: devices linked slower than they support, power and bandwidth budgets, Windows driver problem codes, port errors, unstable connections, game controllers Windows may suspend, contradictions in the firmware's port map. Each comes with what it means, whether it affects anything now, the likely cause and steps to fix it. It opens with the few to fix first, each with its most likely fix. Start here.",
             J.Obj(("min_severity", Prop("string", "Leave out issues below this severity.", ("enum", new JsonArray("note", "warning", "error"))))), [],
             a => ["issues", .. Arg(a, "min_severity") is string m ? new[] { "--min", m } : []]),
         new("usb_tree", "The USB topology as an indented tree: each host controller, hub and device with its path (such as H01/04/02), kind, link rate, polling rate, requested power, VID:PID and issues. Empty ports are summarized per hub.",
