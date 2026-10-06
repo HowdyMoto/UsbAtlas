@@ -56,6 +56,20 @@ internal static class SelfTests
         Check(Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]).Cause.StartsWith("Its USB 3 connection didn't come up"), "Without DisplayPort entered, the cable is the likely cause.");
         stuck.HighSpeedCapable = false;
         Check(!HubRelationships.ReducedSpeed(stuck) && !HubRelationships.ReducedSpeed(new UsbNode { Kind = "Device", LinkMbps = 12 }), "A full-speed-only device at 12 Mb/s is where it belongs.");
+        // Five hubs in a row: the fifth is at the limit, and a sixth's device is refused. A paired hub's USB 2 side
+        // leaves the note to its USB 3 side.
+        var deep = new UsbNode { Id = "d/refused", Kind = "Unavailable", Status = "Hub nested too deeply", Port = 1 };
+        UsbNode chainHub = deep;
+        var hubs = new List<UsbNode>();
+        for (int level = 6; level >= 1; level--) { chainHub = new UsbNode { Id = $"d/r{string.Concat(Enumerable.Repeat("/1", level))}", Kind = "Hub", Name = $"Hub {level}", Port = 1, Children = [chainHub] }; hubs.Insert(0, chainHub); }
+        var nested = new Snapshot { Controllers = [new() { Id = "d", Kind = "Controller", Children = [new() { Id = "d/r", Kind = "Root hub", Children = [hubs[0]] }] }] };
+        HubDepth.Analyze(nested);
+        Check(hubs.Select(h => h.HubsAbove).SequenceEqual([0, 1, 2, 3, 4, 5]) && deep.HubsAbove == 6 && HubDepth.Summary(hubs[2]) == "2 of 5", "Hubs above counts every hub on the way, not the root hub or the node itself.");
+        Check(!HubDepth.IsAtLimit(hubs[3]) && HubDepth.IsAtLimit(hubs[4]) && IssueRules.For(hubs[4]).Contains((Severity.Note, HubDepth.AtLimit)), "The fifth hub in a row is at the limit, as a note.");
+        Check(Explanations.For(hubs[4], HubDepth.AtLimit, Topology.FindPath(nested, hubs[4].Id)).What.Contains("Hub 1 › Hub 2 › Hub 3 › Hub 4 › Hub 5"), "The limit names every hub in the chain.");
+        Check(Explanations.For(deep, "Port error", Topology.FindPath(nested, deep.Id)).What.EndsWith("Hub 1 › Hub 2 › Hub 3 › Hub 4 › Hub 5 › Hub 6."), "A device nested too deeply names the hubs it's behind.");
+        hubs[4].IsUsb2Companion = true; hubs[4].CompanionHubId = "elsewhere";
+        Check(!HubDepth.IsAtLimit(hubs[4]), "A paired hub's USB 2 side leaves the note to its USB 3 side.");
         // A port refused for bandwidth is fixed at its hub, together with the hub's own bandwidth warning.
         var refused = new UsbNode { Id = "b/r/1/3", Kind = "Unavailable", Port = 3, Status = "Insufficient bandwidth" };
         UsbNode StudioInterface(string id, int port) => new() { Id = id, Kind = "Device", Port = port, DeviceType = "Audio", LinkMbps = 12, ReservedMbps = 1, PeakReservedMbps = 6 };

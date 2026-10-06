@@ -36,7 +36,7 @@ internal static class Explanations
                     "Enumeration failed" or "General failure" => new("Something is plugged in here, but it didn't answer properly when Windows tried to set it up.", "Yes: Windows can't use it.", "",
                         ["Unplug it, wait a few seconds and plug it back in.", "Try another cable and another port.", "If it has its own power supply or switch, check that it's on. If it fails everywhere, the device may be faulty."]),
                     "Query failed" => new("USB Atlas couldn't read this port.", "Probably not: a device here may still be connected and working; this scan just can't see it.", "", ["Refresh (F5) to try again."]),
-                    "Hub nested too deeply" => new("This device is behind too many hubs in a row for USB to reach it.", "Yes: Windows can't use it.",
+                    "Hub nested too deeply" => new($"This device is behind too many hubs in a row for USB to reach it: {HubDepth.Chain(HubDepth.Above(path))}.", "Yes: Windows can't use it.",
                         "USB allows at most five hubs between a device and the computer, and monitors, docks and keyboards often have hubs inside.", ["Plug it, or the hub it's on, closer to the computer."]),
                     _ => new($"Windows reports this port as “{n.Status}”.", "Probably: Windows may not be able to use what's plugged in here.", "", ["Unplug the device and plug it back in.", "Try another port and cable."])
                 };
@@ -159,6 +159,8 @@ internal static class Explanations
                 return DriverExplanation(n, noun);
             case Billboard.Failed or Billboard.NotEntered when n.Billboard != null:
                 return Billboard.Explain(n, issue);
+            case HubDepth.AtLimit:
+                return HubDepth.Explain(n, path);
             case Containers.SharedId:
                 return Containers.Explain(n);
             case LinuxProblems.NoDriver or LinuxProblems.NotAuthorized:

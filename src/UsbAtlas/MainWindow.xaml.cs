@@ -278,6 +278,7 @@ public partial class MainWindow : Window
             Section("Port");
             Field("Path", pathLabels.GetValueOrDefault(node.Id, NotApplicable), PathHelp);
             Field("Port number", node.Port.ToString("00"), "The number Windows gives this port on its hub. A USB 3 socket has two, one for its USB 2 half and one for its USB 3 half.");
+            Field("Hubs above", HubDepth.Summary(node), "Hubs between the computer and this port, not counting the computer's own. USB allows five in a row; docks, monitors and keyboards often have hubs inside.");
             Field("Port name", PortNameEditor(node), "Your own name for this socket. It stays with the hub port when the device in it changes.");
             Field("Socket speed", SocketSpeedEditor(node), SocketSpeedHelp);
             Field("Port supports", node.Protocols, "The USB versions Windows says this port carries.");

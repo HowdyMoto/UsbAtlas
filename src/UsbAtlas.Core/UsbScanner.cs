@@ -92,6 +92,7 @@ public sealed class UsbScanner
         snapshot.Containers = [.. Containers.Read(snapshot.Nodes.Select(n => n.ContainerId)).Values];
         Containers.Analyze(snapshot);
         PortMap.Analyze(snapshot);
+        HubDepth.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
         try

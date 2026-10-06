@@ -178,6 +178,8 @@ internal static class Reports
         if (n.Kind is "Controller" or "Root hub" && UsbC.Computer(s.Snapshot) is { Count: > 0 } computer)
             node["usbC"] = J.Arr(computer.Select(x => (JsonNode)x));
         node["location"] = J.Obj(("where", n.Location), ("evidence", n.LocationEvidence));
+        if (n.Kind is not ("Controller" or "Root hub"))
+            node["hubsAbove"] = J.Obj(("count", n.HubsAbove), ("limit", HubDepth.Max), ("chain", J.Some(HubDepth.Above(s.Chain(n)).Select(h => (JsonNode)$"{s.PathOf(h)} {Topology.ShortName(h)}"))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable),
                 ("drawThroughPortMa", n.Kind == "Hub" ? UsbBudgets.Demand(n).Known : null), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))));
