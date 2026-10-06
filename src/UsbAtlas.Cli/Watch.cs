@@ -208,7 +208,7 @@ internal static class Watch
                 foreach (var u in e["unstable"]!.AsArray())
                     sb.AppendLine($"  unstable: {u!["path"]} {u["name"]} dropped and came back {u["quickReconnects"]} times ({string.Join(", ", u["times"]!.AsArray().Select(t => t!.ToString()))})");
                 var final = e["issues"]!;
-                sb.AppendLine($"  now: {Count(final["errors"], "error")}, {Count(final["warnings"], "warning")}, {Count(final["notes"], "note")}. usbatlas-cli issues explains them.");
+                sb.AppendLine($"  now: {Count(final["errors"], "error")}, {Count(final["warnings"], "warning")}, {Count(final["notes"], "note")}. atlascli issues explains them.");
                 return sb.ToString();
             default:
                 return Json.Write(e, false) + "\n";

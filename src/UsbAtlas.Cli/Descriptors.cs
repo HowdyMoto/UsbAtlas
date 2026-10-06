@@ -14,7 +14,7 @@ internal static class Descriptors
         var raw = (Topology.MergedRoot(n) ?? n).Raw;
         if (raw == null)
         {
-            report["note"] = s.Source == "live" ? "Windows returned no descriptors for this node." : "This snapshot has no descriptors. Take one with usbatlas-cli scan --raw, or run raw against live hardware.";
+            report["note"] = s.Source == "live" ? "Windows returned no descriptors for this node." : "This snapshot has no descriptors. Take one with atlascli scan --raw, or run raw against live hardware.";
             return report;
         }
         // Speed classes follow USB_DEVICE_SPEED: 0 low, 1 full, 2 high, 3 SuperSpeed or faster.

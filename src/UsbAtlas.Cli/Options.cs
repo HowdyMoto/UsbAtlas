@@ -41,7 +41,7 @@ internal sealed class Options
                 }
                 o.named[name] = value;
             }
-            else throw new CliException($"Unknown option --{name}. Run usbatlas-cli help.");
+            else throw new CliException($"Unknown option --{name}. Run atlascli help.");
         }
         if (o.named.TryGetValue("format", out var format) && format is not ("json" or "text"))
             throw new CliException("--format is text or json.");

@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 
 namespace UsbAtlas.Cli;
 
-// Checks for the command line, run by usbatlas-cli self-test after the app's own checks. They use the
+// Checks for the command line, run by atlascli self-test after the app's own checks. They use the
 // sample topology, so they pass on any machine.
 internal static class CliTests
 {
@@ -211,7 +211,7 @@ internal static class CliTests
 
     private static void FileTests()
     {
-        string folder = Path.Combine(Path.GetTempPath(), "usbatlas-cli-test-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(Path.GetTempPath(), "atlascli-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         try
         {
@@ -311,7 +311,7 @@ internal static class CliTests
         Check(swapped.Contains("controller is missing — expected PCI 8086:A36D at 00:14.0") && swapped.Contains("controller isn't in the map — found PCI 1B21:2142 at 00:15.0"), "A different controller chip is a missing controller and an unlisted one.");
         Check(Reports.Figures(pci.Controllers[0]) == "PCI 1B21:2142 at 00:15.0" && Reports.Show(new Session(pci, "demo"), pci.Controllers[0])["node"]!["controller"]!["vendor"]!.ToString() == "ASMedia", "A host controller shows its PCI identity.");
 
-        string folder = Path.Combine(Path.GetTempPath(), "usbatlas-cli-map-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(Path.GetTempPath(), "atlascli-map-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         try
         {
