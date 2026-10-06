@@ -31,6 +31,8 @@ internal static class IssueRules
         if (n.Display != null) issues.Add((Displays.SeverityOf(n), Displays.NotShowing));
         // Unrelated hardware grouped as one device by Windows still works, so it's a note.
         if (n.ContainerIdShared) issues.Add((Severity.Note, Containers.SharedId));
+        // A drive that could use UAS but doesn't is slower than it could be, so it's a warning.
+        if (Uas.NotUsed(n)) issues.Add((Severity.Warning, Uas.NotInUse));
         // A hub at the limit works; only another hub plugged into it won't.
         if (HubDepth.IsAtLimit(n)) issues.Add((Severity.Note, HubDepth.AtLimit));
         // Firmware describing a port wrongly changes nothing plugged into it, so each finding is a note.

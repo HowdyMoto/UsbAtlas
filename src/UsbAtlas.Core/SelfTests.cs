@@ -56,6 +56,28 @@ internal static class SelfTests
         Check(Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]).Cause.StartsWith("Its USB 3 connection didn't come up"), "Without DisplayPort entered, the cable is the likely cause.");
         stuck.HighSpeedCapable = false;
         Check(!HubRelationships.ReducedSpeed(stuck) && !HubRelationships.ReducedSpeed(new UsbNode { Kind = "Device", LinkMbps = 12 }), "A full-speed-only device at 12 Mb/s is where it belongs.");
+        // UAS: offered in any alternate setting, used when Windows bound UASPStor, flagged only when offered and unused.
+        byte[] enclosureConfig = [9, 2, 32, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 2, 8, 6, 0x50, 0, 9, 4, 0, 1, 4, 8, 6, 0x62, 0];
+        Check(Uas.Offers(enclosureConfig) && !Uas.Offers(enclosureConfig[..18].Select((b, i) => i == 2 ? (byte)18 : b).ToArray()) && !Uas.Offers([9, 2, 18, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 2, 3, 1, 0x62, 0]),
+            "A drive offers UAS when any mass storage alternate setting speaks it, and only then.");
+        Check(Uas.Protocol(["usbccgp", "UASPStor"]) == "UAS" && Uas.Protocol(["USBSTOR"]) == "Bulk-only" && Uas.Protocol(["HidUsb"]) == "", "The bound storage driver says which protocol Windows uses.");
+        var uasDevices = new Dictionary<string, UsbScanner.DevNode>(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"USB\VID_174C&PID_55AA\1234567890AB"] = new("", "USBSTOR", []),
+            [@"USB\VID_0781&PID_5567\4C530001"] = new("", "usbccgp", []),
+            [@"USB\VID_0781&PID_5567&MI_00\6&1"] = new(@"USB\VID_0781&PID_5567\4C530001", "UASPStor", [])
+        };
+        var slowDrive = new UsbNode { Id = "u/r/1/2", Kind = "Device", InstanceId = @"USB\VID_174C&PID_55AA\1234567890AB", OffersUas = true, LinkMbps = 480 };
+        var compositeDrive = new UsbNode { Id = "u/r/2", Kind = "Device", InstanceId = @"USB\VID_0781&PID_5567\4C530001", OffersUas = true, LinkMbps = 5000 };
+        var uasHub = new UsbNode { Id = "u/r/1", Kind = "Hub", Name = "Desk hub", Children = [slowDrive] };
+        var drives = new Snapshot { Controllers = [new() { Id = "u", Kind = "Controller", Children = [new() { Id = "u/r", Kind = "Root hub", Children = [uasHub, compositeDrive] }] }] };
+        Uas.Apply(drives, uasDevices);
+        Check(slowDrive.StorageProtocol == "Bulk-only" && compositeDrive.StorageProtocol == "UAS" && Uas.Summary(slowDrive) == "Bulk-only · supports UAS", "A drive's protocol comes from its own driver or its function's.");
+        var uasSteps = Explanations.For(slowDrive, Uas.NotInUse, Topology.FindPath(drives, slowDrive.Id)).Steps!;
+        Check(IssueRules.For(slowDrive).Contains((Severity.Warning, Uas.NotInUse)) && !IssueRules.For(compositeDrive).Any(i => i.Text == Uas.NotInUse)
+            && uasSteps[0].StartsWith("It's connected at USB 2 speed") && uasSteps[1].Contains("instead of through Desk hub"), "A drive offering UAS but running bulk-only is a warning, with a USB 2 link and a hub as the likeliest causes.");
+        slowDrive.OffersUas = false;
+        Check(!IssueRules.For(slowDrive).Any(i => i.Text == Uas.NotInUse) && Uas.Summary(slowDrive) == "Bulk-only", "A drive that offers only bulk-only, such as a flash drive, isn't flagged.");
         // Five hubs in a row: the fifth is at the limit, and a sixth's device is refused. A paired hub's USB 2 side
         // leaves the note to its USB 3 side.
         var deep = new UsbNode { Id = "d/refused", Kind = "Unavailable", Status = "Hub nested too deeply", Port = 1 };

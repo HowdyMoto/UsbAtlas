@@ -103,6 +103,8 @@ internal static class CliTests
         Check(show["node"]!["hub"]!["transactionTranslators"]!.ToString().Contains("single TT") && show["children"]!.AsArray().Count == 4 && show["siblings"]!.AsArray().Count > 0 && show["upstream"]!.AsArray().Count == 1, "show includes the hub, its children, its siblings and the chain to the host.");
         Check(show["issues"]!.AsArray().Any(i => i!["issue"]!.ToString() == "Over power budget"), "show explains the node's issues.");
         Check(TextOut.Render(show).Contains("transactionTranslators: Share one link · single TT"), "show renders as key: value text.");
+        Check(Reports.Show(s, s.Resolve("NVMe SSD enclosure"))["node"]!["storage"]!["protocol"]!.ToString() == "UAS" && s.Find("UAS").Any(n => n.Name == "NVMe SSD enclosure") && Reports.Show(s, s.Resolve("Mechanical keyboard"))["node"]!["storage"] == null,
+            "show reports a drive's protocol, search finds UAS, and other devices have none.");
         var flash = Reports.Show(s, s.Resolve("H01/05/01"))["node"]!["hubsAbove"]!;
         Check(flash["count"]!.GetValue<int>() == 1 && flash["limit"]!.GetValue<int>() == 5 && flash["chain"]![0]!.ToString() == "H01/05 Travel hub", "show counts the hubs above a device and names them.");
         Check(show["node"]!["link"]!["typicalBestTransfer"]!.ToString() == "about 40 MB/s for a fast drive; typical, not measured"
