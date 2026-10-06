@@ -219,7 +219,7 @@ internal static class DeviceIdentity
         node.DeviceType = node.DeviceClass switch
         {
             "Audio" => "Audio", "Video" => "Camera / video", "Mass storage" => "Storage", "Human interface (HID)" => "HID / controls",
-            "Printer" => "Printer", "Wireless controller" => "Wireless", "Communications" => "Serial / communications", _ => "USB device"
+            "Printer" => "Printer", "Wireless controller" => "Wireless", "Communications" => "Serial / communications", "Billboard" => "Billboard", _ => "USB device"
         };
         node.TypeEvidence = node.DeviceType == "USB device" ? "Specific function not reported; generic USB device shown." : "Reported by the USB device class.";
         RefineStorage(node, name);

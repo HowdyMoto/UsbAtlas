@@ -25,7 +25,10 @@ public partial class App : Application
         // Previews and checks ignore the saved layout, so they come out the same on every machine.
         bool? horizontal = e.Args.Contains("--vertical") ? false : e.Args.Contains("--horizontal") ? true : null;
         if (horizontal == null && (e.Args.Contains("--render") || e.Args.Contains("--verify-ui"))) horizontal = true;
-        var window = new MainWindow(e.Args.Contains("--demo"), e.Args.Contains("--render"), e.Args.Contains("--verify-ui"), horizontal);
+        var window = new MainWindow(e.Args.Contains("--demo"), e.Args.Contains("--render"), e.Args.Contains("--verify-ui"), horizontal)
+        {
+            RenderSelection = e.Args.SkipWhile(x => x != "--select").Skip(1).FirstOrDefault()
+        };
         if (e.Args.Contains("--compact")) { window.Width = 1050; window.Height = 650; }
         if (e.Args.Contains("--wide")) { window.Width = 3840; window.Height = 1560; }
         if (e.Args.Contains("--render"))

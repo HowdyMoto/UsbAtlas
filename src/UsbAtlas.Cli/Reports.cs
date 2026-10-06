@@ -179,6 +179,10 @@ internal static class Reports
         if (n.DriverService.Length > 0 || n.DriverVersion.Length > 0 || n.DriverProblems.Count > 0)
             node["driver"] = J.Obj(("service", J.S(n.DriverService)), ("version", J.S(n.DriverVersion)), ("date", J.S(n.DriverDate)), ("provider", J.S(n.DriverProvider)), ("inf", J.S(n.DriverInf)),
                 ("problems", J.Some(n.DriverProblems.Select(p => (JsonNode)J.Obj(("code", p.Code), ("meaning", p.Meaning), ("instanceId", p.InstanceId), ("name", J.S(p.Name)))))));
+        if (n.Billboard is BillboardInfo b)
+            node["billboard"] = J.Obj(("version", b.Version), ("vconnPower", b.VconnPower), ("preferredMode", b.PreferredMode),
+                ("insufficientPower", b.InsufficientPower ? true : null), ("powerDeliveryFailed", b.PowerDeliveryFailed ? true : null), ("additionalInfoUrl", J.S(b.AdditionalInfoUrl)),
+                ("modes", J.Arr(b.Modes.Select(m => (JsonNode)J.Obj(("index", m.Index), ("svid", m.Svid), ("name", m.Name), ("description", J.S(m.Description)), ("state", m.State.ToLowerInvariant()), ("vdo", J.S(m.Vdo)))))));
         if (n.QuickReconnects > 0)
             node["reconnects"] = J.Obj(("count", n.QuickReconnects), ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))));
         report["node"] = node;

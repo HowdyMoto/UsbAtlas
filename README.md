@@ -227,6 +227,11 @@ everything plugged into it is, so the setting matters most on devices.
 
 USB 2/3 companion logical ports can refer to the same physical socket; Windows names each port's companion, and both are drawn as that socket, split at a seam when they are on the same hub. An external USB 3 hub may appear as two hubs, whose cards name each other. Connector shape is never inferred from USB version. Empty counts are logical ports. Errors and inaccessible hubs remain visible; a scan can be partial if hardware changes during enumeration.
 
+**USB-C alternate modes:** a USB-C monitor, dock or adapter whose alternate mode, such as DisplayPort over USB-C, doesn't start shows a **Billboard** device, and some show one all the time. USB Atlas reads every Billboard's BOS descriptor on each scan and decodes its Billboard capability: each mode it offers (DisplayPort, Thunderbolt, or a vendor's own, named from the USB ID database), whether it was entered, failed or never asked for, and why one failed: not enough power over USB-C, or USB Power Delivery failing. Properties shows them as **Alternate modes**, with each mode's SVID, string and Billboard Ex VDO in Detection details, and `show` and `raw` report the same fields.
+
+- **Alternate mode failed** (warning): a mode was attempted and not entered, or the device reports an error. Its explanation names what is lost, such as the picture, and what to do: its power adapter when power was short, a cable that carries video, and a port marked for DisplayPort or Thunderbolt.
+- **Alternate mode not entered** (note): nothing failed, but the computer never asked for any mode, so the port or cable in between may not carry it. One mode entered with the others idle is normal and isn't flagged.
+
 **Port map:** Windows learns about a computer's built-in ports from its firmware (ACPI `_UPC` and `_PLD`): which can be plugged into, which are USB-C, and which USB 2 and USB 3 ports share a socket. When that description contradicts itself, the port shows a note. Nothing plugged in is affected, and it can't be fixed at the port; a firmware update may correct it.
 
 - **No USB 2 half reported:** a USB 3 port you can plug into has no USB 2 port named as the other half of its socket. Every USB 3 socket also carries USB 2.
@@ -253,7 +258,7 @@ Start-Process $exe '--demo --render --verify-ui --compact' -WorkingDirectory $ou
 Start-Process $exe '--demo --render --verify-ui --vertical' -WorkingDirectory $out -Wait
 ```
 
-The app writes these files to its working directory, so the commands above keep them in `artifacts\diagnostics`. `--self-test` writes `self-test.txt` and exits. `usbatlas-cli self-test` runs the same checks and the command line's own (every command against the sample topology, diff, redaction, descriptor decoding and the MCP protocol) and prints the result. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits.
+The app writes these files to its working directory, so the commands above keep them in `artifacts\diagnostics`. `--self-test` writes `self-test.txt` and exits. `usbatlas-cli self-test` runs the same checks and the command line's own (every command against the sample topology, diff, redaction, descriptor decoding and the MCP protocol) and prints the result. `--scan` writes a real hardware snapshot and exits. `--demo --render` renders the actual WPF window to `preview.png` and exits; add `--select TEXT` to preview Properties for the first node whose search text matches, such as `--render --select 0BDA:5411` on live hardware.
 
 ## API references
 

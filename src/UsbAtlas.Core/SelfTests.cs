@@ -9,6 +9,7 @@ internal static class SelfTests
         Check(UsbScanner.DecodePower(112, 0x0300) == 896, "USB 3 power units must be 8 mA.");
         Check(UsbScanner.Bcd(0x0104) == "1.04" && UsbScanner.Bcd(0x0210) == "2.10" && UsbScanner.Bcd(0x1A0F) == "1A.0F", "Versions and revisions read as binary-coded decimal.");
         Check(Topology.SearchText(new UsbNode { DeviceRevision = "1.04" }, null).Contains("rev 1.04"), "Search finds a device by its revision.");
+        BillboardTests(Check);
         Check(UsbScanner.DecodeSpeed(2, 1).Item2 == 5000, "EX V2 must override legacy high-speed reporting.");
         Check(UsbScanner.DecodeSpeed(2, 4).Item2 == null, "SuperSpeedPlus must not pretend to know exact lane rate.");
         Check(UsbScanner.DecodeSpeed(0, 0).Item2 == 1.5, "Low-speed decoding.");
@@ -518,5 +519,57 @@ internal static class SelfTests
         for (int i = 0; i < 3; i++) { sleeper.Removed(id, t0.AddSeconds(300 + i * 10)); sleeper.Arrived(id, t0.AddSeconds(302 + i * 10)); }
         Check(Flagged(sleeper, id) == 3, "Drops well after a wake still count.");
         Check(ReconnectTracker.InstanceIdFromPath(@"\\?\USB#VID_0451&PID_8442#MSFT20E30108613F47#{f18a0e88-c30c-11d0-8815-00a0c906bed8}") == @"USB\VID_0451&PID_8442\MSFT20E30108613F47", "Hub interface paths name their instance too.");
+    }
+
+    // A Billboard capability: each mode's state in bmConfigured, its SVID and index, and the failure info
+    // that Billboard 1.0 doesn't have.
+    private static byte[] BillboardCapability(int[] states, ushort[] svids, byte failure = 0, bool version10 = false, ushort vconn = 0)
+    {
+        int start = version10 ? 42 : 44, n = svids.Length;
+        var d = new byte[start + 4 * n];
+        d[0] = (byte)d.Length; d[1] = 0x10; d[2] = 0x0D; d[3] = 5; d[4] = (byte)n;
+        BitConverter.GetBytes(vconn).CopyTo(d, 6);
+        for (int i = 0; i < n; i++) d[8 + i / 4] |= (byte)(states[i] << (2 * (i % 4)));
+        BitConverter.GetBytes((ushort)(version10 ? 0x0100 : 0x0121)).CopyTo(d, 40);
+        if (!version10) d[42] = failure;
+        for (int i = 0; i < n; i++) { BitConverter.GetBytes(svids[i]).CopyTo(d, start + 4 * i); d[start + 4 * i + 2] = (byte)i; d[start + 4 * i + 3] = (byte)(6 + i); }
+        return d;
+    }
+    private static byte[] Bos(params byte[][] caps) { var body = caps.SelectMany(c => c).ToArray(); return [5, 15, .. BitConverter.GetBytes((ushort)(5 + body.Length)), (byte)caps.Length, .. body]; }
+
+    private static void BillboardTests(Action<bool, string> Check)
+    {
+        // Captured from a monitor-style hub's Billboard on real hardware: DisplayPort (SVID FF01) entered.
+        var real = Billboard.Decode(Convert.FromHexString("050F490002" + "30100D050100000003" + new string('0', 62) + "0102000001FF0006" + "1410040000000000000000000000000000000000"))!;
+        Check(real.Info.Modes is [{ Svid: "FF01", Name: "DisplayPort", Index: 0, State: "Entered" }] && real.UrlString == 5 && real.ModeStrings is [6] && real.Info.VconnPower == "1 W" && !real.Info.InsufficientPower,
+            "A captured Billboard decodes DisplayPort as entered.");
+        // DisplayPort failed for lack of power, and a vendor mode that wasn't asked for, with Billboard Ex VDOs.
+        var failed = Billboard.Decode(Bos(BillboardCapability([2, 1], [0xFF01, 0x0BDA], failure: 1, vconn: 0x8000), [8, 0x10, 0x0F, 0, 0x45, 0x0C, 0x00, 0x00]))!.Info;
+        Check(failed.Modes[0].State == "Failed" && failed.Modes[1].State == "Not entered" && failed.Modes[1].Name == "Realtek mode"
+            && failed.InsufficientPower && !failed.PowerDeliveryFailed && failed.VconnPower == "Not required" && failed.Version == "1.21" && failed.Modes[0].Vdo == "00000C45",
+            "Modes decode their state, SVID name and VDO, and the failure info its bits.");
+        var device = new UsbNode { Kind = "Device", Name = "Monitor Billboard", Billboard = failed };
+        var why = Explanations.For(device, Billboard.Failed, [device]);
+        Check(IssueRules.For(device).SequenceEqual([(Severity.Warning, Billboard.Failed)]) && why.What.Contains("offers DisplayPort") && why.Affects.StartsWith("Yes: the picture doesn't come through")
+            && why.Cause.Contains("enough power") && why.Steps![0].Contains("power adapter") && why.Steps.Any(s => s.Contains("DisplayPort (a DP or D logo)")), "A failed DisplayPort mode is a warning that names the mode, the cause and what to do.");
+        Check(Billboard.Summary(device) == "DisplayPort · failed, Realtek mode · not entered" && Topology.SearchText(device, null).Contains("DisplayPort · failed"), "Properties and search show each mode's state.");
+        // Nothing failed and nothing entered: the computer never asked, which may be what's wanted.
+        var idle = new UsbNode { Kind = "Device", Billboard = Billboard.Decode(BillboardCapability([1], [0xFF01], failure: 2))!.Info };
+        Check(IssueRules.For(idle).SequenceEqual([(Severity.Note, Billboard.NotEntered)]) && Explanations.For(idle, Billboard.NotEntered, [idle]).What.Contains("didn't ask for it"), "A mode never asked for is a note.");
+        Check(idle.Billboard!.PowerDeliveryFailed && !idle.Billboard.InsufficientPower, "The second failure-info bit is a USB PD failure.");
+        // One mode entered and the others idle is how alternate modes work, so it's not an issue.
+        Check(IssueRules.For(new UsbNode { Kind = "Device", Billboard = Billboard.Decode(BillboardCapability([3, 1], [0xFF01, 0x8087]))!.Info }).Count == 0, "One mode entered and another idle is fine.");
+        // An unspecified error counts as a failure.
+        Check(IssueRules.For(new UsbNode { Kind = "Device", Billboard = Billboard.Decode(BillboardCapability([0], [0x8087]))!.Info }).Contains((Severity.Warning, Billboard.Failed)), "An unspecified error is a failure.");
+        // Billboard 1.0 has no failure info, so its modes start two bytes earlier.
+        var old = Billboard.Decode(BillboardCapability([3], [0xFF01], version10: true))!.Info;
+        Check(old.Modes is [{ Svid: "FF01", State: "Entered" }] && old.Version == "1.00" && !old.InsufficientPower, "A Billboard 1.0 capability decodes from its shorter layout.");
+        // Five modes span two bytes of bmConfigured.
+        var five = Billboard.Decode(BillboardCapability([3, 1, 1, 1, 2], [0xFF01, 1, 2, 3, 4]))!.Info;
+        Check(five.Modes[4].State == "Failed" && five.Modes[3].State == "Not entered", "bmConfigured gives each mode two bits, four modes to a byte.");
+        Check(Billboard.Decode(BillboardCapability([3], [0xFF01])[..30]) == null && Billboard.Decode(Bos()) == null && Billboard.Decode([]) == null, "A truncated capability or a BOS without one decodes to nothing.");
+        Check(Billboard.SvidName(0x8087) == "Thunderbolt" && Billboard.SvidName(0xFFFE) == "Vendor mode FFFE", "Thunderbolt is named, and unknown SVIDs say so.");
+        // The captured device puts its maker's name where a web address belongs.
+        Check(!Billboard.LooksLikeUrl("GsCooLink") && Billboard.LooksLikeUrl("www.dell.com/support") && Billboard.LooksLikeUrl("https://example.com"), "Only a web address is offered as a help page.");
     }
 }

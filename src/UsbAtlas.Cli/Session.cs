@@ -95,6 +95,12 @@ internal sealed class Session
             n.DriverProblems.RemoveAll(p => p == null);
             n.MoreCompanions.RemoveAll(c => c == null);
             foreach (var c in n.MoreCompanions) { c.HubSymbolicLink ??= ""; c.Id ??= ""; }
+            if (n.Billboard is BillboardInfo b)
+            {
+                b.Modes ??= []; b.Modes.RemoveAll(m => m == null);
+                b.Version ??= ""; b.AdditionalInfoUrl ??= ""; b.VconnPower ??= "";
+                foreach (var m in b.Modes) { m.Svid ??= ""; m.Name ??= ""; m.Description ??= ""; m.State ??= ""; m.Vdo ??= ""; }
+            }
             foreach (var c in n.Children) stack.Push(c);
         }
     }

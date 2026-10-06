@@ -117,6 +117,9 @@ public sealed class UsbNode
     public string DeviceType { get; set; } = "USB device";
     public string TypeEvidence { get; set; } = "No specific device function identified.";
     public List<string> InterfaceFunctions { get; set; } = [];
+    // A USB-C device's Billboard: the alternate modes it offers and how each went. Null for anything else.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public BillboardInfo? Billboard { get; set; }
     public List<string> Notes { get; set; } = [];
     public List<UsbNode> Children { get; set; } = [];
     public IEnumerable<UsbNode> Walk() { yield return this; foreach (var c in Children) foreach (var n in c.Walk()) yield return n; }

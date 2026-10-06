@@ -24,6 +24,9 @@ internal static class IssueRules
         if (n.QuickReconnects > 0) issues.Add((n.Kind == "Hub" ? Severity.Note : Severity.Warning, "Unstable connection"));
         if (UsbBudgets.UplinkSeverity(n) is Severity uplink) issues.Add((uplink, "Limited by PCIe link"));
         if (UsbBudgets.EndpointsRunningHigh(n)) issues.Add((Severity.Note, "Many endpoints in use"));
+        // A USB-C alternate mode that failed loses what it carries, such as the picture; one never asked for may be intended.
+        if (Billboard.FailedModes(n).Count > 0) issues.Add((Severity.Warning, Billboard.Failed));
+        else if (Billboard.NoneEntered(n)) issues.Add((Severity.Note, Billboard.NotEntered));
         // Firmware describing a port wrongly changes nothing plugged into it, so each finding is a note.
         foreach (var finding in n.PortMapWarnings) issues.Add((Severity.Note, finding));
         // A nearly full link still fits everything on it, so it's a note; peaks that can't all fit are a warning.

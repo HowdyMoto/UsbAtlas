@@ -239,6 +239,8 @@ public partial class MainWindow : Window
             Field("Serial", Reported(node.Serial));
             Field("USB version", Reported(node.UsbVersion), "The USB version the device says it was built to (bcdUSB). How fast it runs now is Link speed.");
             Field("Device revision", Reported(node.DeviceRevision), "The maker's own revision number for this device (bcdDevice). For hubs and adapters it's usually the firmware version, the first thing their makers' support asks for.");
+            Field("Alternate modes", node.Billboard != null ? Billboard.Summary(node) is { Length: > 0 } modes ? modes : "None offered" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable,
+                "What a USB-C device's Billboard reports about modes such as DisplayPort over USB-C: whether each was entered, failed, or never asked for.");
             // Polling applies to devices with an open interrupt input pipe; hubs poll only for port changes.
             Field("Polling rate", node.Kind == "Device" ? node.PollIntervalMs is double ms ? $"{UsbBudgets.PollingRate(ms)} · {UsbBudgets.PollingInterval(ms)}" : node.ReservedMbps != null ? NotApplicable : "Not reported" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable);
             Field("Power source", Reported(node.PowerSource));
@@ -348,6 +350,7 @@ public partial class MainWindow : Window
         if (node.Kind == "Device") notes.Add(node.TypeEvidence);
         if (node.InterfaceFunctions.Count > 0) notes.Add("Reported functions: " + string.Join(", ", node.InterfaceFunctions));
         if (node.HidUsages.Count > 0) notes.Add("HID collections: " + string.Join(", ", node.HidUsages) + ".");
+        notes.AddRange(Billboard.Evidence(node));
         if (host) notes.Add(PowerSaving.PlanNote(snapshot));
         var knownLinks = chain.Where(n => n.LinkMbps.HasValue).ToList();
         if (knownLinks.Count > 0) notes.Add($"Known path ceiling: {knownLinks.Min(n => n.LinkMbps):0.##} Mb/s, shared and before overhead.");
@@ -723,10 +726,16 @@ public partial class MainWindow : Window
         var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = File.Create(filename); png.Save(stream);
     }
+    // --render --select TEXT previews Properties for the first node whose search text matches.
+    public string? RenderSelection { get; init; }
     private async Task RenderPreview()
     {
         await Task.Delay(400);
         OpenInitialView(); UpdateLayout();
+        if (RenderSelection != null && snapshot.Nodes.FirstOrDefault(n => Topology.SearchText(n, pathLabels.GetValueOrDefault(n.Id)).Contains(RenderSelection, StringComparison.OrdinalIgnoreCase)) is UsbNode chosen)
+        {
+            SelectNode(chosen); UpdateLayout();
+        }
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
         var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(this);
         var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));

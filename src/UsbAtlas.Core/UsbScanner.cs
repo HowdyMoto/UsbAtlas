@@ -216,10 +216,20 @@ public sealed class UsbScanner
                     break;
                 }
             }
-            // The BOS descriptor lists USB 2.1+ and USB 3 capabilities, such as SuperSpeedPlus and LPM.
-            if (CaptureRaw && bcd >= 0x0201 && Descriptor(handle, port, 15, 0, 0, 5) is { Length: >= 5 } bosHead && bosHead[1] == 15
+            // The BOS descriptor lists USB 2.1+ and USB 3 capabilities, such as SuperSpeedPlus and LPM. A Billboard's
+            // says how its USB-C alternate modes went, so it's read on every scan.
+            bool billboard = data[8] == Billboard.Class || node.InterfaceFunctions.Contains("Billboard");
+            if ((CaptureRaw || billboard) && bcd >= 0x0201 && Descriptor(handle, port, 15, 0, 0, 5) is { Length: >= 5 } bosHead && bosHead[1] == 15
                 && Descriptor(handle, port, 15, 0, 0, Math.Max((ushort)5, BitConverter.ToUInt16(bosHead, 2))) is { } bos)
-                node.Raw!.Bos = Convert.ToHexString(bos);
+            {
+                if (CaptureRaw) node.Raw!.Bos = Convert.ToHexString(bos);
+                if (billboard && Billboard.Decode(bos) is { } decoded)
+                {
+                    node.Billboard = decoded.Info;
+                    node.Billboard.AdditionalInfoUrl = StringDescriptor(handle, port, decoded.UrlString, language);
+                    for (int i = 0; i < decoded.ModeStrings.Count; i++) node.Billboard.Modes[i].Description = StringDescriptor(handle, port, decoded.ModeStrings[i], language);
+                }
+            }
             ReadOpenPipes(data, returnedInfo, SpeedClass(data[23], flags), endpoints, node);
             DeviceIdentity.Identify(node);
             if (node.Kind == "Hub")
@@ -346,7 +356,7 @@ public sealed class UsbScanner
         }
     }
     private static string ConnectionStatus(int status) => status switch { 0 => "Empty", 1 => "Connected", 2 => "Enumeration failed", 3 => "General failure", 4 => "Overcurrent", 5 => "Insufficient power", 6 => "Insufficient bandwidth", 7 => "Hub nested too deeply", 8 => "Legacy hub", 9 => "Enumerating", 10 => "Resetting", _ => "Status " + status };
-    private static string ClassName(byte value) => value switch { 0 => "Defined by interfaces", 1 => "Audio", 2 => "Communications", 3 => "Human interface (HID)", 7 => "Printer", 8 => "Mass storage", 9 => "Hub", 14 => "Video", 0xE0 => "Wireless controller", 0xEF => "Composite / miscellaneous", 0xFF => "Vendor specific", _ => $"Class 0x{value:X2}" };
+    private static string ClassName(byte value) => value switch { 0 => "Defined by interfaces", 1 => "Audio", 2 => "Communications", 3 => "Human interface (HID)", 7 => "Printer", 8 => "Mass storage", 9 => "Hub", 14 => "Video", 0x11 => "Billboard", 0xE0 => "Wireless controller", 0xEF => "Composite / miscellaneous", 0xFF => "Vendor specific", _ => $"Class 0x{value:X2}" };
 
     // Names every present device by driver key, and records each devnode's parent and service so HID
     // collections and power settings can be traced back to the USB device they belong to.

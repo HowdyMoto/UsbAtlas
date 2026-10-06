@@ -185,6 +185,11 @@ internal static class CliTests
         var sublinks = Descriptors.Decode(gen2, 3, 0x0320)["speeds"]!.AsArray().Select(x => x!.ToString()).ToList();
         Check(sublinks.Count == 2 && sublinks.All(x => x.Contains("symmetric") && !x.Contains("asymmetric")) && sublinks[1].Contains("TX") && sublinks[0].Contains("SuperSpeedPlus protocol"), "A TX sublink is symmetric, not asymmetric.");
         Check(Descriptors.Decode(Convert.FromHexString("12012003000000094C058A0D000101020301"), 3, 0x0320)["bMaxPacketSize0"]!.ToString().Contains("512 bytes"), "USB 3 bMaxPacketSize0 is an exponent.");
+        // A Billboard capability captured from a monitor-style hub, and a Billboard Ex VDO.
+        var billboard = Descriptors.Decode(Convert.FromHexString("30100D050100000003" + new string('0', 62) + "0102000001FF0006"), 2, 0x0201);
+        Check(billboard["alternateModes"]!.AsArray()[0]!["wSVID"]!.ToString() == "0xFF01 (DisplayPort)" && billboard["alternateModes"]!.AsArray()[0]!["state"]!.ToString() == "entered"
+            && billboard["bAdditionalFailureInfo"]!.ToString() == "0x00" && billboard["iAdditionalInfoURL"]!.GetValue<byte>() == 5, "Billboard capabilities decode their modes and failure info.");
+        Check(Descriptors.Decode([8, 0x10, 0x0F, 1, 0x45, 0x0C, 0, 0], 2, 0x0201)["dwAlternateModeVdo"]!.ToString() == "0x00000C45", "Billboard Ex decodes its VDO.");
         Check(Descriptors.Walk([0x09, 0x29, 0x04], 2, 0x0200)[0]["error"] != null && Descriptors.Decode([0x05, 0x29, 0x04, 0x00, 0x00], 2, 0x0200)["hex"] != null, "Truncated descriptors don't read past their bytes.");
         Check(Descriptors.ServiceMs(1, 1, 1) == 1 && Descriptors.ServiceMs(4, 1, 1) == 8 && Descriptors.ServiceMs(4, 2, 3) == 1, "Isochronous full-speed endpoints count 2^(bInterval-1) frames.");
     }
