@@ -94,6 +94,10 @@ public sealed class UsbNode
     // Descriptors as read, only when a scan is asked to keep them.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RawDescriptors? Raw { get; set; }
+    // A drive's protocol: UAS or Bulk-only, from the driver Windows bound, or empty when it isn't a drive or
+    // the driver doesn't say; and whether its descriptors offer UAS. Null when they weren't read (Uas.cs).
+    public string StorageProtocol { get; set; } = "";
+    public bool? OffersUas { get; set; }
     public bool SpeedLimited { get; set; }
     // A high-speed hub's transaction translators, from its bDeviceProtocol: Single (one for all ports),
     // Per port, Not reported, or None for devices and hubs that aren't running at high speed.

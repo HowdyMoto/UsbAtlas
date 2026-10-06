@@ -94,6 +94,7 @@ public sealed class UsbScanner
         PortMap.Analyze(snapshot);
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
+        Uas.Apply(snapshot, devices);
         try
         {
             var (gpus, displays, billboards) = UsbAtlas.Displays.Read();
@@ -228,6 +229,7 @@ public sealed class UsbScanner
                         {
                             if (CaptureRaw) node.Raw!.Configuration = Convert.ToHexString(fullConfig);
                             node.InterfaceFunctions = DeviceIdentity.ReadInterfaceFunctions(fullConfig);
+                            node.OffersUas = Uas.Offers(fullConfig);
                             endpoints = UsbBudgets.ReadEndpoints(fullConfig);
                         }
                     }

@@ -224,6 +224,8 @@ enclosures. Flash drives, card readers and ordinary disk enclosures all report p
 storage, so their product names decide; a drive with an uninformative name is shown as
 generic storage. USB never says whether a disk is a hard drive or an SSD.
 
+**UAS:** fast drive enclosures support UAS (USB Attached SCSI); Windows otherwise uses the older bulk-only protocol, which moves less and uses more of the processor. Properties' **Storage protocol** row says which a drive uses, from the driver Windows bound (UASPStor or USBSTOR), and whether its descriptors offer UAS in any alternate setting. A drive that offers UAS but runs bulk-only gets a warning, **UAS not in use**, with the likely causes in order: a USB 2 link, since many enclosures offer UAS only over USB 3; a hub in between; and an enclosure chip or firmware Windows won't use UAS with. Flash drives and card readers that offer only bulk-only aren't flagged. Search finds "UAS" and "bulk-only", and `show` reports `storage`.
+
 **Saved labels:** stored in `%LOCALAPPDATA%/UsbAtlas/device-labels.json`. A unique
 VID/PID/serial identity follows a device between ports. Devices without a unique
 serial use a port-path/VID/PID key: moving them requires a new label, and an

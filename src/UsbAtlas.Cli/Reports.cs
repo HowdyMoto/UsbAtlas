@@ -210,6 +210,8 @@ internal static class Reports
             node["billboard"] = J.Obj(("version", b.Version), ("vconnPower", b.VconnPower), ("preferredMode", b.PreferredMode),
                 ("insufficientPower", b.InsufficientPower ? true : null), ("powerDeliveryFailed", b.PowerDeliveryFailed ? true : null), ("additionalInfoUrl", J.S(b.AdditionalInfoUrl)),
                 ("modes", J.Arr(b.Modes.Select(m => (JsonNode)J.Obj(("index", m.Index), ("svid", m.Svid), ("name", m.Name), ("description", J.S(m.Description)), ("state", m.State.ToLowerInvariant()), ("vdo", J.S(m.Vdo)))))));
+        if (Uas.Summary(n).Length > 0)
+            node["storage"] = J.Obj(("protocol", J.S(n.StorageProtocol)), ("offersUas", n.OffersUas), ("summary", Uas.Summary(n)));
         if (n.QuickReconnects > 0)
             node["reconnects"] = J.Obj(("count", n.QuickReconnects), ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))));
         if (n.Display is DisplayFinding f)
