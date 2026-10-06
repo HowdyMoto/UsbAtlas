@@ -345,7 +345,7 @@ public partial class MainWindow
         Graph.Height = Math.Max(200, top);
         EmptyMessage.Text = snapshot.Controllers.Count == 0 ? "No USB controllers found. Try Refresh." : "No matching devices. Press Escape to clear search.";
         EmptyMessage.Visibility = cards.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        UpdateSelection(); UpdateGraphHint();
+        UpdateSelection();
         // The socket legend is redrawn with the graph so it follows the theme.
         SocketLegend.Children.Clear(); foreach (var entry in NodeVisuals.SocketLegend()) SocketLegend.Children.Add(entry);
         SocketLegend.ToolTip = NodeVisuals.SocketLegendHelp;
