@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>UsbAtlas</RootNamespace>
     <AssemblyName>UsbAtlas.Core</AssemblyName>
-    <Version>1.7.0</Version>
+    <Version>1.7.1</Version>
     <Authors>Wright Bagwell</Authors>
     <Copyright>Copyright (c) 2026 Wright Bagwell</Copyright>
   </PropertyGroup>
