@@ -3,8 +3,9 @@
     Builds, checks, signs and packages a USB Atlas release.
 
 .DESCRIPTION
-    Publishes the self-contained win-x64 package (the app, the command line beside it, and the license and
-    notice files, the .NET runtime's included), signs USB Atlas's own binaries when a certificate is
+    Publishes the self-contained win-x64 package (the app and the command line beside it, each a single .exe
+    with the .NET runtime inside, and the license and notice files, the .NET runtime's included), signs the
+    two .exes when a certificate is
     configured, verifies every signature, runs both self-tests and the off-screen UI checks from the
     package, zips it, and writes SHA256SUMS.txt under artifacts\releases\v<version>. -Linux adds the
     command line for linux-x64 and linux-arm64 as .tar.gz files.
@@ -82,8 +83,13 @@ if ($signing) {
 
 Step "Publishing USB Atlas $version for win-x64"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-dotnet publish "$root\src\UsbAtlas" -c Release -r win-x64 --self-contained true -o $stage --nologo -v quiet
-if ($LASTEXITCODE -ne 0) { throw 'Publishing failed.' }
+# Each program is one .exe with the .NET runtime inside, so the folder shows the app rather than ~400 runtime files.
+# WPF's few native DLLs stay beside UsbAtlas.exe rather than being unpacked to %TEMP% on first run, and symbols are
+# embedded so stack traces keep their line numbers.
+foreach ($project in 'UsbAtlas', 'UsbAtlas.Cli') {
+    dotnet publish "$root\src\$project" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=embedded -o $stage --nologo -v quiet
+    if ($LASTEXITCODE -ne 0) { throw "Publishing $project failed." }
+}
 
 # The .NET runtime travels with the app, so its license and notices do too.
 Step 'Adding the .NET runtime notices'
@@ -91,14 +97,17 @@ $notices = New-Item -ItemType Directory -Force (Join-Path $stage 'RuntimeNotices
 $dotnet = Split-Path (Get-Command dotnet).Source
 Copy-Item "$dotnet\LICENSE.txt" "$notices\DotNet-LICENSE.txt"
 Copy-Item "$dotnet\ThirdPartyNotices.txt" "$notices\DotNet-THIRD-PARTY-NOTICES.txt"
-$deps = Get-Content "$stage\UsbAtlas.deps.json" -Raw | ConvertFrom-Json
+# The runtime pack's version is in the deps file, which a single-file publish builds into the .exe; the copy it
+# was made from stays under obj.
+$deps = Get-Content "$root\artifacts\obj\UsbAtlas\release_win-x64\UsbAtlas.deps.json" -Raw | ConvertFrom-Json
 $desktop = $deps.libraries.PSObject.Properties.Name | Where-Object { $_ -like 'runtimepack.Microsoft.WindowsDesktop.App.Runtime.win-x64/*' } | Select-Object -First 1
 if (-not $desktop) { throw 'The package has no Windows Desktop runtime pack to take a license from.' }
 $desktopVersion = $desktop.Split('/')[1]
 $nuget = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $env:USERPROFILE '.nuget\packages' }
 Copy-Item (Join-Path $nuget "microsoft.windowsdesktop.app.runtime.win-x64\$desktopVersion\LICENSE") "$notices\WindowsDesktop-LICENSE.txt"
 
-$ours = @('UsbAtlas.exe', 'UsbAtlas.dll', "$cli.exe", "$cli.dll", 'UsbAtlas.Core.dll') | ForEach-Object { Join-Path $stage $_ } | Where-Object { Test-Path $_ }
+# Our DLLs are bundled inside the two .exes, so signing those covers them.
+$ours = @('UsbAtlas.exe', "$cli.exe") | ForEach-Object { Join-Path $stage $_ }
 if ($signing) {
     Step "Signing $($ours.Count) files ($signing)"
     $how = if ($signing -eq 'certificate') { @('/sha1', $CertificateThumbprint.Replace(' ', '')) } else { @('/dlib', $ArtifactSigningDlib, '/dmdf', $ArtifactSigningMetadata) }
