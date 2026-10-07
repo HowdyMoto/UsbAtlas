@@ -15,11 +15,11 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/HowdyMoto/UsbAtlas</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <!-- The app is English only, so WPF's translated resources (a folder per language) aren't shipped. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\UsbAtlas.Core\UsbAtlas.Core.csproj" />
-    <!-- Ships atlascli.exe beside the app; the app doesn't use its code. -->
-    <ProjectReference Include="..\UsbAtlas.Cli\UsbAtlas.Cli.csproj" />
     <None Include="..\..\LICENSE;..\..\THIRD-PARTY-NOTICES.md" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Resource Include="Assets\Fonts\*.ttf" />
     <Resource Include="Assets\AppIcon.ico" />

@@ -24,7 +24,7 @@ See [Third-party notices](THIRD-PARTY-NOTICES.md) for attribution and license fi
 
 ## Download
 
-Download the Windows x64 portable ZIP from [GitHub Releases](https://github.com/HowdyMoto/UsbAtlas/releases/latest), extract the entire archive, and open `UsbAtlas.exe`. The release includes the .NET runtime; no separate runtime installation is needed. Keep the bundled license and notice files with the app.
+Download the Windows x64 portable ZIP from [GitHub Releases](https://github.com/HowdyMoto/UsbAtlas/releases/latest), extract the entire archive, and open `UsbAtlas.exe`. The release includes the .NET runtime; no separate runtime installation is needed. Keep the DLLs, license and notice files beside the app.
 
 To check a download, compare its hash with the release's `SHA256SUMS.txt`, and, for signed releases, check the signature of the executables after extracting:
 
@@ -37,7 +37,7 @@ A signed executable reads `Valid`, signed by the publisher named in the release 
 
 ## Releasing
 
-`release.ps1` makes a release: it publishes the self-contained win-x64 package (the app, `atlascli.exe` beside it, and the license and notice files, the .NET runtime's included), signs USB Atlas's own binaries when a certificate is configured, verifies every signature, runs both self-tests and the off-screen UI checks from the package, zips it, and writes `SHA256SUMS.txt` to `artifacts\releases\v<version>`. `-Linux` adds the command line for linux-x64 and linux-arm64 as `.tar.gz` files with the right permissions. `Get-Help .\release.ps1` describes it.
+`release.ps1` makes a release: it publishes the self-contained win-x64 package (the app and `atlascli.exe` beside it, each a single `.exe` with the .NET runtime inside, a few native DLLs WPF needs, and the license and notice files, the .NET runtime's included), signs the two `.exe` files when a certificate is configured, verifies every signature, runs both self-tests and the off-screen UI checks from the package, zips it, and writes `SHA256SUMS.txt` to `artifacts\releases\v<version>`. `-Linux` adds the command line for linux-x64 and linux-arm64 as `.tar.gz` files with the right permissions. `Get-Help .\release.ps1` describes it.
 
 Signing uses `signtool` from the Windows SDK with SHA-256 and an RFC 3161 timestamp, and either a code-signing certificate in the certificate store (`-CertificateThumbprint`, or `USBATLAS_SIGN_THUMBPRINT`) or Azure Artifact Signing (`-ArtifactSigningDlib` and `-ArtifactSigningMetadata`, or `USBATLAS_SIGN_DLIB` and `USBATLAS_SIGN_METADATA`). Without either it still packages, and warns that the build is unsigned; `-RequireSigning` makes that an error, for official releases.
 
@@ -69,7 +69,7 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 
 ## Command line and AI agents
 
-`atlascli.exe` ships beside `UsbAtlas.exe` and gives the same scan, issues and explanations as text or JSON, for scripts, for support, and for AI agents doing diagnostics. Like the app, it only reads; it needs no administrator rights and makes no network requests.
+`atlascli.exe` ships beside `UsbAtlas.exe` and gives the same scan, issues and explanations as text or JSON, for scripts, for support, and for AI agents doing diagnostics. It's a single file with the .NET runtime inside, so it can be copied anywhere, such as a folder on your PATH, without the app. Like the app, it only reads; it needs no administrator rights and makes no network requests.
 
 | Command | What it gives |
 | --- | --- |
