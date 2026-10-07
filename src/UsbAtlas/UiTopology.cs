@@ -417,7 +417,7 @@ public partial class MainWindow
         var edgePorts = DrawsSockets ? EdgePorts(node) : [];
         var padding = far ? new Thickness(7, 0, 7, 0) : edgePorts.Count == 0 ? new Thickness(10, 8, 10, 8) : horizontalTree ? new Thickness(10, 8, 10 + SocketWidth + 6, 8) : new Thickness(10, 8, 10, 8 + 6 + SocketHeight);
         if (far) panel.VerticalAlignment = VerticalAlignment.Center;
-        var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 3 : 6), Background = Brush("NeutralFill"), BorderBrush = Brush("NeutralEdge"), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.DisplayName + "\n" + NodeVisuals.Label(node) + (metric.Length > 0 ? " · " + metric : "") + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
+        var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 4 : 8), Background = Brush("NeutralFill"), BorderBrush = Brush("NeutralEdge"), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.DisplayName + "\n" + NodeVisuals.Label(node) + (metric.Length > 0 ? " · " + metric : "") + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
         System.Windows.Automation.AutomationProperties.SetName(card, node.DisplayName + ", " + NodeVisuals.Label(node) + ", " + metric + ", " + string.Join(" · ", CardIssues(node).Select(i => i.Text)));
         card.MouseLeftButtonDown += (_, e) => { card.Focus(); SelectNode(node); if (e.ClickCount == 2 && node.Children.Count > 0 && appliedQuery.Length == 0) { if (!folded.Add(node.Id)) folded.Remove(node.Id); Draw(); ShowDetails(); } e.Handled = true; };
         card.KeyDown += (_, e) =>
@@ -733,7 +733,7 @@ public partial class MainWindow
         if (hide) inspectorWidth = InspectorColumn.ActualWidth;
         InspectorColumn.MinWidth = hide ? 0 : 260;
         InspectorColumn.Width = new GridLength(hide ? 0 : inspectorWidth);
-        SplitterColumn.Width = new GridLength(hide ? 0 : 5);
+        SplitterColumn.Width = new GridLength(hide ? 0 : 1);
         InspectorPanel.Visibility = InspectorSplitter.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
         InspectorButton.Visibility = hide ? Visibility.Visible : Visibility.Collapsed;
         UpdateLayout(); FitSidePanels();

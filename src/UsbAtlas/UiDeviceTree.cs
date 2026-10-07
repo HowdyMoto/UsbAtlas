@@ -141,7 +141,7 @@ public partial class MainWindow
         if (hide) treePanelWidth = TreeColumn.ActualWidth;
         TreeColumn.MinWidth = hide ? 0 : 180;
         TreeColumn.Width = new GridLength(hide ? 0 : treePanelWidth);
-        TreeSplitterColumn.Width = new GridLength(hide ? 0 : 5);
+        TreeSplitterColumn.Width = new GridLength(hide ? 0 : 1);
         TreePanel.Visibility = TreeSplitter.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
         TreeButton.Visibility = hide ? Visibility.Visible : Visibility.Collapsed;
         UpdateLayout(); FitSidePanels();
