@@ -8,7 +8,7 @@
    <Setter Property="BorderBrush" Value="{DynamicResource Border}"/><Setter Property="Padding" Value="12,7"/><Setter Property="Cursor" Value="Hand"/>
    <Setter Property="VerticalContentAlignment" Value="Center"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-    <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+    <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
     <ControlTemplate.Triggers>
      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Hover}"/><Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/></Trigger>
      <Trigger Property="IsPressed" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Pressed}"/></Trigger>
@@ -34,13 +34,13 @@
    <Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
    <Setter Property="BorderBrush" Value="{DynamicResource Border}"/><Setter Property="FontFamily" Value="{StaticResource UiFont}"/><Setter Property="FontSize" Value="13"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ContextMenu">
-    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="4"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/></Border>
+    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="4"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/></Border>
    </ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style TargetType="MenuItem">
    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/><Setter Property="Padding" Value="8,6"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="MenuItem">
-    <Border x:Name="Row" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+    <Border x:Name="Row" Background="Transparent" CornerRadius="5" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
      <DockPanel>
       <ContentPresenter x:Name="IconSlot" ContentSource="Icon" DockPanel.Dock="Left" Width="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
       <Border x:Name="Track" DockPanel.Dock="Right" Visibility="Collapsed" Width="32" Height="18" CornerRadius="9" Margin="18,0,0,0" VerticalAlignment="Center"
@@ -63,10 +63,35 @@
     </ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
   </Style>
-  <Style x:Key="ScrollThumb" TargetType="Thumb"><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Thumb"><Border Background="{DynamicResource Wire}" CornerRadius="4" Margin="2"/></ControlTemplate></Setter.Value></Setter></Style>
+  <!-- Thin overlay scroll bars: a slim rounded thumb floating over the content on a clear track, which
+       thickens and darkens under the pointer. -->
+  <Style x:Key="ScrollThumb" TargetType="Thumb"><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Thumb">
+   <Border x:Name="Bar" Background="{DynamicResource TextMuted}" Opacity="0.4" CornerRadius="3" Margin="3"/>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bar" Property="Margin" Value="2"/><Setter TargetName="Bar" Property="Opacity" Value="0.65"/></Trigger>
+    <Trigger Property="IsDragging" Value="True"><Setter TargetName="Bar" Property="Margin" Value="2"/><Setter TargetName="Bar" Property="Opacity" Value="0.8"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter></Style>
   <Style x:Key="ScrollTrackButton" TargetType="RepeatButton"><Setter Property="Focusable" Value="False"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></Setter.Value></Setter></Style>
+  <Style TargetType="ScrollViewer">
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollViewer">
+    <Grid Background="{TemplateBinding Background}">
+     <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" Margin="{TemplateBinding Padding}" CanContentScroll="{TemplateBinding CanContentScroll}" CanHorizontallyScroll="False" CanVerticallyScroll="False"/>
+     <ScrollBar x:Name="PART_VerticalScrollBar" HorizontalAlignment="Right" Margin="0,2,1,2" Cursor="Arrow" Orientation="Vertical" Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}" Value="{Binding VerticalOffset, Mode=OneWay, RelativeSource={RelativeSource TemplatedParent}}" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
+     <ScrollBar x:Name="PART_HorizontalScrollBar" VerticalAlignment="Bottom" Margin="2,0,2,1" Cursor="Arrow" Orientation="Horizontal" Maximum="{TemplateBinding ScrollableWidth}" ViewportSize="{TemplateBinding ViewportWidth}" Value="{Binding HorizontalOffset, Mode=OneWay, RelativeSource={RelativeSource TemplatedParent}}" Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"/>
+    </Grid>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <!-- Panel edges are hairlines; the splitter keeps a wider, invisible grip around its line. -->
+  <Style TargetType="GridSplitter">
+   <Setter Property="Width" Value="7"/><Setter Property="Margin" Value="-3,0"/><Setter Property="Panel.ZIndex" Value="10"/><Setter Property="Focusable" Value="False"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="GridSplitter">
+    <Border Background="Transparent"><Border x:Name="Line" Width="1" HorizontalAlignment="Center" Background="{DynamicResource Divider}"/></Border>
+    <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Line" Property="Width" Value="2"/><Setter TargetName="Line" Property="Background" Value="{DynamicResource BorderHover}"/></Trigger></ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
   <Style TargetType="ScrollBar">
-   <Setter Property="Width" Value="12"/><Setter Property="Background" Value="{DynamicResource Surface}"/>
+   <Setter Property="Width" Value="9"/><Setter Property="Background" Value="Transparent"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar">
     <Grid Background="{TemplateBinding Background}"><Track x:Name="PART_Track" Orientation="{TemplateBinding Orientation}" IsDirectionReversed="True">
      <Track.DecreaseRepeatButton><RepeatButton x:Name="Decrease" Style="{StaticResource ScrollTrackButton}" Command="ScrollBar.PageUpCommand"/></Track.DecreaseRepeatButton>
@@ -75,11 +100,11 @@
     </Track></Grid>
     <ControlTemplate.Triggers><Trigger Property="Orientation" Value="Horizontal"><Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/><Setter TargetName="Decrease" Property="Command" Value="ScrollBar.PageLeftCommand"/><Setter TargetName="Increase" Property="Command" Value="ScrollBar.PageRightCommand"/></Trigger></ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
-   <Style.Triggers><Trigger Property="Orientation" Value="Horizontal"><Setter Property="Width" Value="Auto"/><Setter Property="Height" Value="12"/></Trigger></Style.Triggers>
+   <Style.Triggers><Trigger Property="Orientation" Value="Horizontal"><Setter Property="Width" Value="Auto"/><Setter Property="Height" Value="9"/></Trigger></Style.Triggers>
   </Style>
   <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-    <Border x:Name="Chrome" Background="{DynamicResource Primary}" CornerRadius="4" Padding="{TemplateBinding Padding}" BorderBrush="{DynamicResource Primary}" BorderThickness="1"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+    <Border x:Name="Chrome" Background="{DynamicResource Primary}" CornerRadius="6" Padding="{TemplateBinding Padding}" BorderBrush="{DynamicResource Primary}" BorderThickness="1"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
     <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource PrimaryHover}"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Focus}"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers>
    </ControlTemplate></Setter.Value></Setter>
   </Style>
@@ -105,7 +130,7 @@
   </Style>
   <Style TargetType="TextBox">
    <Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/><Setter Property="BorderBrush" Value="{DynamicResource Border}"/><Setter Property="CaretBrush" Value="{DynamicResource TextPrimary}"/>
-   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox"><Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4"><ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/></Border><ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox"><Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6"><ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/></Border><ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
  </Application.Resources>
 </Application>

@@ -2,7 +2,7 @@
  Title="USB Atlas" Icon="pack://application:,,,/Assets/AppIcon.ico" Width="1500" Height="940" MinWidth="1050" MinHeight="650" Background="{DynamicResource WindowSurface}" FontFamily="{StaticResource UiFont}" FontSize="13" WindowStartupLocation="CenterScreen" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" PreviewKeyDown="WindowKeyDown">
  <Grid>
   <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition/><RowDefinition Height="30"/></Grid.RowDefinitions>
-  <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="16,0">
+  <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Divider}" BorderThickness="0,0,0,1" Padding="16,0">
    <Grid x:Name="TitleBar" SizeChanged="TitleBarSizeChanged">
     <StackPanel x:Name="TitleLeft" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" SizeChanged="TitleBarSizeChanged">
      <TextBlock Text="USB Atlas" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
@@ -30,7 +30,7 @@
    </Grid>
   </Border>
   <Grid Grid.Row="1" SizeChanged="SidePanelsSizeChanged">
-   <Grid.ColumnDefinitions><ColumnDefinition x:Name="TreeColumn" Width="280" MinWidth="180"/><ColumnDefinition x:Name="TreeSplitterColumn" Width="5"/><ColumnDefinition MinWidth="390"/><ColumnDefinition x:Name="SplitterColumn" Width="5"/><ColumnDefinition x:Name="InspectorColumn" Width="330" MinWidth="260" MaxWidth="520"/></Grid.ColumnDefinitions>
+   <Grid.ColumnDefinitions><ColumnDefinition x:Name="TreeColumn" Width="280" MinWidth="180"/><ColumnDefinition x:Name="TreeSplitterColumn" Width="1"/><ColumnDefinition MinWidth="390"/><ColumnDefinition x:Name="SplitterColumn" Width="1"/><ColumnDefinition x:Name="InspectorColumn" Width="330" MinWidth="260" MaxWidth="520"/></Grid.ColumnDefinitions>
    <Border x:Name="TreePanel" Background="{DynamicResource Surface}">
     <Grid><Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition/></Grid.RowDefinitions>
      <Border BorderBrush="{DynamicResource Divider}" BorderThickness="0,0,0,1" Padding="12,0"><DockPanel><Button DockPanel.Dock="Right" Content="Hide" Click="TreePanelClick" Padding="6,2" FontSize="12" ToolTip="Hide the device tree" AutomationProperties.Name="Hide devices"/><TextBlock Text="DEVICES" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/></DockPanel></Border>
@@ -40,7 +40,7 @@
         <Setter Property="Padding" Value="2,3,8,3"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TreeViewItem">
          <StackPanel>
-          <Border x:Name="Row" Background="Transparent" BorderBrush="Transparent" BorderThickness="3,0,0,0" CornerRadius="3" Padding="{TemplateBinding Padding}">
+          <Border x:Name="Row" Background="Transparent" BorderBrush="Transparent" BorderThickness="3,0,0,0" CornerRadius="5" Padding="{TemplateBinding Padding}">
            <DockPanel>
             <ToggleButton x:Name="Expander" DockPanel.Dock="Left" Width="16" Height="16" Margin="0,0,3,0" Focusable="False" ClickMode="Press" Cursor="Hand" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}">
              <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
@@ -65,7 +65,7 @@
      </TreeView>
     </Grid>
    </Border>
-   <GridSplitter x:Name="TreeSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
+   <GridSplitter x:Name="TreeSplitter" Grid.Column="1" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Grid Grid.Column="2" Background="{DynamicResource CanvasSurface}">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto" MinHeight="44"/></Grid.RowDefinitions>
     <StackPanel>
@@ -79,7 +79,7 @@
      </StackPanel>
     </DockPanel>
     <!-- What to fix first: the few issues that matter most, each with its most likely fix (UiFixFirst). -->
-    <Border x:Name="FixFirstPanel" Visibility="Collapsed" Margin="16,0,16,6" Padding="10,5,6,6" Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" AutomationProperties.Name="Fix first">
+    <Border x:Name="FixFirstPanel" Visibility="Collapsed" Margin="16,0,16,6" Padding="10,5,6,6" Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Divider}" BorderThickness="1" CornerRadius="8" AutomationProperties.Name="Fix first">
      <DockPanel>
       <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
        <Button DockPanel.Dock="Right" Content="Hide" Click="HideFixFirstClick" Padding="6,1" FontSize="12" ToolTip="Hide until the issues change; the issue list keeps them" AutomationProperties.Name="Hide fix first"/>
@@ -99,7 +99,7 @@
     <!-- Map-style view controls: compact glyph buttons in floating cards, layout above fitting above zoom. -->
     <StackPanel x:Name="ViewControls" Grid.Row="1" Panel.ZIndex="4" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,12,12" AutomationProperties.Name="View controls">
      <StackPanel.Resources>
-      <Style x:Key="ViewCard" TargetType="Border"><Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="BorderBrush" Value="{DynamicResource Border}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="6"/><Setter Property="Padding" Value="1"/><Setter Property="Margin" Value="0,6,0,0"/><Setter Property="HorizontalAlignment" Value="Right"/><Setter Property="Effect"><Setter.Value><DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.16"/></Setter.Value></Setter></Style>
+      <Style x:Key="ViewCard" TargetType="Border"><Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="BorderBrush" Value="{DynamicResource Divider}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="8"/><Setter Property="Padding" Value="1"/><Setter Property="Margin" Value="0,6,0,0"/><Setter Property="HorizontalAlignment" Value="Right"/><Setter Property="Effect"><Setter.Value><DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.16"/></Setter.Value></Setter></Style>
       <Style x:Key="ViewButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Width" Value="24"/><Setter Property="Height" Value="24"/><Setter Property="Padding" Value="0"/><Setter Property="Background" Value="Transparent"/><Setter Property="BorderBrush" Value="Transparent"/></Style>
       <Style x:Key="ViewGlyph" TargetType="Path"><Setter Property="Width" Value="18"/><Setter Property="Height" Value="18"/><Setter Property="Stroke" Value="{DynamicResource TextPrimary}"/><Setter Property="StrokeThickness" Value="1.7"/><Setter Property="StrokeStartLineCap" Value="Round"/><Setter Property="StrokeEndLineCap" Value="Round"/><Setter Property="StrokeLineJoin" Value="Round"/><Setter Property="LayoutTransform"><Setter.Value><ScaleTransform ScaleX="0.75" ScaleY="0.75"/></Setter.Value></Setter></Style>
      </StackPanel.Resources>
@@ -137,7 +137,7 @@
     </StackPanel>
     <StackPanel Grid.Row="2" Margin="16,3,0,4" VerticalAlignment="Center"><WrapPanel x:Name="SocketLegend" Margin="0,0,16,0"/></StackPanel>
    </Grid>
-   <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Divider}" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
+   <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Border x:Name="InspectorPanel" Grid.Column="4" Background="{DynamicResource Surface}">
     <Grid><Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition/></Grid.RowDefinitions>
      <Border BorderBrush="{DynamicResource Divider}" BorderThickness="0,0,0,1" Padding="14,0,8,0">
@@ -149,11 +149,11 @@
        <TextBlock Text="PROPERTIES" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
       </DockPanel>
      </Border>
-     <ScrollViewer x:Name="DetailsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="Details" Margin="14,12,14,16"/></ScrollViewer>
+     <ScrollViewer x:Name="DetailsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="Details" Margin="14,12,18,16"/></ScrollViewer>
     </Grid>
    </Border>
   </Grid>
-  <Border Grid.Row="2" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Background="{DynamicResource Surface}" Padding="16,0">
+  <Border Grid.Row="2" BorderBrush="{DynamicResource Divider}" BorderThickness="0,1,0,0" Background="{DynamicResource Surface}" Padding="16,0">
    <DockPanel><TextBlock x:Name="StatusText" Text="Starting…" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="12" TextTrimming="CharacterEllipsis"/></DockPanel>
   </Border>
  </Grid>

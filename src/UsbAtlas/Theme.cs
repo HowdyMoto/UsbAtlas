@@ -11,12 +11,12 @@ internal static class Theme
     private static readonly (string Key, string Light, string Dark)[] Palette =
     [
         ("TextPrimary", "#26313A", "#E4E8EE"), ("TextSecondary", "#596673", "#BAC3CE"),
-        ("TextMuted", "#727982", "#9BA6B3"), ("Surface", "#FFFFFF", "#1E232B"),
-        ("WindowSurface", "#FAFAF8", "#181C22"), ("CanvasSurface", "#F3F4F2", "#14181E"),
+        ("TextMuted", "#727982", "#9BA6B3"), ("Surface", "#FFFFFF", "#1C2026"),
+        ("WindowSurface", "#FAFAF8", "#16191E"), ("CanvasSurface", "#E9EBE9", "#0D0F12"),
         ("HostSurface", "#EAEEEF", "#202731"), ("HostBorder", "#DCE1E3", "#303A47"),
-        ("Border", "#D5D9DC", "#3A4451"), ("Divider", "#E5E8EB", "#303843"),
+        ("Border", "#CED3D7", "#3A414B"), ("Divider", "#E1E4E7", "#2A3038"),
         // The search field is recessed below the title bar it sits on, and its edge keeps 3:1 against the bar.
-        ("SearchField", "#EEF1F4", "#14181E"), ("SearchEdge", "#7F8B97", "#6B7A8D"),
+        ("SearchField", "#EEF1F4", "#111317"), ("SearchEdge", "#7F8B97", "#6B7A8D"),
         ("Hover", "#E9EDF2", "#303B49"), ("Pressed", "#DCE4EE", "#3A485B"),
         // Selection, search matches, the selected path and focus are teal, a hue nothing else on the canvas uses:
         // USB's socket colors keep blue and red, device categories hold the rest of the cool hues, and warm hues
@@ -29,7 +29,7 @@ internal static class Theme
         // Device categories are icon and label inks spread across the cool half of the wheel, so they never
         // resemble Warning or Error. Cards are all NeutralFill, so every ink keeps at least 4.5:1 contrast on
         // it. Hubs, hosts, ports and devices of unknown function are Neutral.
-        ("Neutral", "#5F6874", "#A7B0BC"), ("NeutralFill", "#FFFFFF", "#1E232B"), ("NeutralEdge", "#D5D9DC", "#3A4451"),
+        ("Neutral", "#5F6874", "#A7B0BC"), ("NeutralFill", "#FFFFFF", "#2A3038"), ("NeutralEdge", "#BCC3CA", "#4A5460"),
         ("Input", "#3F4FB0", "#9FA5F5"), ("Gaming", "#7A3FA8", "#C9A0EE"), ("Audio", "#9E2F80", "#E79AD2"),
         ("Video", "#1D6A91", "#84C3EA"), ("Storage", "#367026", "#9BD088"), ("Connectivity", "#177257", "#7DD3AE"),
         // USB's own socket color code, on the tongue inside each port: black for USB 2, blue for SuperSpeed

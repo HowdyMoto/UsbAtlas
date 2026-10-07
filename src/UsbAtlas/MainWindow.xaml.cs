@@ -483,7 +483,7 @@ public partial class MainWindow : Window
         }
         Details.Children.Add(new Border
         {
-            Child = body, Background = Brush("Subtle"), BorderBrush = Brush("Divider"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+            Child = body, Background = Brush("Subtle"), BorderBrush = Brush("Divider"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
             Padding = new Thickness(11, 9, 11, 3), Margin = new Thickness(0, 0, 0, 10), Tag = "warning:" + issue
         });
     }
