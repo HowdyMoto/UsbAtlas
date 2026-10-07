@@ -186,6 +186,9 @@ internal static class NodeVisuals
     internal static DoubleCollection WireDashes() => [2.5, 1.5];
     // The missing USB 3 side's stub: finer dashes than a slow link's, so the two read apart.
     internal static DoubleCollection StubDashes() => [1.5, 1];
+    // A link nothing uses now: round dots, distinct from a slow link's dashes, and drawn so whether or not it's lit.
+    internal static DoubleCollection IdleDots() => [0, 2.4];
+    internal static void Dot(System.Windows.Shapes.Shape line) { line.StrokeDashArray = IdleDots(); line.StrokeDashCap = PenLineCap.Round; line.StrokeStartLineCap = line.StrokeEndLineCap = PenLineCap.Round; }
 
     // A port is drawn as its socket: a USB-A shell with its tongue along the top, a USB-C pill with its
     // tongue centered, or a plain slot for a built-in port with no socket. The tongue carries USB's color
@@ -270,18 +273,20 @@ internal static class NodeVisuals
 
     // The legend beneath the graph: each kind of socket, drawn small with the canvas's own templates.
     internal const string SocketLegendHelp = "Shape is the connector: USB-A is a rectangle with its tongue along the top, USB-C a pill with its tongue in the middle, and a built-in port with no socket a plain slot. Tongue color is speed: black USB 2, blue USB 3 at 5 Gb/s or faster, red once a device has linked at 10 Gb/s or faster or you have set the socket's speed, since Windows doesn't report a port's top rate. A socket split at a seam is one physical socket that Windows reports as two logical ports, USB 2 and USB 3. A filled socket is in use. A connection's width is its negotiated link rate, widest at 10 Gb/s and faster; a dashed connection runs slower than its device supports, amber when that holds something back. A short dashed line on an empty socket half marks a hub's USB 3 side that didn't connect there, amber or gray by the same rule. The color of a card's icon and name says what the device does; hubs, hosts and ports stay gray. Point at anything on the graph to see what it means.";
-    internal const string LegendGroupTag = "legend-group";
-    internal static IEnumerable<FrameworkElement> SocketLegend()
+    internal const string LegendGroupTag = "legend-group", CableLegendTag = "legend-cable";
+    // A split socket's halves are drawn as the graph draws them: stacked in the horizontal layout, side by side in the vertical one.
+    internal static IEnumerable<FrameworkElement> SocketLegend(bool down = false)
     {
         FrameworkElement Glyph(string connector, string speed, SocketPart part = SocketPart.Whole) => new ContentControl
         {
-            Template = SocketTemplate(new UsbNode { Connector = connector, SocketSpeed = speed }, part), Width = SocketWidth, Height = SocketHeight, Focusable = false, IsHitTestVisible = false,
-            Background = Ink("Surface"), BorderBrush = Ink("Wire"), BorderThickness = SocketBorder(part, false, 1)
+            Template = SocketTemplate(new UsbNode { Connector = connector, SocketSpeed = speed }, part, part != SocketPart.Whole && down), Width = SocketWidth, Height = SocketHeight, Focusable = false, IsHitTestVisible = false,
+            Background = Ink("Surface"), BorderBrush = Ink("Wire"), BorderThickness = SocketBorder(part, part != SocketPart.Whole && down, 1)
         };
         FrameworkElement Entry(string label, string help, params FrameworkElement[] glyphs)
         {
             var entry = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent, ToolTip = help };
-            var shapes = new StackPanel { Orientation = Orientation.Horizontal, LayoutTransform = new ScaleTransform(0.75, 0.75), Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
+            bool stacked = down && glyphs.Length > 1;
+            var shapes = new StackPanel { Orientation = stacked ? Orientation.Vertical : Orientation.Horizontal, LayoutTransform = stacked ? new ScaleTransform(0.5, 0.5) : new ScaleTransform(0.75, 0.75), Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
             foreach (var glyph in glyphs) shapes.Children.Add(glyph);
             entry.Children.Add(shapes);
             entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), VerticalAlignment = VerticalAlignment.Center });
@@ -296,6 +301,33 @@ internal static class NodeVisuals
             entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             return entry;
         }
+        // A USB 3 hub's cable: its USB 3 link and USB 2 link side by side, as the graph draws them.
+        FrameworkElement Cable(string label, string help)
+        {
+            var entry = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent, ToolTip = help, Tag = CableLegendTag };
+            var swatch = new Canvas { Width = 22, Height = 14, Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center };
+            swatch.Children.Add(new System.Windows.Shapes.Line { X1 = 0, X2 = 22, Y1 = 4.5, Y2 = 4.5, Stroke = Ink("Wire"), StrokeThickness = WireWidth(new UsbNode { LinkMbps = 480 }) });
+            swatch.Children.Add(new System.Windows.Shapes.Line { X1 = 0, X2 = 22, Y1 = 9.5, Y2 = 9.5, Stroke = Ink("Wire"), StrokeThickness = WireWidth(new UsbNode { LinkMbps = 5000 }) });
+            entry.Children.Add(swatch);
+            entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            return entry;
+        }
+        FrameworkElement Idle(string label, string help)
+        {
+            var entry = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent, ToolTip = help };
+            var dots = new System.Windows.Shapes.Line { X1 = 1.5, X2 = 20, Y1 = 7, Y2 = 7, Width = 22, Height = 14, Margin = new Thickness(0, 0, 4, 0), Stroke = Ink("Wire"), StrokeThickness = WireWidth(new UsbNode { LinkMbps = 5000 }), VerticalAlignment = VerticalAlignment.Center };
+            Dot(dots); entry.Children.Add(dots);
+            entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            return entry;
+        }
+        // Hub chips wired together inside one unit, as the graph frames them.
+        FrameworkElement Unit(string label, string help)
+        {
+            var entry = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent, ToolTip = help };
+            entry.Children.Add(new Border { Width = 22, Height = 13, Margin = new Thickness(0, 0, 4, 0), CornerRadius = new CornerRadius(4), Background = Ink("UnitFill"), VerticalAlignment = VerticalAlignment.Center });
+            entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            return entry;
+        }
         // Entries are grouped by what they show, and each group stays together when the legend wraps.
         FrameworkElement Group(string name, params FrameworkElement[] entries)
         {
@@ -305,18 +337,23 @@ internal static class NodeVisuals
             return group;
         }
         // Blue covers 5 Gb/s and faster sockets nothing has proved yet, since Windows doesn't report a port's top rate.
-        yield return Group("Speed",
+        yield return Group("Socket speed",
             Entry("USB 2", "Black: USB 2, up to 480 Mb/s, and USB 1.", Glyph("USB-A", "USB 2.0")),
             Entry("5 Gb/s+", "Blue: SuperSpeed USB 3, 5 Gb/s or faster. Windows doesn't report a port's top rate, so a 10 Gb/s port stays blue until a device links to it that fast, or you set its speed under Port in Properties.", Glyph("USB-A", "≥5 Gb/s")),
             Entry("10 Gb/s+", "Red: 10 Gb/s or faster. A device has linked here that fast, the hub supports it, or you set the socket's speed.", Glyph("USB-A", "≥10 Gb/s")));
         yield return Group("Socket",
             Entry("USB-C", "A pill with its tongue in the middle is a USB-C socket. Its color is speed, as for USB-A.", Glyph("USB-C", "≥5 Gb/s")),
-            Entry("Split", "One physical socket that Windows reports as two logical ports, its USB 2 and USB 3 halves, split at a seam.", Glyph("USB-A", "≥5 Gb/s", SocketPart.First), Glyph("USB-A", "≥5 Gb/s", SocketPart.Second)),
+            Entry("USB 2 + USB 3 halves", "One physical socket that Windows reports as two logical ports, its USB 2 and USB 3 halves, split at a seam. A USB 3 socket has contacts for both: a USB 2 device uses one half, a USB 3 device the other, and a USB 3 hub both. The PC numbers its two halves separately, such as 03 and 07; a hub chip gives both halves the same number.", Glyph("USB-A", "≥5 Gb/s", SocketPart.First), Glyph("USB-A", "≥5 Gb/s", SocketPart.Second)),
             Entry("Built-in", "A plain slot is a built-in connection with no socket to plug into, or a port whose connector Windows doesn't report.", Glyph("Internal", "USB 2.0")));
+        // A USB 3 hub's own marks: its cable's two links, a link nothing uses, and chips wired together in one unit.
+        yield return Group("USB 3 hub",
+            Cable("One cable, two links", "Two lines side by side are one cable to a USB 3 hub. A USB 3 hub is two hubs in one box, a USB 3 hub and a USB 2 hub, and its cable carries a link to each, so Windows sees two connections on the two halves of one socket. The thicker line is the USB 3 link. Each device plugged into the hub uses the link that matches its speed; selecting a device lights the one it uses. Inside a hub unit, the two lines are wiring between its chips, not a cable."),
+            Idle("Idle link", "Dotted: nothing uses this link now. A USB 3 hub's USB 3 link is idle when everything plugged into it is USB 2 or slower."),
+            Unit("Hub unit", "A band behind hub chips that are wired together inside one unit: Windows reports the port joining them as built in, with nothing to plug into. A 7- or 10-port hub is often made of several 4-port chips like this. The links between them are wiring, not cables."));
         yield return Group("Link",
             Link("Rate", "Wire", null, "Width is the negotiated link rate: 12 Mb/s, 480 Mb/s, 5 Gb/s and 10 Gb/s or faster.", WireWidth(new UsbNode { LinkMbps = 12 }), WireWidth(new UsbNode { LinkMbps = 480 }), WireWidth(new UsbNode { LinkMbps = 5000 }), WireWidth(new UsbNode { LinkMbps = 10000 })),
             Link("Slower than device", "Warning", WireDashes(), "Dashed: the link runs slower than the device supports. Amber when that slows something plugged in now; gray when nothing is slowed yet.", 2),
-            Link("USB 3 side not connected", "Warning", StubDashes(), "A short dashed line on an empty socket half: a USB 3 hub's USB 3 side should connect there but didn't, so the hub runs at USB 2. Amber when that slows something plugged in now; gray when nothing is slowed yet.", WireWidth(new UsbNode { LinkMbps = 5000 })));
+            Link("USB 3 link not connected", "Warning", StubDashes(), "A short dashed line on an empty socket half: a USB 3 hub's USB 3 link should connect there but didn't, so the hub runs at USB 2. Amber when that slows something plugged in now; gray when nothing is slowed yet.", WireWidth(new UsbNode { LinkMbps = 5000 })));
         // Each hue with what it stands for, as a dot in the ink a card's icon and name wear.
         FrameworkElement Hue(string category, string label, string help)
         {

@@ -124,7 +124,7 @@ public partial class MainWindow
             // The legend names the stub and every card color.
             UpdateLayout();
             var legendText = string.Join(" ", VisualDescendants(SocketLegend).OfType<TextBlock>().Select(t => t.Text));
-            Check(legendText.Contains("USB 3 side not connected") && new[] { "Input", "Gaming", "Audio", "Video", "Storage", "Connectivity" }.All(legendText.Contains),
+            Check(legendText.Contains("USB 3 link not connected") && new[] { "Input", "Gaming", "Audio", "Video", "Storage", "Connectivity" }.All(legendText.Contains),
                 "The legend must name the missing USB 3 side's stub and what each card color means.");
             Check(VisualDescendants(SocketLegend).OfType<StackPanel>().Where(p => p.ToolTip != null).Count() >= 10, "Each link and color entry in the legend must explain itself.");
         }

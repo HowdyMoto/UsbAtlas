@@ -62,8 +62,10 @@ public partial class MainWindow
                 }
             }
             horizontalTree = true; detail = CardDetail.Full; Draw();
-            var label = VisualDescendants(cards["pair/root/4"].Card).OfType<System.Windows.Controls.TextBlock>().Select(t => t.Text);
-            Check(label.Contains("USB 3 hub · USB 2 and USB 3 sides"), "A merged hub's card must say it holds both sides.");
+            // A merged hub's card says it's a USB 3 hub on one cable and names each of its two links on a row of its own.
+            var marks = VisualDescendants(cards["pair/root/4"].Card).OfType<FrameworkElement>().ToList();
+            Check(marks.OfType<System.Windows.Controls.TextBlock>().Any(t => Equals(t.Tag, PairLabelTag) && t.Text.StartsWith("USB 3 hub", StringComparison.Ordinal)) && marks.Count(e => Equals(e.Tag, LinkRowTag)) == 2,
+                "A merged hub's card must say it holds both sides, with a row for each link.");
             // Selecting the USB 2 side, from the tree or Properties, keeps it as the selection and marks the card.
             SelectNode(Node("pair/root/1")); UpdateLayout();
             Check(selected?.Id == "pair/root/1" && cards["pair/root/4"].Card.Effect != null && GraphBounds(selected) is Rect, "Selecting a merged hub's USB 2 side must select it and mark the merged card.");
