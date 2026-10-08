@@ -304,7 +304,7 @@ public partial class MainWindow
         }
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
     private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
 
     // Device notifications reach the window, settle into one rescan, queue behind a running
@@ -323,6 +323,42 @@ public partial class MainWindow
             Check(deviceSettle.IsEnabled, "Device change notifications did not reach the window.");
         }
         finally { demo = true; deviceSettle.Stop(); }
+
+        Check(powerNotification != IntPtr.Zero, "Windows refused the app's sleep/wake registration.");
+        // Use the real window hook and USB interface payloads, including drops that settle before a scan.
+        static Snapshot Probe(string id)
+        {
+            var device = new UsbNode { Id = id, InstanceId = id, Kind = "Device" };
+            return new Snapshot { Controllers = [new UsbNode { Kind = "Host controller", Children = [device] }] };
+        }
+        void Notify(string id, int change)
+        {
+            string link = @"\\?\USB#VID_FFFF&PID_FFFF#" + id + "#{a5dcbf10-6530-11d2-901f-00c04fb951ed}";
+            var data = System.Runtime.InteropServices.Marshal.AllocHGlobal(28 + (link.Length + 1) * 2);
+            try
+            {
+                System.Runtime.InteropServices.Marshal.WriteInt32(data, 0, 28 + (link.Length + 1) * 2);
+                System.Runtime.InteropServices.Marshal.WriteInt32(data, 4, DbtDevTypDeviceInterface);
+                System.Runtime.InteropServices.Marshal.WriteInt32(data, 8, 0);
+                System.Runtime.InteropServices.Marshal.Copy(UsbInterfaces[0].ToByteArray(), 0, data + 12, 16);
+                System.Runtime.InteropServices.Marshal.Copy((link + '\0').ToCharArray(), 0, data + 28, link.Length + 1);
+                SendMessage(hwnd, WmDeviceChange, change, data);
+            }
+            finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(data); }
+        }
+        const string awakeId = @"USB\VID_FFFF&PID_FFFF\awake", sleepingId = @"USB\VID_FFFF&PID_FFFF\sleeping";
+        for (int i = 0; i < 3; i++) { Notify("awake", DbtDeviceRemoveComplete); Notify("awake", DbtDeviceArrival); }
+        var awakeProbe = Probe(awakeId); reconnects.Apply(awakeProbe);
+        Check(awakeProbe.Nodes.Single(n => n.InstanceId == awakeId).QuickReconnects == 3, $"Repeated returns without sleep must still count as unstable (observed {awakeProbe.Nodes.Single(n => n.InstanceId == awakeId).QuickReconnects}).");
+        foreach (int resume in new[] { PbtApmResumeAutomatic, PbtApmResumeSuspend, PbtApmResumeAutomatic })
+        {
+            SendMessage(hwnd, WmPowerBroadcast, PbtApmSuspend, 0);
+            SendMessage(hwnd, WmPowerBroadcast, resume, 0);
+            Notify("sleeping", DbtDeviceRemoveComplete); Notify("sleeping", DbtDeviceArrival);
+        }
+        var sleepingProbe = Probe(sleepingId); reconnects.Apply(sleepingProbe);
+        Check(sleepingProbe.Nodes.Single(n => n.InstanceId == sleepingId).QuickReconnects == 0, "Returns after wake notifications must not count as unstable.");
+        Check(!deviceSettle.IsEnabled, "Power notifications must not rescan the sample topology.");
 
         int version = refreshIndicatorVersion;
         for (int i = 0; i < 5; i++) { QueueDeviceRescan(); await Task.Delay(60); }

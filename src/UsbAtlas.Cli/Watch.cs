@@ -25,6 +25,7 @@ internal static class Watch
         if (o.Has("demo") || o.Has("input")) throw new CliException("watch needs live hardware; it can't watch --demo or --input.");
         if (!OperatingSystem.IsWindows()) return Poll(o, duration, redact, emit, cancel);
         var tracker = new ReconnectTracker();
+        var wakeReturns = new WakeReturns();
         var events = new ConcurrentQueue<(DateTime At, bool Arrived, string Instance)>();
         using var signal = new SemaphoreSlim(0);
         CmNotifyCallback callback = (_, _, action, data, size) =>
@@ -123,6 +124,8 @@ internal static class Watch
                     var next = Settled();
                     var diff = Diff.Compare(current, next, reported);
                     if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; emit(diff); }
+                    foreach (var returned in wakeReturns.Returned(next, DateTime.Now)) emit(returned);
+                    wakeReturns.Track(beforeSleep ?? current, next, lastWake ?? DateTime.Now);
                     var after = AfterWaking(beforeSleep ?? current, next, DateTime.Now);
                     notBack += after["notBack"]!.AsArray().Count; slower += after["slower"]!.AsArray().Count;
                     emit(after);
@@ -136,6 +139,7 @@ internal static class Watch
                     if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; emit(diff); }
                     // A drop that's back before the scan leaves no difference, so it's reported from the notifications.
                     if (Returns(next, burst, diff) is JsonObject back) { returns += back["returned"]!.AsArray().Count; back["time"] = Time(DateTime.Now); emit(back); }
+                    foreach (var returned in wakeReturns.Returned(next, DateTime.Now)) emit(returned);
                     burst.Clear();
                     current = next;
                 }
@@ -145,6 +149,7 @@ internal static class Watch
             return J.Obj(("time", Time(DateTime.Now)), ("event", "summary"), ("watchedSeconds", Math.Round((DateTime.Now - start).TotalSeconds)),
                 ("rescans", rescans), ("changes", changes), ("droppedAndBack", returns > 0 ? returns : null),
                 ("sleeps", sleeps > 0 ? sleeps : null), ("notBackAfterWaking", sleeps > 0 ? notBack : null), ("slowerAfterWaking", sleeps > 0 ? slower : null),
+                ("stillMissingAfterWaking", wakeReturns.Missing()),
                 ("unstable", J.Arr(unstable.Select(n => (JsonNode)J.Obj(("path", current.PathOf(n)), ("name", Topology.ShortName(n)), ("quickReconnects", n.QuickReconnects),
                     ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))))))),
                 ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()));
@@ -223,6 +228,33 @@ internal static class Watch
             ("slower", J.Arr(slowed.Select(p => (JsonNode)J.Obj(("path", after.PathOf(p.After)), ("name", Topology.ShortName(p.After)), ("before", Topology.ShortSpeed(p.Before)), ("after", Topology.ShortSpeed(p.After)))))));
     }
 
+    // Keep unresolved devices across sleeps, using the same identities as the wake check.
+    internal sealed class WakeReturns
+    {
+        private readonly Dictionary<string, (JsonObject Node, DateTime Wake)> missing = [];
+        internal void Track(Session before, Session after, DateTime wake)
+        {
+            var now = Diff.Occupants(after);
+            foreach (var (key, node) in Diff.Occupants(before))
+                if (node.Kind is "Device" or "Hub" && !now.ContainsKey(key))
+                    missing.TryAdd(key, (Reports.Ref(before, node), wake));
+        }
+        internal List<JsonObject> Returned(Session now, DateTime at)
+        {
+            var occupants = Diff.Occupants(now);
+            var result = new List<JsonObject>();
+            foreach (var (key, pending) in missing.ToList())
+                if (occupants.TryGetValue(key, out var node))
+                {
+                    result.Add(J.Obj(("time", Time(at)), ("event", "returned-after-waking"),
+                        ("node", Reports.Ref(now, node)), ("afterSeconds", Math.Round((at - pending.Wake).TotalSeconds, 1))));
+                    missing.Remove(key);
+                }
+            return result;
+        }
+        internal JsonArray Missing() => J.Arr(missing.Values.Select(p => (JsonNode)p.Node.DeepClone()));
+    }
+
     // One line per event for people; --json writes one JSON object per line instead.
     // Devices and hubs that dropped and came back between two scans: each removed and then arrived again, and
     // connected now where the diff didn't already report it. A hub that came back with what's behind it is one
@@ -269,6 +301,8 @@ internal static class Watch
                 return $"{time} {e["event"],-8} {e["instanceId"]}\n";
             case "returned":
                 return string.Concat(e["returned"]!.AsArray().Select(r => $"{time} ↺ dropped and came back  {r!["path"]} {r["name"]}{Behind(r["behindDevices"], r["behindHubs"])} · gone {r["goneSeconds"]} s\n"));
+            case "returned-after-waking":
+                return $"{time} ✓ came back {e["afterSeconds"]} s after waking: {e["node"]!["path"]} {e["node"]!["name"]}\n";
             case "change":
                 return string.Concat(Diff.Text(e, false).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => $"{time} {line}\n"));
             case "sleep":
@@ -285,6 +319,8 @@ internal static class Watch
                 var sb = new System.Text.StringBuilder($"{time} done after {e["watchedSeconds"]} s · {Count(e["rescans"], "rescan")}, {e["changes"]} with changes\n");
                 if (e["droppedAndBack"] != null) sb.AppendLine($"  {e["droppedAndBack"]} dropped and came back before a scan could see them gone (↺ lines above)");
                 if (e["sleeps"] != null) sb.AppendLine($"  slept {(e["sleeps"]!.GetValue<int>() == 1 ? "once" : e["sleeps"] + " times")}: {e["notBackAfterWaking"]} not back after waking, {e["slowerAfterWaking"]} back slower");
+                if (e["stillMissingAfterWaking"] is JsonArray missing)
+                    foreach (var n in missing) sb.AppendLine($"  still missing after waking: {n!["path"]} {n["name"]}");
                 foreach (var u in e["unstable"]!.AsArray())
                     sb.AppendLine($"  unstable: {u!["path"]} {u["name"]} dropped and came back {u["quickReconnects"]} times ({string.Join(", ", u["times"]!.AsArray().Select(t => t!.ToString()))})");
                 var final = e["issues"]!;
