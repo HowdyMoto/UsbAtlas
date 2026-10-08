@@ -242,13 +242,13 @@ public partial class MainWindow : Window
                 + (UsbBudgets.BestTransfer(node.LinkMbps) is { Length: > 0 } best ? $" A fast drive on this link moves {best} at best; copy a large file or run a disk benchmark to see what it really does." : ""));
             Metric(NodeVisuals.Metric.Reserved, attached ? (node.ReservedMbps is double reserved ? UsbBudgets.Rate(reserved) : "Unknown") : unread, "Reserved", 1,
                 "Bus time held for this device's open interrupt and isochronous pipes, such as audio, video and input. Bulk transfers, such as storage, reserve nothing and share what is left.");
-            // A third of the panel is too narrow for the card's "External + 100 mA", so its parts are split
-            // between the figure and its label.
+            // A third of the panel is too narrow for the card's "Self-powered + 100 mA", so the tile keeps the
+            // request as its figure and the claim as its label.
             var (power, powerLabel) = node.Kind == "Empty port" ? (unread, "Power request")
-                : UsesExternalPower(node) ? (node.MaxPowerMa is > 0 and var bus ? ($"{bus} mA", "External + bus") : ("External", "Power"))
+                : DeclaresSelfPower(node) ? (node.MaxPowerMa is int declared ? ($"{declared} mA", "Self-powered") : ("Unknown", "Self-powered"))
                 : (node.MaxPowerMa != null ? PowerFigure(node).Text : attached ? "Unknown" : unread, "Power request");
             Metric(NodeVisuals.Metric.Power, power, powerLabel, 2,
-                UsesExternalPower(node) ? "Runs on its own supply, so it requests little or nothing from the bus." : "The most current the device's active configuration says it will draw. A declared maximum, not a measurement.");
+                DeclaresSelfPower(node) ? PowerEvidence(node)! : "The most current the device's active configuration says it will draw. A declared maximum, not a measurement.");
             Details.Children.Add(metrics);
             Section("Device identity & connection");
             Field("VID / PID", attached && node.VendorId.Length > 0 ? $"{node.VendorId} : {node.ProductId}" : Reported(""), "The vendor and product IDs the device reports. They identify its chip or product, and are what driver and support pages search by.");
