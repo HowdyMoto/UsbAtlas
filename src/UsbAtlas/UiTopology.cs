@@ -72,8 +72,9 @@ public partial class MainWindow
         }
         return new(parts, issues);
     }
-    internal static bool UsesExternalPower(UsbNode n) => Topology.UsesExternalPower(n);
+    internal static bool DeclaresSelfPower(UsbNode n) => Topology.DeclaresSelfPower(n);
     internal static (string Text, string Words) PowerFigure(UsbNode n) => Topology.PowerFigure(n);
+    internal static string? PowerEvidence(UsbNode n) => Topology.PowerEvidence(n);
     // A merged card carries both sides' issues, so nothing about the USB 2 side leaves the canvas.
     private List<(Severity Severity, string Text)> CardIssues(UsbNode n) => Sides(n).SelectMany(Issues).Distinct().ToList();
     private List<(Severity Severity, string Text)> OtherIssues(UsbNode n) =>
@@ -133,8 +134,8 @@ public partial class MainWindow
             lines.Add($"Meter: reservations fill {UsbBudgets.Share(used, capacity)}, the most this link reserves for timed transfers; the lighter part runs to {UsbBudgets.Rate(Math.Max(used, UsbBudgets.PeakThroughLink(n).Mbps))} if everything on it streams at once. It shows bus time set aside, not traffic measured.");
         if (UsbBudgets.SharedTtUse(n) is (var ttNow, var ttPeak, _, > 0 and var ports))
             lines.Add($"Shared TT: full- and low-speed devices on {ports} port(s) share one 12 Mb/s bus behind this hub and hold {UsbBudgets.Share(ttNow, UsbBudgets.FullSpeedReservableMbps)} of what it can reserve" + (ttPeak > ttNow + 0.01 ? $", up to {UsbBudgets.Rate(ttPeak)} at peak." : "."));
-        if (UsesExternalPower(n))
-            lines.Add(n.MaxPowerMa is > 0 ? $"Power: has its own supply and also requests up to {n.MaxPowerMa} mA from the bus. A declared maximum, not a measurement." : "Power: runs on its own supply and requests no current from the bus, so there is no bus draw to show.");
+        if (DeclaresSelfPower(n))
+            lines.Add("Power: " + PowerEvidence(n) + (n.MaxPowerMa is > 0 ? " A declared maximum, not a measurement." : " There is no bus draw to show."));
         else if (n.MaxPowerMa is int ma) lines.Add($"Power: requests up to {ma} mA ({ma * 0.005:0.##} W at 5 V) in its descriptor. A declared maximum, not a measurement.");
         return string.Join("\n", lines);
     }
