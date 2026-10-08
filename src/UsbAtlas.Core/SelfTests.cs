@@ -52,6 +52,14 @@ internal static class SelfTests
         var dockSpeed = Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]);
         Check(dockSpeed.Cause.Contains("carrying a picture") && dockSpeed.Cause.Contains("DisplayPort entered") && !dockSpeed.Steps!.Any(x => x.StartsWith("Make sure the plug")),
             "A dock showing a picture over DisplayPort explains its missing USB 3 side by the lanes the picture takes, not the cable.");
+        // The same hub plugged into a plain USB hub, as a display fed its images over USB is: a USB hub can't send a
+        // picture, so the DisplayPort its Billboard reports isn't on this cable, and the cable is the likely cause.
+        var plainHub = new UsbNode { Id = "p", Kind = "Hub", Name = "Sabrent hub", LinkMbps = 480, Children = [dock] };
+        var behindHub = Explanations.Speed(dock, [new() { Kind = "Root hub" }, plainHub, dock]);
+        Check(behindHub.Cause.StartsWith("Its USB 3 connection didn't come up") && behindHub.Cause.Contains("can't send a picture") && !behindHub.Cause.Contains("carrying a picture")
+            && behindHub.Steps!.Any(x => x.StartsWith("Make sure the plug")), "Behind a plain USB hub, a Billboard's DisplayPort can't explain a missing USB 3 side: the cable can.");
+        Check(Explanations.Speed(dock, [new() { Kind = "Root hub" }, new UsbNode { Id = "t", Kind = "Hub", Location = UsbC.TunneledLocation }, dock]).Cause.Contains("carrying a picture"),
+            "A USB4 or Thunderbolt dock can send a picture, so DisplayPort still explains a hub behind one.");
         dockBillboard.Billboard.Modes[0].State = "Failed";
         Check(Explanations.Speed(dock, [new() { Kind = "Root hub" }, dock]).Cause.StartsWith("Its USB 3 connection didn't come up"), "Without DisplayPort entered, the cable is the likely cause.");
         stuck.HighSpeedCapable = false;
