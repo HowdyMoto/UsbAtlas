@@ -163,6 +163,8 @@ internal static class CliTests
         Check(host["node"]!["usbC"]!.AsArray().Any(l => l!.ToString().StartsWith("USB4 host router: USB4 host router")) && Reports.Show(s, s.Resolve("H01/01"))["node"]!["socket"]!["usbCFeatures"]!["Power Delivery"]!.ToString().StartsWith("Not reported"),
             "show gives the computer's USB4 router and says what a USB-C socket doesn't report.");
         Check(host["node"]!["hub"]!["ports"]!.GetValue<int>() == 9 && host["children"]!.AsArray().Count == 9, "A merged host shows its root ports.");
+        Check(Reports.Show(s, s.Resolve("H01/01"))["node"]!["power"]!["evidence"]!.ToString().Contains("self-powered") && Reports.Show(s, s.Resolve("Studio camera"))["node"]!["power"]!["evidence"] == null,
+            "show says a self-powered claim can't be traced to a source, and leaves that off a bus-powered device.");
 
         var budget = Reports.Budget(s, null);
         var travel = budget["nodes"]!.AsArray().First(n => n!["path"]!.ToString() == "H01/05")!;

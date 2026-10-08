@@ -27,7 +27,8 @@ public partial class App : Application
         if (horizontal == null && (e.Args.Contains("--render") || e.Args.Contains("--verify-ui"))) horizontal = true;
         var window = new MainWindow(e.Args.Contains("--demo"), e.Args.Contains("--render"), e.Args.Contains("--verify-ui"), horizontal)
         {
-            RenderSelection = e.Args.SkipWhile(x => x != "--select").Skip(1).FirstOrDefault()
+            RenderSelection = e.Args.SkipWhile(x => x != "--select").Skip(1).FirstOrDefault(),
+            RenderFocus = e.Args.SkipWhile(x => x != "--focus").Skip(1).FirstOrDefault()
         };
         if (e.Args.Contains("--compact")) { window.Width = 1050; window.Height = 650; }
         if (e.Args.Contains("--wide")) { window.Width = 3840; window.Height = 1560; }

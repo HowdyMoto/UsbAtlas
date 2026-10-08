@@ -20,10 +20,12 @@ public partial class MainWindow
             UsbNode Node(string id) => snapshot.Nodes.Single(n => n.Id == id);
             static string Text(DependencyObject root) => string.Concat(VisualDescendants(root).OfType<TextBlock>().Select(t => new System.Windows.Documents.TextRange(t.ContentStart, t.ContentEnd).Text + " "));
             var hub = Node("demo/root/1"); var camera = Node("demo/root/1/2");
-            Check(PowerFigure(hub).Text == "External power" && !Text(cards[hub.Id].Card).Contains("0 mA"), "A self-powered hub must read External power, not 0 mA.");
+            Check(PowerFigure(hub).Text == "Self-powered" && !Text(cards[hub.Id].Card).Contains("0 mA"), "A self-powered hub must read Self-powered, not 0 mA.");
             Check(PowerFigure(camera).Text == "400 mA" && Text(cards[camera.Id].Card).Contains("400 mA"), "A bus-powered device keeps its requested current.");
-            Check(PowerFigure(new UsbNode { Kind = "Hub", PowerSource = "Self powered", MaxPowerMa = 100 }).Text == "External + 100 mA", "External power plus a small bus draw must show both.");
+            Check(PowerFigure(new UsbNode { Kind = "Hub", PowerSource = "Self powered", MaxPowerMa = 100 }).Text == "Self-powered + 100 mA", "Self-powered plus a small bus draw must show both.");
             Check(PowerFigure(new UsbNode { Kind = "Device", MaxPowerMa = null }).Text == "Unknown", "An unreported request stays Unknown.");
+            Check(PowerFigure(new UsbNode { Kind = "Device", PowerSource = "Bus powered", SelfPowerCapable = false, MaxPowerMa = 0 }).Text == "0 mA", "A device that never claims to be self-powered must not read as if it were.");
+            Check(PowerEvidence(hub) is { } why && why.Contains("Windows doesn't report where the power comes from") && PowerEvidence(camera) == null, "A self-powered claim says it can't show where the power comes from; a bus-powered device has nothing to caveat.");
             void Rename(Action open, string label, string value)
             {
                 open(); var panel = (StackPanel)((Border)openNameEditor!.Child).Child;

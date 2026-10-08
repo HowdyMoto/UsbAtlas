@@ -62,8 +62,10 @@ public partial class MainWindow
                 }
             }
             horizontalTree = true; detail = CardDetail.Full; Draw();
-            var label = VisualDescendants(cards["pair/root/4"].Card).OfType<System.Windows.Controls.TextBlock>().Select(t => t.Text);
-            Check(label.Contains("USB 3 hub · USB 2 and USB 3 sides"), "A merged hub's card must say it holds both sides.");
+            // A merged hub's card says it's a USB 3 hub on one cable and names each of its two links on a row of its own.
+            var marks = VisualDescendants(cards["pair/root/4"].Card).OfType<FrameworkElement>().ToList();
+            Check(marks.OfType<System.Windows.Controls.TextBlock>().Any(t => Equals(t.Tag, PairLabelTag) && t.Text.StartsWith("USB 3 hub", StringComparison.Ordinal)) && marks.Count(e => Equals(e.Tag, LinkRowTag)) == 2,
+                "A merged hub's card must say it holds both sides, with a row for each link.");
             // Selecting the USB 2 side, from the tree or Properties, keeps it as the selection and marks the card.
             SelectNode(Node("pair/root/1")); UpdateLayout();
             Check(selected?.Id == "pair/root/1" && cards["pair/root/4"].Card.Effect != null && GraphBounds(selected) is Rect, "Selecting a merged hub's USB 2 side must select it and mark the merged card.");
@@ -93,7 +95,58 @@ public partial class MainWindow
             Check(ring != null && Math.Abs(System.Windows.Controls.Canvas.GetLeft(ring) + 4 - cards["pair/root/6"].Point.X) < 0.01, "Hovering one side of a hub drawn as two cards must ring the other.");
             cards["pair/root/1"].Card.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseLeaveEvent });
             CaptureUi("paired-hubs-preview.png");
+            VerifyNestedPairedHubs();
         }
         finally { snapshot = savedSnapshot; selected = savedSelection; horizontalTree = savedHorizontal; detail = CardDetail.Full; Draw(); ShowDetails(); }
+    }
+    // One enclosure of two USB 3 hub chips, the second wired to the first's port 4: Windows sees two USB 2 hubs
+    // in a chain and two USB 3 hubs in a chain. The inner port has no companion of its own; the second chip's
+    // sides pair through their own ports. Each chip is one card, its port 4 one socket of two halves, and linking
+    // either side snaps the whole chip beside the first.
+    private void VerifyNestedPairedHubs()
+    {
+        static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        var root = new UsbNode { Id = "nest/root", Kind = "Root hub", Name = "Root hub", PortCount = 2, HubSymbolicLink = @"\\?\nest-root" };
+        UsbNode Hub(string id, int port, bool usb3) => new()
+        {
+            Id = id, Kind = "Hub", Name = usb3 ? "USB3.2 Hub" : "RTS5411 Hub", Port = port, PortCount = 4, VendorId = "0BDA", LinkMbps = usb3 ? 5000 : 480,
+            Speed = usb3 ? "SuperSpeed · 5 Gb/s" : "High speed · 480 Mb/s", UsbVersion = usb3 ? "USB 3.20" : "USB 2.10", HubSymbolicLink = $@"\\?\{id.Replace('/', '-')}", PortConnectorIsTypeC = false
+        };
+        var outer2 = Hub("nest/root/1", 1, false); var outer3 = Hub("nest/root/2", 2, true);
+        var inner2 = Hub("nest/root/1/4", 4, false); var inner3 = Hub("nest/root/2/4", 4, true);
+        outer2.CompanionPortNumber = 2; outer2.CompanionHubSymbolicLink = root.HubSymbolicLink; outer2.CompanionId = outer3.Id; outer3.CompanionId = outer2.Id;
+        foreach (var (usb2, usb3, sockets) in new[] { (outer2, outer3, 3), (inner2, inner3, 4) })
+            for (int p = 1; p <= sockets; p++)
+            {
+                var low = p == 1 ? new UsbNode { Id = $"{usb2.Id}/{p}", Kind = "Device", Name = usb2 == outer2 ? "Microphone" : "Stream deck", DeviceType = "Audio", Port = p, LinkMbps = 12 } : new UsbNode { Id = $"{usb2.Id}/{p}", Kind = "Empty port", Name = $"Available port {p}", Port = p, Status = "Empty" };
+                var high = new UsbNode { Id = $"{usb3.Id}/{p}", Kind = "Empty port", Name = $"Available port {p}", Port = p, Status = "Empty" };
+                low.CompanionId = high.Id; high.CompanionId = low.Id;
+                usb2.Children.Add(low); usb3.Children.Add(high);
+            }
+        outer2.Children.Add(inner2); outer3.Children.Add(inner3);
+        root.Children.AddRange([outer2, outer3]);
+        snapshot = new Snapshot { IsDemo = true, Controllers = [new UsbNode { Id = "nest", Kind = "Controller", Name = "Host", Children = [root] }] };
+        HubRelationships.Analyze(snapshot);
+        Check(inner2.CompanionHubId == inner3.Id && inner2.IsUsb2Companion && inner2.CompanionId.Length == 0, "The fixture's inner chip must pair through its own ports, with no companion on the port it hangs from.");
+        foreach (bool horizontal in new[] { true, false })
+        {
+            horizontalTree = horizontal; detail = CardDetail.Full; Draw(); UpdateLayout();
+            string where = horizontal ? "horizontal" : "vertical";
+            Check(cards.ContainsKey(outer3.Id) && cards.ContainsKey(inner3.Id) && !cards.ContainsKey(outer2.Id) && !cards.ContainsKey(inner2.Id), $"A paired hub plugged into a merged one must be one card too ({where}).");
+            Check(wires.ContainsKey(inner2.Id) && wires.ContainsKey(inner3.Id), $"A merged inner hub must have a connection from each side's port ({where}).");
+            Check(socketParts[inner2.Id] == NodeVisuals.SocketPart.First && socketParts[inner3.Id] == NodeVisuals.SocketPart.Second
+                && ((System.Windows.Controls.TextBlock)connectedPorts[inner3.Id].Content).Text.Length == 0, $"The port between two chips must be one socket of two halves, numbered once ({where}).");
+            VerifyWireRouting();
+        }
+        // Linking only the USB 2 side, as an older version allowed, still snaps the whole chip beside the first.
+        inner2.SnapToParentHub = true; horizontalTree = false; Draw(); UpdateLayout();
+        Check(cards.ContainsKey(inner3.Id) && !cards.ContainsKey(inner2.Id) && Math.Abs(cards[inner3.Id].Point.Y - cards[outer3.Id].Point.Y) < .01 && cards[inner3.Id].Point.X > cards[outer3.Id].Point.X,
+            "A merged hub linked on either side must sit beside its upstream stage as one card.");
+        Check(snappedWires.Contains(inner2.Id) && snappedWires.Contains(inner3.Id), "A merged stage must be linked from both halves of its socket.");
+        VerifyWireRouting();
+        SelectNode(inner3); UpdateLayout();
+        var snap = Details.Children.OfType<System.Windows.Controls.Button>().Single(b => Equals(b.Tag, "snap-upstream-hub"));
+        Check((string)snap.Content == "Unlink from upstream hub", "A merged stage linked on its USB 2 side must offer to unlink.");
+        CaptureUi("nested-paired-hubs-preview.png");
     }
 }

@@ -106,7 +106,7 @@ internal static class Reports
         var parts = new List<string>();
         if (n.Kind is "Device" or "Hub") parts.Add(Topology.ShortSpeed(n));
         if (Topology.ShowsPolling(n)) parts.Add(UsbBudgets.PollingRate(n.PollIntervalMs!.Value));
-        if (n.Kind is "Device" or "Hub" or "Unavailable" && (n.MaxPowerMa.HasValue || Topology.UsesExternalPower(n))) parts.Add(Topology.PowerFigure(n).Text);
+        if (n.Kind is "Device" or "Hub" or "Unavailable" && (n.MaxPowerMa.HasValue || Topology.DeclaresSelfPower(n))) parts.Add(Topology.PowerFigure(n).Text);
         if (n.Kind == "Unavailable") parts.Insert(0, n.Status);
         if (n.Kind == "Controller" && Topology.PciText(n) is { Length: > 0 } pci) parts.Add(pci);
         return string.Join(" · ", parts);
@@ -197,7 +197,7 @@ internal static class Reports
         if (n.Kind is not ("Controller" or "Root hub"))
             node["hubsAbove"] = J.Obj(("count", n.HubsAbove), ("limit", HubDepth.Max), ("chain", J.Some(HubDepth.Above(s.Chain(n)).Select(h => (JsonNode)$"{s.PathOf(h)} {Topology.ShortName(h)}"))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
-            node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable),
+            node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable), ("evidence", Topology.PowerEvidence(n)),
                 ("drawThroughPortMa", n.Kind == "Hub" ? UsbBudgets.Demand(n).Known : null), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))));
         if (n.Kind is "Device" or "Hub" or "Root hub" or "Controller")
             node["powerSaving"] = J.Obj(("setting", Topology.PowerSavingText(Topology.MergedRoot(n) ?? n, s.Snapshot)), ("plan", PowerSaving.PlanSummary(s.Snapshot)),

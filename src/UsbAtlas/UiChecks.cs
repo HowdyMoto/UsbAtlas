@@ -371,13 +371,15 @@ public partial class MainWindow
         }
         // Every connection is drawn as its link, whatever is selected: width from its rate, dashes when slower
         // than its device supports, and its link's ink unless it is on the selected path.
-        var chain = FindPath(selected?.Id ?? "").Select(n => n.Id).ToHashSet();
+        var chain = SelectedChain();
         foreach (var (id, wire) in wires)
         {
             var node = (UsbNode)wire.Tag;
             Check(node.Id == id && wire.StrokeThickness == NodeVisuals.WireWidth(node), $"Connection {id} must be as wide as its link rate.");
-            Check((wire.StrokeDashArray is { Count: > 0 }) == NodeVisuals.SlowLink(node), $"Connection {id} must be dashed exactly when its link is slower than its device supports.");
-            Check(wire.Stroke == Brush(chain.Contains(id) ? "Accent" : NodeVisuals.WireInk(node)), $"Connection {id} has the wrong ink.");
+            // A link nothing uses is dotted instead, round dots that read apart from a slow link's dashes.
+            Check(idleLinks.Contains(id) ? wire.StrokeDashCap == PenLineCap.Round && wire.StrokeDashArray.SequenceEqual(NodeVisuals.IdleDots())
+                : (wire.StrokeDashArray is { Count: > 0 }) == NodeVisuals.SlowLink(node), $"Connection {id} must be dashed exactly when its link is slower than its device supports, and dotted when nothing uses it.");
+            Check(wire.Stroke == Brush(chain.Contains(id) ? "Accent" : InkFor(node)), $"Connection {id} has the wrong ink.");
         }
         var boxes = cards.ToDictionary(c => c.Key, c => new Rect(c.Value.Point, new Size(c.Value.Card.Width, c.Value.Card.Height)));
         var all = boxes.ToList();
@@ -390,7 +392,10 @@ public partial class MainWindow
             var parent = DrawnAs(FindPath(id).SkipLast(1).Last()); var card = DrawnAs(FindPath(id).Last()).Id;
             Check(boxes.ContainsKey(card) && boxes.ContainsKey(parent.Id), $"Connection {id} is missing a card at one end.");
             Check(route.Count <= (snappedWires.Contains(id) ? 5 : 4), $"Connection {id} has too many bends.");
-            Check(portAnchors.TryGetValue(id, out var port) ? (route[0] - port).Length < 0.01 : OnEdge(boxes[parent.Id], route[0]), $"Connection {id} does not start at its port.");
+            // A USB 3 hub's two links leave the middle of their split socket side by side, as one cable.
+            bool cable = cables.TryGetValue(id, out var partner) && portAnchors.TryGetValue(id, out var own) && portAnchors.TryGetValue(partner, out var half);
+            Check(cable ? (route[0] - new Point((own.X + half.X) / 2, (own.Y + half.Y) / 2)).Length <= CableGap / 2 + 0.01
+                : portAnchors.TryGetValue(id, out var port) ? (route[0] - port).Length < 0.01 : OnEdge(boxes[parent.Id], route[0]), $"Connection {id} does not start at its port.");
             Check(OnEdge(boxes[card], route[^1]), $"Connection {id} does not end on its card.");
             for (int i = 1; i < route.Count; i++)
             {
@@ -977,7 +982,7 @@ public partial class MainWindow
                 Check(portSlots.Count == snapshot.Nodes.Count(n => n.Kind == "Empty port") && cards.Values.All(c => ((UsbNode)c.Card.Tag).Kind != "Empty port"), "Empty ports must render as slots, not full cards.");
                 int logicalPorts = snapshot.Nodes.Where(n => n.Kind is "Hub" or "Root hub" && cards.ContainsKey(DrawnAs(n).Id)).Sum(n => n.Children.Count);
                 Check(portSlots.Count + connectedPorts.Count == logicalPorts, "Every logical port must be drawn on its hub.");
-                Check(portSlots.Values.All(b => b.Background == Brush("Surface") || b.Background == Brush("Selection")) && connectedPorts.All(p => p.Value.Background == Brush(FindPath(selected?.Id ?? "").Any(n => n.Id == p.Key) ? "Accent" : NodeVisuals.WireInk((UsbNode)p.Value.Tag))), "Empty sockets must be hollow and occupied ones filled in their connection's ink.");
+                Check(portSlots.Values.All(b => b.Background == Brush("Surface") || b.Background == Brush("Selection")) && connectedPorts.All(p => p.Value.Background == Brush(SelectedChain().Contains(p.Key) ? "Accent" : NodeVisuals.WireInk((UsbNode)p.Value.Tag))), "Empty sockets must be hollow and occupied ones filled in their connection's ink.");
                 ShowDetails(); UpdateIssues(); UpdateLayout();
                 VerifyStatusStyling();
                 VerifyRoleFills();

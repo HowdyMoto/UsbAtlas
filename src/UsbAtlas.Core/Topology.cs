@@ -51,16 +51,21 @@ internal static class Topology
     // owners compare; for other devices it is in Properties.
     internal static bool ShowsPolling(UsbNode n) => n.Kind == "Device" && n.PollIntervalMs != null && n.DeviceType is "Keyboard" or "Mouse" or "HID / controls" or "Game controller";
 
-    // Requested power and its source are one figure. A device or hub that asks the bus for nothing runs on
-    // its own supply, so it reads "External power" rather than a misleading 0 mA; one that also draws a
-    // little from the bus reads "External + 100 mA".
-    internal static bool UsesExternalPower(UsbNode n) => n.Kind is "Device" or "Hub" && (n.PowerSource == "Self powered" || n.MaxPowerMa == 0);
+    // Requested power and its source are one figure. A hub that reports itself self-powered, or a device that
+    // says it can be and asks the bus for nothing, reads "Self-powered" rather than a misleading 0 mA; one that
+    // also asks for a little reads "Self-powered + 100 mA". That is the device's own claim, not a finding:
+    // Windows can't say where the power comes from, and a product fed only by its USB cable can claim it too.
+    internal static bool DeclaresSelfPower(UsbNode n) => n.Kind is "Device" or "Hub" && (n.PowerSource == "Self powered" || (n.SelfPowerCapable == true && n.MaxPowerMa == 0));
     internal static (string Text, string Words) PowerFigure(UsbNode n)
     {
-        if (UsesExternalPower(n))
-            return n.MaxPowerMa is > 0 ? ($"External + {n.MaxPowerMa} mA", $"external power plus {n.MaxPowerMa} mA requested from the bus") : ("External power", "external power, nothing requested from the bus");
+        if (DeclaresSelfPower(n))
+            return n.MaxPowerMa is > 0 ? ($"Self-powered + {n.MaxPowerMa} mA", $"declares itself self-powered, and asks the bus for {n.MaxPowerMa} mA") : ("Self-powered", "declares itself self-powered, and asks the bus for nothing");
         return n.MaxPowerMa is int ma ? ($"{ma} mA", $"{ma} mA requested") : ("Unknown", "power request unknown");
     }
+    // What a self-powered figure rests on and what it can't show; null when the device makes no such claim.
+    internal static string? PowerEvidence(UsbNode n) => DeclaresSelfPower(n)
+        ? $"{(n.Kind == "Hub" ? "Windows reports this hub as self-powered" : "Its configuration says it can be self-powered")}, and it asks the bus for {(n.MaxPowerMa is > 0 ? n.MaxPowerMa + " mA" : "nothing")}. That is the device's own claim. Windows doesn't report where the power comes from, so a power adapter, a second cable, a battery and the USB cable itself all look the same here, and many products fed only by their USB cable declare themselves self-powered."
+        : null;
 
     // Device Manager's power-saving setting for this hardware. Turned on, it still does nothing while the
     // power plan's USB selective suspend is off.
