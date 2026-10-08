@@ -448,6 +448,26 @@ internal static class CliTests
         Check(Watch.Text(Watch.AfterWaking(before, Demo(), DateTime.Now)).Contains("✓ after waking, all 11 devices and hubs are back at the link rates they had"), "A clean wake says so.");
         Check(Watch.Text(J.Obj(("time", "08:01:00.000"), ("event", "summary"), ("watchedSeconds", 60), ("rescans", 1), ("changes", 1), ("sleeps", 1), ("notBackAfterWaking", 1), ("slowerAfterWaking", 0), ("unstable", new JsonArray()),
             ("issues", J.Obj(("errors", 0), ("warnings", 0), ("notes", 0))))).Contains("slept once: 1 not back after waking, 0 back slower"), "The summary totals what sleeping cost.");
+        var wakeAt = new DateTime(2026, 1, 1, 8, 0, 0);
+        var pending = new Watch.WakeReturns();
+        var absent = DemoData.Create();
+        absent.Controllers[0].Children[0].Children.RemoveAll(n => n.Name is "Mechanical keyboard" or "Wireless mouse receiver");
+        var absentSession = new Session(absent, "demo");
+        pending.Track(before, absentSession, wakeAt);
+        Check(pending.Returned(absentSession, wakeAt.AddSeconds(8)).Count == 0 && pending.Missing().Count == 2, "Missing devices remain pending after the wake check.");
+        var partial = DemoData.Create();
+        partial.Controllers[0].Children[0].Children.RemoveAll(n => n.Name == "Wireless mouse receiver");
+        var late = pending.Returned(new Session(partial, "demo"), wakeAt.AddSeconds(66)).Single();
+        Check(late["node"]!["name"]!.ToString() == "Mechanical keyboard" && late["afterSeconds"]!.GetValue<double>() == 66
+            && Watch.Text(late).Contains("came back 66 s after waking: H01/03 Mechanical keyboard"), "Late returns report the device and elapsed wake time in JSON and text.");
+        Check(pending.Returned(new Session(partial, "demo"), wakeAt.AddSeconds(70)).Count == 0, "A late return is reported only once.");
+        pending.Track(before, new Session(partial, "demo"), wakeAt.AddMinutes(1));
+        Check(pending.Missing().Single()!["name"]!.ToString() == "Wireless mouse receiver", "A later sleep retains devices missing from earlier wakes.");
+        var summary = J.Obj(("event", "summary"), ("watchedSeconds", 70), ("rescans", 2), ("changes", 1),
+            ("stillMissingAfterWaking", pending.Missing()), ("unstable", new JsonArray()), ("issues", J.Obj(("errors", 0), ("warnings", 0), ("notes", 0))));
+        Check(Watch.Text(summary).Contains("still missing after waking: H01/04 Wireless mouse receiver"), "The summary names devices that never returned.");
+        Check(pending.Returned(before, wakeAt.AddSeconds(90)).Single()["afterSeconds"]!.GetValue<double>() == 90 && pending.Missing().Count == 0, "A later sleep does not reset the original wake time.");
+
         Check(Watch.Text(J.Obj(("time", "08:00:00.000"), ("event", "sleep"))).Contains("going to sleep") && Watch.Text(J.Obj(("time", "08:00:09.000"), ("event", "wake"), ("checkingIn", "8 s"))).Contains("checking what came back in 8 s"), "Sleep and wake are reported as they happen.");
     }
 
@@ -486,6 +506,12 @@ internal static class CliTests
         // A device's own events: the SSD came up on the USB 2 bus, and Windows retried setting it up.
         var slow = trace.Interpret(Event(173, 2, "SuperSpeed Device is Connected on the 2.0 Bus", ("fid_UsbDevice", Ssd)), false)!;
         Check(slow["path"]!.ToString() == "H01/01/01" && slow["what"]!.ToString().Contains("USB 2 bus") && slow["source"]!.ToString() == "USBHUB3 173", "A SuperSpeed device on the USB 2 bus is placed at the device.");
+        var enclosure = s.Resolve("NVMe SSD enclosure");
+        enclosure.LinkMbps = 480;
+        Check(Explanations.Speed(enclosure, s.Chain(enclosure)).Cause.Contains("empty storage bridge"), "The enclosure's speed explanation also names missing media.");
+        Check(slow["what"]!.ToString().Contains("empty storage bridge"), "An enclosure at USB 2 names missing media as a possible cause.");
+        var nonStorage = trace.Interpret(Event(173, 2, "SuperSpeed Device is Connected on the 2.0 Bus", ("fid_UsbDevice", Camera)), false)!;
+        Check(nonStorage["what"]!.ToString().Contains("Usually the cable or plug") && !nonStorage["what"]!.ToString().Contains("empty storage bridge"), "Non-storage devices retain the cable explanation.");
         trace.Interpret(Event(62, 2, "Retry Enumeration", ("fid_HubDevice", Hub), ("fid_PortNumber", 4UL)), false);
         trace.Interpret(Event(62, 2, "Retry Enumeration", ("fid_HubDevice", Hub), ("fid_PortNumber", 4UL)), false);
         var unknown = trace.Interpret(Event(999, 3, "Something New Went Wrong", ("fid_UsbDevice", 0x9999UL)), false)!;

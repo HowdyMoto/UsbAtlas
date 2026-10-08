@@ -128,6 +128,10 @@ internal sealed class UsbTrace(Func<Session> session)
             lastStatus[Key(at)] = status;
         }
         var (path, node) = place is { } p ? Locate(s, p) : ByVidPid(s, e) is UsbNode n ? (s.PathOf(n), n) : ("", null);
+        if (e.Id == 173 && node != null && (DeviceIdentity.IsStorage(node.DeviceType)
+            || node.DeviceClass == "Mass storage" || node.StorageProtocol.Length > 0
+            || node.VendorId == "0BDA" && node.ProductId == "9210"))
+            what = "A SuperSpeed device connected on the USB 2 bus: its USB 3 link didn't come up, so it runs at USB 2. An empty storage bridge may not bring up its SuperSpeed link until a drive is installed. The cable or plug can also cause this.";
         // A device that's unplugged, or not yet rescanned, keeps the name it last had at its port.
         string? name = node is { Kind: "Device" or "Hub" } ? Topology.ShortName(node) : null;
         if (name != null) names[path] = name; else name = names.GetValueOrDefault(path);

@@ -378,6 +378,9 @@ internal static class Explanations
             bool direct = upstream == path.TakeWhile(p => p.Id != n.Id).LastOrDefault();
             return (direct ? $"The hub it's plugged into runs at {rate}." : $"It's connected through {Topology.ShortName(upstream)}, which runs at {rate}.", steps);
         }
+        if (usb2 && n.LinkMbps == 480 && DeviceIdentity.IsStorage(n.DeviceType) && n.SocketSpeed != "USB 2.0")
+            return ("Its USB 3 link didn't come up. An empty storage bridge may wait for a drive before bringing up SuperSpeed; the cable or plug can also cause this.",
+                ["If this is an enclosure, check that a compatible drive is installed.", seat, cableStep]);
         return (usb2, n.SocketSpeed) switch
         {
             (true, "USB 2.0") => ("This port supports only USB 2.", [$"Plug it into {port}. {tongue}"]),

@@ -10,6 +10,7 @@ namespace UsbAtlas;
 // for a short quiet period; a change that arrives during a scan queues one more.
 public partial class MainWindow
 {
+    private const int WmPowerBroadcast = 0x0218, PbtApmSuspend = 4, PbtApmResumeSuspend = 7, PbtApmResumeAutomatic = 0x12;
     private const int WmDeviceChange = 0x0219, DbtDevNodesChanged = 0x0007, DbtDeviceArrival = 0x8000, DbtDeviceRemoveComplete = 0x8004, DbtDevTypDeviceInterface = 5;
     // Hubs register the USB hub interface class, not the USB device one, so a hub's drop, such as a KVM
     // switch taking a monitor's hub away, is only seen by registering for both.
@@ -18,12 +19,14 @@ public partial class MainWindow
     private bool rescanQueued;
     private readonly ReconnectTracker reconnects = new();
     private readonly List<IntPtr> deviceNotifications = [];
+    private IntPtr powerNotification;
 
     private void WatchDevices()
     {
         deviceSettle.Tick += async (_, _) => { deviceSettle.Stop(); await RescanAfterDeviceChange(); };
         var source = PresentationSource.FromVisual(this) as HwndSource;
         source?.AddHook(DeviceChangeHook);
+        if (source != null) powerNotification = RegisterSuspendResumeNotification(source.Handle, 0);
         // Registering for USB device and hub interfaces adds arrival and removal messages that name the
         // device, so a quick drop and return is counted even when it settles into a single rescan.
         if (source != null)
@@ -32,13 +35,18 @@ public partial class MainWindow
                 var filter = new DevBroadcastInterface { Size = Marshal.SizeOf<DevBroadcastInterface>(), DeviceType = DbtDevTypDeviceInterface, ClassGuid = guid };
                 if (RegisterDeviceNotification(source.Handle, ref filter, 0) is var handle && handle != IntPtr.Zero) deviceNotifications.Add(handle);
             }
-        Closed += (_, _) => { deviceSettle.Stop(); foreach (var handle in deviceNotifications) UnregisterDeviceNotification(handle); };
+        Closed += (_, _) => { deviceSettle.Stop(); if (powerNotification != IntPtr.Zero) UnregisterSuspendResumeNotification(powerNotification); source?.RemoveHook(DeviceChangeHook); foreach (var handle in deviceNotifications) UnregisterDeviceNotification(handle); };
     }
 
     // DBT_DEVNODES_CHANGED is broadcast to every top-level window without registration.
     private IntPtr DeviceChangeHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         int change = unchecked((int)wParam.ToInt64());
+        if (message == WmPowerBroadcast && change is PbtApmResumeAutomatic or PbtApmResumeSuspend)
+        {
+            reconnects.Woke(DateTime.Now);
+            if (!demo) QueueDeviceRescan();
+        }
         if (message == WmDeviceChange && change is DbtDeviceArrival or DbtDeviceRemoveComplete && lParam != IntPtr.Zero
             && Marshal.ReadInt32(lParam, 4) == DbtDevTypDeviceInterface && ReconnectTracker.InstanceIdFromPath(Marshal.PtrToStringUni(lParam + 28) ?? "") is string id)
         {
@@ -74,6 +82,8 @@ public partial class MainWindow
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct DevBroadcastInterface { public int Size, DeviceType, Reserved; public Guid ClassGuid; public short Name; }
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr RegisterSuspendResumeNotification(IntPtr recipient, int flags);
+    [DllImport("user32.dll")] private static extern bool UnregisterSuspendResumeNotification(IntPtr handle);
     [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr RegisterDeviceNotification(IntPtr recipient, ref DevBroadcastInterface filter, int flags);
     [DllImport("user32.dll")] private static extern bool UnregisterDeviceNotification(IntPtr handle);
 }
