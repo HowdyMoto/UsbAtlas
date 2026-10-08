@@ -327,11 +327,19 @@ internal static class Explanations
             return ("Its USB 3 side tried to connect and failed; the other half of its socket shows the error.", [seat, cableStep]);
         // A Billboard inside it reporting DisplayPort entered says the connection is carrying a picture, which can
         // take all four of the cable's fast lanes: the USB 3 side has nowhere to connect, by design. A hub can't
-        // tell Windows its socket is USB-C, so this is the only sign of it on a dock behind another hub.
+        // tell Windows its socket is USB-C, so this is the only sign of it on a dock behind another hub inside it.
+        // But only what sends a picture can put one on the cable: the computer's own port or a USB4 or Thunderbolt
+        // dock. Plugged into a plain USB hub, the Billboard's picture is on some other connection, so it says nothing
+        // about this one: a display fed its images over USB, for one, can carry a Billboard that reports DisplayPort.
         if (n.Usb3SideMissing && DisplayPortEntered(n) is UsbNode display)
-            return ($"This connection is carrying a picture: {Topology.ShortName(display)} inside it reports DisplayPort entered, and DisplayPort can take all four of the cable's fast lanes, leaving USB 2 for everything else.",
-                ["That's normal while it shows a picture. Some displays and docks have a setting that gives two of the lanes back to USB 3, at a cost in resolution or refresh rate.",
-                 "If it shouldn't be carrying a picture, check the cable and plug: use a cable rated 5 Gb/s or faster."]);
+        {
+            if (Upstream(n, path) is not { Kind: "Hub" } hub || hub.Location == UsbC.TunneledLocation)
+                return ($"This connection is carrying a picture: {Topology.ShortName(display)} inside it reports DisplayPort entered, and DisplayPort can take all four of the cable's fast lanes, leaving USB 2 for everything else.",
+                    ["That's normal while it shows a picture. Some displays and docks have a setting that gives two of the lanes back to USB 3, at a cost in resolution or refresh rate.",
+                     "If it shouldn't be carrying a picture, check the cable and plug: use a cable rated 5 Gb/s or faster."]);
+            return ($"Its USB 3 connection didn't come up; only its USB 2 side is connected. {Topology.ShortName(display)} inside it reports DisplayPort, but not on this connection: it's plugged into {Topology.ShortName(hub)}, a USB hub, which can't send a picture.",
+                [seat, cableStep]);
+        }
         if (n.Usb3SideMissing)
             return usbC
                 ? ("Its USB-C connection isn't carrying USB 3.",
@@ -371,6 +379,12 @@ internal static class Explanations
         };
     }
 
+    // What n is plugged into, from its path from the host, or null when the path doesn't reach it.
+    private static UsbNode? Upstream(UsbNode n, IReadOnlyList<UsbNode> path)
+    {
+        for (int i = 1; i < path.Count; i++) if (path[i].Id == n.Id) return path[i - 1];
+        return null;
+    }
     // A Billboard at or behind this node that reports DisplayPort entered.
     internal static UsbNode? DisplayPortEntered(UsbNode n) => n.Walk().FirstOrDefault(d => d.Billboard?.Modes.Any(m => m.Svid.Equals("FF01", StringComparison.OrdinalIgnoreCase) && m.State == "Entered") == true);
 
