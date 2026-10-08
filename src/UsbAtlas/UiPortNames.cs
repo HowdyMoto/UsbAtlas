@@ -117,15 +117,16 @@ public partial class MainWindow
     }
     private Popup? openNameEditor;
 
-    // The port's name as a tiny tag: it straddles the top border of the device card plugged into it, or
-    // sits beside an empty socket, so naming costs the layout no space.
+    // The port's name as a tiny tag: it straddles the top border of the device card plugged into it, so
+    // naming costs the layout no space, or sits in its hub's socket strip above an empty socket (to its
+    // left down a horizontal card's edge), where the strip has made room for a row of tags.
     private FrameworkElement PortTag(UsbNode port, double maxWidth)
     {
         var tag = new Border
         {
             Background = Brush("Surface"), BorderBrush = Brush("Border"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3),
-            Padding = new Thickness(4, 0, 4, 0), MaxWidth = maxWidth, Cursor = Cursors.Hand, Tag = PortTagMarker,
-            Child = new TextBlock { Text = port.PortLabel, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis },
+            Padding = new Thickness(4, 0, 4, 0), Height = TagHeight, MaxWidth = maxWidth, Cursor = Cursors.Hand, Tag = PortTagMarker,
+            Child = new TextBlock { Text = port.PortLabel, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center },
             ToolTip = $"Port {port.Port:00} · {port.PortLabel}\nClick to rename"
         };
         System.Windows.Automation.AutomationProperties.SetName(tag, $"Port {port.Port} name {port.PortLabel}, click to rename");
