@@ -219,27 +219,6 @@ public partial class MainWindow
     // Socket geometry: 30×22 sockets, 34 apart along a vertical card's bottom edge and 28 apart down a
     // horizontal card's right edge. A socket's two halves touch.
     private const double SocketWidth = NodeVisuals.SocketWidth, SocketHeight = NodeVisuals.SocketHeight, SocketPitch = 34, SocketStep = 28;
-    // A named empty socket's tag sits inside the socket strip, on the side away from the card's edge: above
-    // the socket along a vertical card's bottom edge, to its left down a horizontal card's right edge. The
-    // strip deepens to make room, by a tag row or by the widest tag, so the card's rows stay clear of it.
-    private const double TagHeight = 16, TagGap = 3, TagMaxWidth = 90;
-    private static bool NamedEmpty(UsbNode port) => port.Kind == "Empty port" && port.PortLabel.Length > 0;
-    private readonly Dictionary<string, double> tagRooms = [];
-    private double TagRoom(UsbNode n)
-    {
-        if (tagRooms.TryGetValue(n.Id, out var room)) return room;
-        var named = EdgePorts(n).Where(NamedEmpty).ToList();
-        return tagRooms[n.Id] = named.Count == 0 ? 0 : TagGap + (horizontalTree ? named.Max(TagWidth) : TagHeight);
-    }
-    // The socket strip's depth into a card: the sockets, their clearance from the card's rows and any tag room.
-    private double StripDepth(UsbNode n) => EdgePorts(n).Count == 0 ? 0 : (horizontalTree ? SocketWidth : SocketHeight) + 6 + TagRoom(n);
-    // A tag's width for its label: the text at the tag's size in its padding and border, capped as the tag is.
-    private double TagWidth(UsbNode port)
-    {
-        var text = new FormattedText(port.PortLabel, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-            new Typeface((FontFamily)FindResource("UiFont"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), 10, Brushes.Black, 1);
-        return Math.Min(TagMaxWidth, Math.Ceiling(text.WidthIncludingTrailingWhitespace) + 10);
-    }
     // Each logical port gets an equal slice of the edge, and a socket's two halves meet on the line
     // between their slices.
     private double? PortOffset(UsbNode parent, UsbNode child)
@@ -364,7 +343,7 @@ public partial class MainWindow
             if (hit is FrameworkElement { Tag: UsbNode n }) { focusId = n.Id; break; }
         PrepareGraph(); PrepareFocus(); PrepareMerges();
         UpdateDeviceTree();
-        Graph.Children.Clear(); meterSegments.Clear(); partRing = null; cards.Clear(); wires.Clear(); wireHits.Clear(); wireRoutes.Clear(); cables.Clear(); idleLinks.Clear(); internalLinks.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear();
+        Graph.Children.Clear(); meterSegments.Clear(); partRing = null; cards.Clear(); wires.Clear(); wireHits.Clear(); wireRoutes.Clear(); cables.Clear(); idleLinks.Clear(); internalLinks.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear(); portTags.Clear(); hoveredPortId = null; tagFoldTimer?.Stop();
         var roots = snapshot.Controllers.Where(n => Visible(n) && (focusedIds == null || focusedIds.Contains(n.Id))).ToList();
         const double margin = 16, controllerGap = 24;
         var layouts = ArrangeLayouts(roots);
@@ -476,15 +455,11 @@ public partial class MainWindow
         card.LostKeyboardFocus += (_, _) => UpdateSelection();
         // Hovering one side of a hub drawn as two cards rings the other.
         string? pair = node.CompanionHubId.Length > 0 && !mergedSides.ContainsKey(node.Id) && !mergedHubs.ContainsKey(node.Id) ? node.CompanionHubId : null;
-        card.MouseEnter += (_, _) => { ShowPart(node.Id, true, false); if (pair != null) ShowPart(pair, true, true); };
-        card.MouseLeave += (_, _) => { ShowPart(node.Id, false, false); if (pair != null) ShowPart(pair, false, true); };
+        card.MouseEnter += (_, _) => { ShowPart(node.Id, true, false); if (pair != null) ShowPart(pair, true, true); HoverPort(node.Id, true); };
+        card.MouseLeave += (_, _) => { ShowPart(node.Id, false, false); if (pair != null) ShowPart(pair, false, true); HoverPort(node.Id, false); };
         Canvas.SetLeft(card, x); Canvas.SetTop(card, y); Panel.SetZIndex(card, 1); Graph.Children.Add(card); cards[node.Id] = (card, bounds.TopLeft);
         // Far rows sit 4 apart, so a port name tag above one would cover the row before it.
-        if (node.PortLabel.Length > 0 && !host && !far)
-        {
-            var tag = PortTag(node, Math.Max(36, width / 2 - 14));
-            Canvas.SetLeft(tag, x + 8); Canvas.SetTop(tag, y - 8); Graph.Children.Add(tag);
-        }
+        if (!host && !far) AddCardTags(node, bounds);
         for (int i = 0; i < edgePorts.Count; i++)
         {
             var port = edgePorts[i];
@@ -501,35 +476,15 @@ public partial class MainWindow
             button.MouseDoubleClick += (_, e) => { EditPortName(port, button); e.Handled = true; };
             button.KeyDown += (_, e) => { if (e.Key == Key.F2) { EditPortName(port, button); e.Handled = true; } };
             button.ContextMenu = RenameMenu(null, port, button);
+            button.MouseEnter += (_, _) => HoverPort(port.Id, true); button.MouseLeave += (_, _) => HoverPort(port.Id, false);
             Canvas.SetLeft(button, horizontalTree ? bounds.Right - button.Width : cross - button.Width / 2);
             Canvas.SetTop(button, horizontalTree ? cross - button.Height / 2 : bounds.Bottom - button.Height);
             Panel.SetZIndex(button, 2); Graph.Children.Add(button);
             (port.Kind == "Empty port" ? portSlots : connectedPorts)[port.Id] = button;
             portAnchors[port.Id] = horizontalTree ? new Point(bounds.Right, cross) : new Point(cross, bounds.Bottom);
-            // A named empty socket has no card to carry its name, so the tag sits just inside the strip: above
-            // the socket, or to its left down a horizontal card's edge, where the strip has made room for it.
-            if (NamedEmpty(port))
-            {
-                FrameworkElement tag;
-                if (horizontalTree)
-                {
-                    // Right-aligned against the socket, so every tag on the card meets its socket at the same gap;
-                    // the tag takes its measured width, as the strip's room was measured, so the two agree.
-                    tag = PortTag(port, TagMaxWidth); tag.Width = TagWidth(port);
-                    Canvas.SetLeft(tag, bounds.Right - SocketWidth - TagGap - tag.Width); Canvas.SetTop(tag, cross - TagHeight / 2);
-                }
-                else
-                {
-                    // Sockets are narrow, so the tag runs right until the next socket in use or with its own tag, or the card's edge.
-                    double start = cross - SocketWidth / 2, end = bounds.Right - 3;
-                    if (edgePorts.Skip(i + 1).FirstOrDefault(p => p.Kind != "Empty port" || NamedEmpty(p)) is UsbNode next)
-                        end = x + PortOffset(node, next)!.Value - SocketWidth / 2 - 3;
-                    tag = PortTag(port, Math.Max(SocketWidth, end - start));
-                    Canvas.SetLeft(tag, start); Canvas.SetTop(tag, bounds.Bottom - SocketHeight - TagGap - TagHeight);
-                }
-                Graph.Children.Add(tag);
-            }
         }
+        // A named empty socket has no card to carry its name, so its tag sits in the socket strip.
+        AddSocketTags(node, edgePorts, bounds);
         var children = layout.Children;
         var entries = Entries(children, left, top);
         var routes = TopologyLayout.Route(bounds, entries.Select(e => e.Anchor).ToList(), entries.Select(e => e.Card).ToList(), horizontalTree);
@@ -941,6 +896,7 @@ public partial class MainWindow
             slot.BorderBrush = Brush(chosen || match ? "Accent" : "Wire");
             slot.BorderThickness = NodeVisuals.SocketBorder(socketParts.GetValueOrDefault(id), horizontalTree, chosen || match ? 2 : 1);
         }
+        UpdateTags();
         int index = matches.FindIndex(n => n.Id == selected?.Id);
         MatchCount.Text = appliedQuery.Length == 0 ? "" : index >= 0 ? $"{index + 1} / {matches.Count} matches" : $"{matches.Count} matches";
         NextMatchButton.Visibility = appliedQuery.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
