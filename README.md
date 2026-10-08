@@ -29,7 +29,7 @@ Download the Windows x64 portable ZIP from [GitHub Releases](https://github.com/
 To check a download, compare its hash with the release's `SHA256SUMS.txt`, and, for signed releases, check the signature of the executables after extracting:
 
 ```powershell
-(Get-FileHash .\UsbAtlas-1.7.1-win-x64.zip).Hash      # matches the line in SHA256SUMS.txt
+(Get-FileHash .\UsbAtlas-1.8.0-win-x64.zip).Hash      # matches the line in SHA256SUMS.txt
 Get-AuthenticodeSignature .\UsbAtlas.exe, .\atlascli.exe | Format-List Status, SignerCertificate, TimeStamperCertificate
 ```
 

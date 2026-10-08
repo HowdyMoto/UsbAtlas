@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>UsbAtlas</AssemblyName>
-    <Version>1.7.1</Version>
+    <Version>1.8.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- The .exe's icon, for Explorer, Start and a pinned taskbar button; the window shows the same one. -->
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
