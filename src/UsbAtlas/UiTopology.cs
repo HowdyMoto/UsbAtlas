@@ -530,7 +530,7 @@ public partial class MainWindow
     private const string MissingUsb3Tag = "missing-usb3";
     // Thin marks are hard to point at, so each has an invisible, wider twin that carries its explanation.
     // The twin is tagged with its node, so pressing on it selects instead of panning.
-    private const double HitWidth = 10;
+    private const double HitWidth = 10, WireHoverGrowth = 1.5;
     private const string MissingUsb3HitUid = "missing-usb3-hit", WireHitUid = "wire-hit";
     private readonly Dictionary<string, System.Windows.Shapes.Path> wireHits = [];
     private void ExplainOnHover(FrameworkElement hit, string ringId)
@@ -790,11 +790,17 @@ public partial class MainWindow
         Graph.Children.Add(wire); wires[node.Id] = wire; wireRoutes[node.Id] = route;
         var parent = nodeParents.GetValueOrDefault(node.Id);
         string from = parent == null ? "its host" : $"{NodeVisuals.ShortName(DrawnAs(parent))} port {node.Port:00}";
-        string help = Explanations.LinkHelp(node, from) + (cableHelp != null ? "\n\n" + cableHelp : "");
+        string help = Explanations.LinkHelp(node, from, FindPath(node.Id)) + (cableHelp != null ? "\n\n" + cableHelp : "");
         var hit = new System.Windows.Shapes.Path { Data = wire.Data, Stroke = Brushes.Transparent, StrokeThickness = HitWidth, Tag = node, Uid = WireHitUid, Cursor = Cursors.Hand, ToolTip = help };
         System.Windows.Automation.AutomationProperties.SetName(hit, $"Connection to {node.DisplayName}");
         ExplainOnHover(hit, node.Id);
-        hit.MouseLeftButtonDown += (_, e) => { SelectNode(node); e.Handled = true; };
+        // The line thickens under the pointer, so it's plain that lines can be pointed at, as cards can.
+        double width = wire.StrokeThickness;
+        hit.MouseEnter += (_, _) => wire.StrokeThickness = width + WireHoverGrowth;
+        hit.MouseLeave += (_, _) => wire.StrokeThickness = width;
+        // A slow link opens what it means and what to do, as its card's warning does; any other selects its device.
+        bool slow = HubRelationships.ReducedSpeed(node);
+        hit.MouseLeftButtonDown += (_, e) => { if (slow) OpenExplanation(node, Explanations.SpeedLabel(node)); else SelectNode(node); e.Handled = true; };
         Graph.Children.Add(hit); wireHits[node.Id] = hit;
     }
     // Softened corners make orthogonal routes read as cables.
