@@ -171,7 +171,7 @@ public partial class MainWindow
             if (a < 0 || b < 0 || ports.Skip(Math.Min(a, b) + 1).Take(Math.Abs(a - b) - 1).Any(p => p.Kind != "Empty port" && Shown(p))) continue;
             mergedHubs[usb2.Id] = usb3; mergedSides[usb3.Id] = usb2;
         }
-        edgePortCache.Clear(); socketParts.Clear();
+        edgePortCache.Clear(); tagRooms.Clear(); socketParts.Clear();
     }
     // Devices follow their sockets along the edge, so connections never cross.
     private List<UsbNode> Children(UsbNode n)
@@ -211,6 +211,27 @@ public partial class MainWindow
     // Socket geometry: 30×22 sockets, 34 apart along a vertical card's bottom edge and 28 apart down a
     // horizontal card's right edge. A socket's two halves touch.
     private const double SocketWidth = NodeVisuals.SocketWidth, SocketHeight = NodeVisuals.SocketHeight, SocketPitch = 34, SocketStep = 28;
+    // A named empty socket's tag sits inside the socket strip, on the side away from the card's edge: above
+    // the socket along a vertical card's bottom edge, to its left down a horizontal card's right edge. The
+    // strip deepens to make room, by a tag row or by the widest tag, so the card's rows stay clear of it.
+    private const double TagHeight = 16, TagGap = 3, TagMaxWidth = 90;
+    private static bool NamedEmpty(UsbNode port) => port.Kind == "Empty port" && port.PortLabel.Length > 0;
+    private readonly Dictionary<string, double> tagRooms = [];
+    private double TagRoom(UsbNode n)
+    {
+        if (tagRooms.TryGetValue(n.Id, out var room)) return room;
+        var named = EdgePorts(n).Where(NamedEmpty).ToList();
+        return tagRooms[n.Id] = named.Count == 0 ? 0 : TagGap + (horizontalTree ? named.Max(TagWidth) : TagHeight);
+    }
+    // The socket strip's depth into a card: the sockets, their clearance from the card's rows and any tag room.
+    private double StripDepth(UsbNode n) => EdgePorts(n).Count == 0 ? 0 : (horizontalTree ? SocketWidth : SocketHeight) + 6 + TagRoom(n);
+    // A tag's width for its label: the text at the tag's size in its padding and border, capped as the tag is.
+    private double TagWidth(UsbNode port)
+    {
+        var text = new FormattedText(port.PortLabel, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+            new Typeface((FontFamily)FindResource("UiFont"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), 10, Brushes.Black, 1);
+        return Math.Min(TagMaxWidth, Math.Ceiling(text.WidthIncludingTrailingWhitespace) + 10);
+    }
     // Each logical port gets an equal slice of the edge, and a socket's two halves meet on the line
     // between their slices.
     private double? PortOffset(UsbNode parent, UsbNode child)
@@ -235,7 +256,7 @@ public partial class MainWindow
         // Laid out from the left, a tree is shallow and tall, so width is the spare dimension: a card widens
         // for its name, by up to 100 px, before the name has to wrap or be shortened.
         if (horizontalTree) card = Math.Clamp(NameWidth(n) + TitleChrome(n) + 2, card, card + 100);
-        return horizontalTree ? card + (EdgePorts(n).Count > 0 ? SocketWidth + 6 : 0) : Math.Max(card, EdgePorts(n).Count * SocketPitch + 20);
+        return horizontalTree ? card + StripDepth(n) : Math.Max(card, EdgePorts(n).Count * SocketPitch + 20);
     }
     // A card's name at its title size, measured once per drawing pass.
     private readonly Dictionary<string, double> nameWidths = [];
@@ -257,7 +278,7 @@ public partial class MainWindow
     private int TitleLines(UsbNode n)
     {
         if (detail != CardDetail.Full) return 1;
-        double room = WidthFor(n) - (horizontalTree && EdgePorts(n).Count > 0 ? SocketWidth + 6 : 0) - TitleChrome(n);
+        double room = WidthFor(n) - (horizontalTree ? StripDepth(n) : 0) - TitleChrome(n);
         return NameWidth(n) > room ? 2 : 1;
     }
     private double TitleRowHeight(UsbNode n) => TitleHeight + (TitleLines(n) - 1) * TitleLine;
@@ -271,7 +292,7 @@ public partial class MainWindow
         {
             double compact = 2 + 8 + TitleRowHeight(n) + 8 + (n.Kind is "Controller" or "Root hub" ? 20 : CardFigures(n).Parts.Count > 0 ? 17 : 0);
             int sockets = EdgePorts(n).Count;
-            return sockets == 0 ? compact : horizontalTree ? Math.Max(compact, sockets * SocketStep + 12) : compact + 6 + SocketHeight;
+            return sockets == 0 ? compact : horizontalTree ? Math.Max(compact, sockets * SocketStep + 12) : compact + StripDepth(n);
         }
         double height = 2 + 8 + TitleRowHeight(n) + 8;
         if (n.UserLabel.Length > 0) height += 16;
@@ -281,13 +302,14 @@ public partial class MainWindow
         height += 24 * BadgeRows(n, OtherIssues(n));
         if (SharedSockets(n).Count > 0) height += 16;
         int ports = EdgePorts(n).Count;
-        if (ports > 0) height = horizontalTree ? Math.Max(height, ports * SocketStep + 12) : height + 6 + SocketHeight;
+        if (ports > 0) height = horizontalTree ? Math.Max(height, ports * SocketStep + 12) : height + StripDepth(n);
         return height;
     }
     // Lines that badges, after any leading text, wrap onto, estimated from label lengths at the badge font size.
     private int BadgeRows(UsbNode n, IEnumerable<(Severity Severity, string Text)> issues, double lead = 0)
     {
-        double available = WidthFor(n) - 22, x = lead; int rows = lead > 0 ? 1 : 0;
+        // A horizontal card's tag room comes out of the width its rows can use.
+        double available = WidthFor(n) - 22 - (horizontalTree ? TagRoom(n) : 0), x = lead; int rows = lead > 0 ? 1 : 0;
         foreach (var (_, text) in issues)
         {
             double width = 34 + text.Length * 6.4;
@@ -301,7 +323,7 @@ public partial class MainWindow
     private void PrepareGraph()
     {
         appliedQuery = Search.Text.Trim();
-        pathLabels.Clear(); visibleIds.Clear(); matches.Clear(); edgePortCache.Clear(); nameWidths.Clear(); mergedHosts.Clear(); nodeParents.Clear(); socketParts.Clear();
+        pathLabels.Clear(); visibleIds.Clear(); matches.Clear(); edgePortCache.Clear(); tagRooms.Clear(); nameWidths.Clear(); mergedHosts.Clear(); nodeParents.Clear(); socketParts.Clear();
         foreach (var controller in snapshot.Controllers) if (MergedRoot(controller) is UsbNode root) mergedHosts[root.Id] = controller;
         // A merged root hub shares its controller's path, so root ports read H01/03.
         void Visit(UsbNode n, string path)
@@ -415,7 +437,7 @@ public partial class MainWindow
             }
         }
         var edgePorts = DrawsSockets ? EdgePorts(node) : [];
-        var padding = far ? new Thickness(7, 0, 7, 0) : edgePorts.Count == 0 ? new Thickness(10, 8, 10, 8) : horizontalTree ? new Thickness(10, 8, 10 + SocketWidth + 6, 8) : new Thickness(10, 8, 10, 8 + 6 + SocketHeight);
+        var padding = far ? new Thickness(7, 0, 7, 0) : horizontalTree ? new Thickness(10, 8, 10 + StripDepth(node), 8) : new Thickness(10, 8, 10, 8 + StripDepth(node));
         if (far) panel.VerticalAlignment = VerticalAlignment.Center;
         var card = new Border { Width = width, Height = height, Padding = padding, CornerRadius = new CornerRadius(host ? 4 : 8), Background = Brush("NeutralFill"), BorderBrush = Brush("NeutralEdge"), BorderThickness = new Thickness(1), Child = panel, Cursor = Cursors.Hand, Focusable = true, Tag = node, ToolTip = node.DisplayName + "\n" + NodeVisuals.Label(node) + (metric.Length > 0 ? " · " + metric : "") + "\n" + pathLabels[node.Id] + "\n" + node.LocationEvidence };
         System.Windows.Automation.AutomationProperties.SetName(card, node.DisplayName + ", " + NodeVisuals.Label(node) + ", " + metric + ", " + string.Join(" · ", CardIssues(node).Select(i => i.Text)));
@@ -467,16 +489,27 @@ public partial class MainWindow
             Panel.SetZIndex(button, 2); Graph.Children.Add(button);
             (port.Kind == "Empty port" ? portSlots : connectedPorts)[port.Id] = button;
             portAnchors[port.Id] = horizontalTree ? new Point(bounds.Right, cross) : new Point(cross, bounds.Bottom);
-            // A named empty socket has no card to carry its name, so the tag sits just beyond it.
-            if (port.Kind == "Empty port" && port.PortLabel.Length > 0)
+            // A named empty socket has no card to carry its name, so the tag sits just inside the strip: above
+            // the socket, or to its left down a horizontal card's edge, where the strip has made room for it.
+            if (NamedEmpty(port))
             {
-                // Sockets are narrow, so the tag runs right until the next socket with a wire or its own tag.
-                double start = cross - SocketWidth / 2, end = bounds.Right + 40;
-                if (edgePorts.Skip(i + 1).FirstOrDefault(p => p.Kind != "Empty port" || p.PortLabel.Length > 0) is UsbNode next)
-                    end = (horizontalTree ? y : x) + PortOffset(node, next)!.Value - (next.Kind == "Empty port" ? SocketWidth / 2 : 0) - 3;
-                var tag = PortTag(port, horizontalTree ? 90 : Math.Max(SocketWidth, end - start));
-                tag.HorizontalAlignment = HorizontalAlignment.Left;
-                Canvas.SetLeft(tag, horizontalTree ? bounds.Right + 4 : cross - SocketWidth / 2); Canvas.SetTop(tag, horizontalTree ? cross - 7 : bounds.Bottom + 3);
+                FrameworkElement tag;
+                if (horizontalTree)
+                {
+                    // Right-aligned against the socket, so every tag on the card meets its socket at the same gap;
+                    // the tag takes its measured width, as the strip's room was measured, so the two agree.
+                    tag = PortTag(port, TagMaxWidth); tag.Width = TagWidth(port);
+                    Canvas.SetLeft(tag, bounds.Right - SocketWidth - TagGap - tag.Width); Canvas.SetTop(tag, cross - TagHeight / 2);
+                }
+                else
+                {
+                    // Sockets are narrow, so the tag runs right until the next socket in use or with its own tag, or the card's edge.
+                    double start = cross - SocketWidth / 2, end = bounds.Right - 3;
+                    if (edgePorts.Skip(i + 1).FirstOrDefault(p => p.Kind != "Empty port" || NamedEmpty(p)) is UsbNode next)
+                        end = x + PortOffset(node, next)!.Value - SocketWidth / 2 - 3;
+                    tag = PortTag(port, Math.Max(SocketWidth, end - start));
+                    Canvas.SetLeft(tag, start); Canvas.SetTop(tag, bounds.Bottom - SocketHeight - TagGap - TagHeight);
+                }
                 Graph.Children.Add(tag);
             }
         }
