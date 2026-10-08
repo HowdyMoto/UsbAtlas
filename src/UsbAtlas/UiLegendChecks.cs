@@ -9,7 +9,7 @@ public partial class MainWindow
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
         List<StackPanel> Entries(string group) => SocketLegend.Children.OfType<StackPanel>().First(g => g.Children.OfType<TextBlock>().FirstOrDefault()?.Text == group).Children.OfType<StackPanel>().ToList();
-        var speed = Entries("Speed");
+        var speed = Entries("Socket speed");
         Check(speed.Select(e => e.Children.OfType<TextBlock>().Last().Text).SequenceEqual(["USB 2", "5 Gb/s+", "10 Gb/s+"]), "The legend calls blue sockets 5 Gb/s+.");
         Check(speed[1].ToolTip is string blue && blue.Contains("stays blue until a device links to it that fast") && blue.Contains("set its speed")
             && speed[2].ToolTip is string red && red.Contains("A device has linked here that fast") && red.Contains("set the socket's speed"),

@@ -58,7 +58,8 @@ public partial class MainWindow
         string link = ShortSpeed(n);
         // A named fault's badge already says what the status would.
         if (n.Kind == "Unavailable" && issues.Count == 0) parts.Add((null, n.Status, n.Status));
-        else if (n.Kind is "Device" or "Hub") parts.Add((NodeVisuals.Metric.Link, link, link + " link"));
+        // A merged USB 3 hub has two links, each with its own row under its name (AddCardRows), so no one figure stands for both.
+        else if (n.Kind is "Device" || n.Kind == "Hub" && !mergedSides.ContainsKey(n.Id)) parts.Add((NodeVisuals.Metric.Link, link, link + " link"));
         if (ShowsPolling(n))
         {
             string rate = UsbBudgets.PollingRate(n.PollIntervalMs!.Value);
@@ -149,27 +150,31 @@ public partial class MainWindow
     // The node whose card shows this one: a merged root hub is drawn by its controller.
     private UsbNode CardNode(UsbNode n) => mergedHosts.GetValueOrDefault(n.Id) ?? n;
     // A USB 3 hub appears to Windows as a USB 2 hub and a USB 3 hub with the same sockets. When Windows
-    // pairs them, both hang off the same hub, and no other device's connection runs between their two
+    // pairs them, both hang off the same card, and no other device's connection runs between their two
     // ports, they are drawn as one card: the USB 3 side's, with each socket split into its two halves and
     // two connections in, one per side. Otherwise their wires would have to cross, so they keep two cards
     // that mark each other. Merging only draws: either side still selects as itself.
     private readonly Dictionary<string, UsbNode> mergedHubs = [], mergedSides = [];
     private UsbNode DrawnAs(UsbNode n) => mergedHubs.GetValueOrDefault(n.Id) ?? CardNode(n);
     private IEnumerable<UsbNode> Sides(UsbNode n) => mergedSides.TryGetValue(n.Id, out var side) ? [n, side] : [n];
+    // Both sides of the hub on this one's card: a merged card links and unlinks as one stage.
+    private List<UsbNode> CardSides(UsbNode n) => Sides(DrawnAs(n)).ToList();
+    private bool SnappedToParent(UsbNode n) => CardSides(n).Any(s => s.SnapToParentHub);
     private void PrepareMerges()
     {
-        mergedHubs.Clear(); mergedSides.Clear();
+        mergedHubs.Clear(); mergedSides.Clear(); edgePortCache.Clear(); socketParts.Clear();
         bool Shown(UsbNode n) => Visible(n) && (focusedIds == null || focusedIds.Contains(n.Id));
-        foreach (var usb2 in snapshot.Nodes.Where(n => n.Kind == "Hub" && n.IsUsb2Companion && n.CompanionHubId.Length > 0 && !n.SnapToParentHub && Shown(n)))
+        // Outer hubs come first, so the two sides of a hub plugged into a merged one, each on its own side's
+        // port, find themselves on one card.
+        foreach (var usb2 in snapshot.Nodes.Where(n => n.Kind == "Hub" && n.IsUsb2Companion && n.CompanionHubId.Length > 0 && Shown(n)))
         {
-            // Linked hub stages route their own connections, so a pair beside them stays apart.
-            if (snapshot.Nodes.FirstOrDefault(n => n.Id == usb2.CompanionHubId) is not UsbNode usb3 || usb3.SnapToParentHub || !Shown(usb3)
-                || !nodeParents.TryGetValue(usb2.Id, out var parent) || nodeParents.GetValueOrDefault(usb3.Id) != parent
-                || parent.SnapToParentHub || parent.Children.Any(c => c.SnapToParentHub)) continue;
-            var ports = EdgePorts(parent);
+            if (snapshot.Nodes.FirstOrDefault(n => n.Id == usb2.CompanionHubId) is not UsbNode usb3 || !Shown(usb3)
+                || !nodeParents.TryGetValue(usb2.Id, out var parent) || !nodeParents.TryGetValue(usb3.Id, out var otherParent) || DrawnAs(parent).Id != DrawnAs(otherParent).Id) continue;
+            var ports = EdgePorts(DrawnAs(parent));
             int a = ports.IndexOf(usb2), b = ports.IndexOf(usb3);
             if (a < 0 || b < 0 || ports.Skip(Math.Min(a, b) + 1).Take(Math.Abs(a - b) - 1).Any(p => p.Kind != "Empty port" && Shown(p))) continue;
             mergedHubs[usb2.Id] = usb3; mergedSides[usb3.Id] = usb2;
+            edgePortCache.Clear(); socketParts.Clear();
         }
         edgePortCache.Clear(); tagRooms.Clear(); socketParts.Clear();
     }
@@ -199,9 +204,12 @@ public partial class MainWindow
         return edgePortCache[n.Id] = ports;
     }
     // The other half of a port's socket, when Windows pairs them on the same card and each names the other.
+    // A port wired inside an enclosure, from one hub chip to the next, has no companion reported at all, but
+    // the two sides of the hub on it are the two halves of that one socket.
+    private static string SocketCompanion(UsbNode port) => port.CompanionId.Length > 0 ? port.CompanionId : port.Kind == "Hub" && port.CompanionPortNumber == 0 ? port.CompanionHubId : "";
     private UsbNode? SocketPartner(UsbNode port) =>
-        port.CompanionId.Length > 0 && nodeParents.TryGetValue(port.Id, out var hub) && nodeParents.TryGetValue(port.CompanionId, out var otherHub) && DrawnAs(otherHub).Id == DrawnAs(hub).Id
-            && otherHub.Children.FirstOrDefault(c => c.Id == port.CompanionId) is UsbNode other && other.CompanionId == port.Id ? other : null;
+        SocketCompanion(port) is { Length: > 0 } id && nodeParents.TryGetValue(port.Id, out var hub) && nodeParents.TryGetValue(id, out var otherHub) && DrawnAs(otherHub).Id == DrawnAs(hub).Id
+            && otherHub.Children.FirstOrDefault(c => c.Id == id) is UsbNode other && SocketCompanion(other) == port.Id ? other : null;
     // Paths of the cards holding the other halves of this card's sockets. Windows sees a USB 3 hub as a
     // USB 2 hub and a USB 3 hub with the same sockets, and each gets its own card. A hub already labeled
     // as one side of a paired hub doesn't repeat its partner here.
@@ -234,7 +242,7 @@ public partial class MainWindow
         double card = detail == CardDetail.Compact ? CompactWidth : CardWidth;
         // Laid out from the left, a tree is shallow and tall, so width is the spare dimension: a card widens
         // for its name, by up to 100 px, before the name has to wrap or be shortened.
-        if (horizontalTree) card = Math.Clamp(NameWidth(n) + TitleChrome(n) + 2, card, card + 100);
+        if (horizontalTree) card = Math.Clamp(Math.Max(NameWidth(n) + TitleChrome(n) + 2, detail == CardDetail.Full ? LinkRowsWidth(n) : 0), card, card + 100);
         return horizontalTree ? card + StripDepth(n) : Math.Max(card, EdgePorts(n).Count * SocketPitch + 20);
     }
     // A card's name at its title size, measured once per drawing pass.
@@ -245,6 +253,13 @@ public partial class MainWindow
         var text = new FormattedText(NodeVisuals.ShortName(n), System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
             new Typeface((FontFamily)FindResource("UiFont"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), 14, Brushes.Black, 1);
         return nameWidths[n.Id] = text.WidthIncludingTrailingWhitespace;
+    }
+    // A merged USB 3 hub's two link rows at their text size, with the border, padding and swatch beside them.
+    private double LinkRowsWidth(UsbNode usb3)
+    {
+        if (!mergedSides.TryGetValue(usb3.Id, out var usb2)) return 0;
+        var face = new Typeface((FontFamily)FindResource("UiFont"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        return new[] { usb3, usb2 }.Max(side => new FormattedText(LinkRow(side, usb3), System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, face, 12, Brushes.Black, 1).WidthIncludingTrailingWhitespace) + 2 + 20 + 24 + 8;
     }
     // Everything on a title row besides the name: border, padding, icon, fold button and the worst issue's glyph.
     private double TitleChrome(UsbNode n) => 2 + 20 + 27 + (HasFold(n) ? 28 : 0)
@@ -276,8 +291,9 @@ public partial class MainWindow
         double height = 2 + 8 + TitleRowHeight(n) + 8;
         if (n.UserLabel.Length > 0) height += 16;
         if (HubRelationships.CardLabel(n).Length > 0) height += 19;
+        if (mergedSides.ContainsKey(n.Id)) height += 2 * LinkRowHeight;
         height += n.Kind is "Controller" or "Root hub" ? 20 : RowHeight(n, CardFigures(n));
-        if (ShowsMeter(n)) height += 4 + 18;
+        if (MeterShown(n)) height += 4 + 18;
         height += 24 * BadgeRows(n, OtherIssues(n));
         if (SharedSockets(n).Count > 0) height += 16;
         int ports = EdgePorts(n).Count;
@@ -327,7 +343,7 @@ public partial class MainWindow
             if (hit is FrameworkElement { Tag: UsbNode n }) { focusId = n.Id; break; }
         PrepareGraph(); PrepareFocus(); PrepareMerges();
         UpdateDeviceTree();
-        Graph.Children.Clear(); meterSegments.Clear(); partRing = null; cards.Clear(); wires.Clear(); wireHits.Clear(); wireRoutes.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear(); portTags.Clear(); hoveredPortId = null; tagFoldTimer?.Stop();
+        Graph.Children.Clear(); meterSegments.Clear(); partRing = null; cards.Clear(); wires.Clear(); wireHits.Clear(); wireRoutes.Clear(); cables.Clear(); idleLinks.Clear(); internalLinks.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear(); portTags.Clear(); hoveredPortId = null; tagFoldTimer?.Stop();
         var roots = snapshot.Controllers.Where(n => Visible(n) && (focusedIds == null || focusedIds.Contains(n.Id))).ToList();
         const double margin = 16, controllerGap = 24;
         var layouts = ArrangeLayouts(roots);
@@ -342,6 +358,7 @@ public partial class MainWindow
             rowHeight = Math.Max(rowHeight, tree.Height);
             maxRight = Math.Max(maxRight, left - controllerGap + margin);
         }
+        AddHubUnits();
         top += rowHeight + 36;
         Graph.Width = Math.Max(CardWidth + margin * 2, maxRight);
         Graph.Height = Math.Max(200, top);
@@ -349,7 +366,7 @@ public partial class MainWindow
         EmptyMessage.Visibility = cards.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateSelection();
         // The socket legend is redrawn with the graph so it follows the theme.
-        SocketLegend.Children.Clear(); foreach (var entry in NodeVisuals.SocketLegend()) SocketLegend.Children.Add(entry);
+        SocketLegend.Children.Clear(); foreach (var entry in NodeVisuals.SocketLegend(horizontalTree)) SocketLegend.Children.Add(entry);
         SocketLegend.ToolTip = NodeVisuals.SocketLegendHelp;
         if (focusId != null)
         {
@@ -448,7 +465,7 @@ public partial class MainWindow
             var port = edgePorts[i];
             double cross = (horizontalTree ? y : x) + PortOffset(node, port)!.Value;
             // The port's socket with its number on the tongue: cavity filled when in use, hollow when empty.
-            string companion = port.CompanionId.Length > 0 && pathLabels.TryGetValue(port.CompanionId, out var other) ? $"\nShares this socket with port {other}." : "";
+            string companion = (port.CompanionId.Length > 0 ? port.CompanionId : SocketPartner(port)?.Id) is string otherId && pathLabels.TryGetValue(otherId, out var other) ? $"\nShares this socket with port {other}." : "";
             if (HubRelationships.MissingUsb3HubFor(port, snapshot) is UsbNode lostHub)
                 companion += "\n\n" + Explanations.MissingUsb3Half(lostHub, FindPath(lostHub.Id)).What + " Click for what to do.";
             var button = new Button { Content = NodeVisuals.SocketNumber(port), Tag = port, Width = SocketWidth, Height = SocketHeight, Padding = new Thickness(0), Template = NodeVisuals.SocketTemplate(port, socketParts.GetValueOrDefault(port.Id), horizontalTree), Cursor = Cursors.Hand, ToolTip = $"Logical port {port.Port}{(port.PortLabel.Length > 0 ? " · " + port.PortLabel : "")} · {(port.Kind == "Empty port" ? "Empty" : port.DisplayName)}\n{NodeVisuals.SocketLabel(port)} socket\n{port.SocketEvidence}{companion}" };
@@ -499,7 +516,7 @@ public partial class MainWindow
     private const string MissingUsb3Tag = "missing-usb3";
     // Thin marks are hard to point at, so each has an invisible, wider twin that carries its explanation.
     // The twin is tagged with its node, so pressing on it selects instead of panning.
-    private const double HitWidth = 10;
+    private const double HitWidth = 10, WireHoverGrowth = 1.5;
     private const string MissingUsb3HitUid = "missing-usb3-hit", WireHitUid = "wire-hit";
     private readonly Dictionary<string, System.Windows.Shapes.Path> wireHits = [];
     private void ExplainOnHover(FrameworkElement hit, string ringId)
@@ -507,8 +524,18 @@ public partial class MainWindow
         hit.MouseEnter += (_, _) => ShowPart(ringId, true, true);
         hit.MouseLeave += (_, _) => ShowPart(ringId, false, true);
     }
-    // One connection per child, or two for a merged hub, which meet the two halves of its card's entry
-    // edge in the order of their ports; without sockets, the USB 2 side's comes first.
+    // A USB 3 hub is a USB 3 hub and a USB 2 hub in one box, and one cable carries a link to each, which
+    // Windows sees on the two halves of one socket. Where both halves are drawn as one split socket, the two
+    // links run together as that cable: two lines side by side from the socket's middle, each keeping its
+    // own width, dashes and highlight. Keyed both ways, USB 3 side and USB 2 side.
+    private readonly Dictionary<string, string> cables = [];
+    private readonly HashSet<string> idleLinks = [], internalLinks = [];
+    // Wiring between hub chips inside one unit wears the unit's muted ink, so it doesn't read as another cable; a slow link's amber still shows.
+    private string InkFor(UsbNode n) => internalLinks.Contains(n.Id) && NodeVisuals.WireInk(n) == "Wire" ? "UnitEdge" : NodeVisuals.WireInk(n);
+    private const double CableGap = 5;
+    // One connection per child, or two for a merged hub: one cable when its links leave the two halves of one
+    // split socket, or two that meet the two halves of its card's entry edge in the order of their ports when
+    // they don't; without sockets, the USB 2 side's comes first.
     private List<(UsbNode Node, Rect Card, Point? Anchor)> Entries(List<TopologyLayout.Item> children, double left, double top)
     {
         Point? Anchor(UsbNode n) => portAnchors.TryGetValue(n.Id, out var anchor) ? anchor : null;
@@ -517,6 +544,12 @@ public partial class MainWindow
         {
             var rect = new Rect(left + child.X + child.CardX, top + child.Y + child.CardY, WidthFor(child.Node), HeightFor(child.Node));
             if (!mergedSides.TryGetValue(child.Node.Id, out var side)) { entries.Add((child.Node, rect, Anchor(child.Node))); continue; }
+            if (Anchor(side) is Point usb2At && Anchor(child.Node) is Point usb3At && (usb2At - usb3At).Length <= 2 * SocketHeight + 1)
+            {
+                cables[child.Node.Id] = side.Id; cables[side.Id] = child.Node.Id;
+                entries.Add((child.Node, rect, new Point((usb2At.X + usb3At.X) / 2, (usb2At.Y + usb3At.Y) / 2)));
+                continue;
+            }
             var (nearHalf, farHalf) = horizontalTree
                 ? (new Rect(rect.X, rect.Y, rect.Width, rect.Height / 2), new Rect(rect.X, rect.Y + rect.Height / 2, rect.Width, rect.Height / 2))
                 : (new Rect(rect.X, rect.Y, rect.Width / 2, rect.Height), new Rect(rect.X + rect.Width / 2, rect.Y, rect.Width / 2, rect.Height));
@@ -531,9 +564,31 @@ public partial class MainWindow
     // card that holds the other halves of its sockets.
     private void AddCardRows(UsbNode node, StackPanel panel, MetricRow figures, bool host)
     {
-        var relationship = mergedSides.ContainsKey(node.Id) ? "USB 3 hub · USB 2 and USB 3 sides" : HubRelationships.CardLabel(node);
+        // A merged USB 3 hub names its two links, the two lines of its cable, each with a swatch drawn like its
+        // line and what it carries, so the card is the key to the cable and its speed figure can't mislead.
+        bool merged = mergedSides.TryGetValue(node.Id, out var usb2Side);
+        var relationship = merged ? PairLabel(node) : HubRelationships.CardLabel(node);
         if (relationship.Length > 0)
-            panel.Children.Add(new TextBlock { Text = relationship, FontSize = 12, Foreground = Brush("TextSecondary"), Height = 19, ToolTip = HubRelationships.Description(node, snapshot) });
+            panel.Children.Add(new TextBlock { Text = relationship, FontSize = 12, Foreground = Brush("TextSecondary"), Height = 19, TextTrimming = TextTrimming.CharacterEllipsis, Tag = merged ? PairLabelTag : null,
+                ToolTip = merged ? CableHelp(node, usb2Side!) : HubRelationships.Description(node, snapshot) });
+        if (merged)
+            foreach (var side in new[] { node, usb2Side! })
+            {
+                bool idle = !HasDevicesBelow(side);
+                // Docked, so a row that still doesn't fit is shortened with an ellipsis rather than cut off.
+                var row = new DockPanel { Height = LinkRowHeight, Tag = LinkRowTag, Background = Brushes.Transparent, ToolTip = CableHelp(node, usb2Side!) };
+                var swatch = new Canvas { Width = 18, Height = 10, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+                var stroke = new System.Windows.Shapes.Line { X1 = 1.5, X2 = 16.5, Y1 = 5, Y2 = 5, Stroke = Brush(NodeVisuals.WireInk(side)), StrokeThickness = NodeVisuals.WireWidth(side), StrokeDashArray = NodeVisuals.WireDashes(side) };
+                if (idle) NodeVisuals.Dot(stroke);
+                swatch.Children.Add(stroke);
+                DockPanel.SetDock(swatch, Dock.Left); row.Children.Add(swatch);
+                // What the link carries, idle or how many devices, is the row's point, so it's bold.
+                string text = LinkRow(side, node); int cut = text.LastIndexOf(" · ", StringComparison.Ordinal) + 3;
+                var line = new TextBlock { FontSize = 12, Foreground = Brush(idle ? "TextSecondary" : "TextPrimary"), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+                line.Inlines.Add(new System.Windows.Documents.Run(text[..cut])); line.Inlines.Add(new System.Windows.Documents.Run(text[cut..]) { FontWeight = FontWeights.SemiBold });
+                row.Children.Add(line);
+                panel.Children.Add(row);
+            }
         // Under a custom label, keep the detected name visible; where a name came from is in Detection details.
         if (node.UserLabel.Length > 0)
             panel.Children.Add(new TextBlock { Text = "Detected: " + node.Name, FontSize = 11, Foreground = Brush("TextMuted"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0), ToolTip = node.Name + " · " + node.NameSource });
@@ -552,17 +607,20 @@ public partial class MainWindow
             foreach (var (severity, text) in figures.Issues) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 1, 4, 1);  row.Children.Add(badge); }
             panel.Children.Add(row);
         }
-        if (MeterFor(node) is var (_, _, capacity, label))
+        // A merged USB 3 hub has a meter for one link, the one its devices use, and says which.
+        var metered = Metered(node);
+        if (MeterShown(node) && MeterFor(metered) is var (_, _, capacity, label))
         {
-            var meter = NodeVisuals.Meter(MeterParts(node), capacity, label, out var segments);
-            meter.Margin = new Thickness(0, 4, 0, 0); meter.ToolTip = MetricHelp(node);
+            if (merged) label = $"{(metered.IsUsb2Companion ? "USB 2" : "USB 3")} link: {label}";
+            var meter = NodeVisuals.Meter(MeterParts(metered), capacity, label, out var segments);
+            meter.Margin = new Thickness(0, 4, 0, 0); meter.ToolTip = MetricHelp(metered);
             foreach (var (part, segment) in segments)
             {
                 if (!meterSegments.TryGetValue(part.Id, out var list)) meterSegments[part.Id] = list = [];
                 list.Add(segment);
                 var (now, _) = UsbBudgets.ReservedThroughLink(part);
-                segment.ToolTip = $"{part.DisplayName}: {UsbBudgets.Rate(part == node ? node.ReservedMbps ?? 0 : now)} reserved now" + (part == node ? ", the hub's own" : $", up to {UsbBudgets.Rate(Math.Max(now, UsbBudgets.PeakThroughLink(part).Mbps))} at its busiest");
-                if (part != node) { segment.MouseEnter += (_, _) => ShowPart(part.Id, true, true); segment.MouseLeave += (_, _) => ShowPart(part.Id, false, true); }
+                segment.ToolTip = $"{part.DisplayName}: {UsbBudgets.Rate(part == metered ? metered.ReservedMbps ?? 0 : now)} reserved now" + (part == metered ? ", the hub's own" : $", up to {UsbBudgets.Rate(Math.Max(now, UsbBudgets.PeakThroughLink(part).Mbps))} at its busiest");
+                if (part != metered) { segment.MouseEnter += (_, _) => ShowPart(part.Id, true, true); segment.MouseLeave += (_, _) => ShowPart(part.Id, false, true); }
             }
             panel.Children.Add(meter);
         }
@@ -581,14 +639,154 @@ public partial class MainWindow
     private static string SharedSocketsHelp(List<string> shared) => $"Windows sees each USB 3 socket as two logical ports, one USB 2 and one USB 3, and sees a USB 3 hub as two hubs, one for each. This card's ports and those on {string.Join(", ", shared)} are the two halves of the same sockets; each socket's tooltip names its other half.";
     private void AddWire(UsbNode node, List<Point> route)
     {
-        var wire = new System.Windows.Shapes.Path { Data = RoundedRoute(route, 6), Stroke = Brush(NodeVisuals.WireInk(node)), StrokeThickness = NodeVisuals.WireWidth(node), StrokeDashArray = NodeVisuals.WireDashes(node), Tag = node, IsHitTestVisible = false };
+        // A USB 3 hub's cable: its USB 2 link and USB 3 link side by side along one route.
+        if (cables.TryGetValue(node.Id, out var otherId) && mergedSides.TryGetValue(node.Id, out var usb2) && usb2.Id == otherId)
+        {
+            if (BuiltIn(node)) { internalLinks.Add(node.Id); internalLinks.Add(usb2.Id); }
+            DrawWire(usb2, OffsetRoute(route, -CableGap / 2), CableHelp(node, usb2));
+            DrawWire(node, OffsetRoute(route, CableGap / 2), CableHelp(node, usb2));
+            // A link nothing uses now is dotted, lit or not, so an idle USB 3 link reads as idle without hovering.
+            foreach (var side in new[] { node, usb2 })
+                if (!HasDevicesBelow(side)) { idleLinks.Add(side.Id); NodeVisuals.Dot(wires[side.Id]); }
+            return;
+        }
+        DrawWire(node, route, null);
+    }
+    internal const string PairLabelTag = "pair-label", LinkRowTag = "link-row", HubUnitTag = "hub-unit";
+    private const double LinkRowHeight = 17, UnitHeader = 20;
+    // A hub chip behind a built-in port is wired inside the same unit as the hub above it, as several 4-port
+    // chips make a 7- or 10-port hub; Windows reports the port as one nothing can be plugged into.
+    private static bool BuiltIn(UsbNode usb3) => usb3.Connector == "Internal";
+    private bool InUnit(UsbNode usb3) => BuiltIn(usb3) && nodeParents.GetValueOrDefault(usb3.Id) is UsbNode above && mergedSides.ContainsKey(above.Id);
+    // The chips of the unit a merged hub belongs to, from the one its cable plugs into, through those wired in behind it.
+    private List<UsbNode> UnitChips(UsbNode usb3)
+    {
+        var root = usb3;
+        while (InUnit(root)) root = nodeParents[root.Id];
+        var chips = new List<UsbNode>();
+        void Walk(UsbNode chip) { chips.Add(chip); foreach (var next in chip.Children.Where(c => mergedSides.ContainsKey(c.Id) && InUnit(c))) Walk(next); }
+        Walk(root);
+        return chips;
+    }
+    // The ports a unit offers: every chip's, less those wiring its chips together.
+    private static int UnitPorts(List<UsbNode> chips) => chips.Sum(chip => chip.Children.Count(c => !BuiltIn(c)));
+    // Every chip of a unit says which it is and what it hangs from: the first a cable, the rest the chip before them.
+    private string PairLabel(UsbNode usb3)
+    {
+        var chips = UnitChips(usb3);
+        if (chips.Count < 2) return "USB 3 hub · one cable, two links";
+        int k = chips.IndexOf(usb3) + 1;
+        return k == 1 ? $"Hub chip 1 of {chips.Count} · cable to {(Above(usb3)?.Kind is "Root hub" or "Controller" ? "PC" : "hub")}"
+            : $"Hub chip {k} of {chips.Count} · wired to chip {chips.IndexOf(nodeParents[usb3.Id]) + 1}";
+    }
+    private UsbNode? Above(UsbNode side) => nodeParents.GetValueOrDefault(side.Id);
+    private static bool HasDevicesBelow(UsbNode side) => DevicesBelow(side) > 0;
+    // Everything a link carries: the devices plugged into this side and into every hub behind it.
+    private static int DevicesBelow(UsbNode side) => side.Children.Sum(c => c.Kind == "Hub" ? DevicesBelow(c) : c.Kind == "Empty port" ? 0 : 1);
+    // The side whose link a merged USB 3 hub's meter shows: its USB 3 link's, unless only its USB 2 link carries anything.
+    private UsbNode Metered(UsbNode n) => mergedSides.TryGetValue(n.Id, out var usb2) && !HasDevicesBelow(n) && HasDevicesBelow(usb2) ? usb2 : n;
+    // A USB 3 hub with nothing plugged in on either link has nothing on its meter worth showing.
+    private bool MeterShown(UsbNode n) => ShowsMeter(Metered(n)) && !(mergedSides.TryGetValue(n.Id, out var usb2) && !HasDevicesBelow(n) && !HasDevicesBelow(usb2));
+    // A link row names the port its link comes from by whose it is, the PC's or a chip's, so a chip's own ports
+    // aren't mistaken for where it hangs from.
+    private string LinkRow(UsbNode side, UsbNode usb3)
+    {
+        int devices = DevicesBelow(side);
+        string carries = devices > 0 ? Devices(devices) : "idle";
+        var above = Above(side);
+        var aboveCard = above == null ? null : mergedHubs.GetValueOrDefault(above.Id) ?? above;
+        var chips = UnitChips(usb3);
+        string owner = above?.Kind is "Root hub" or "Controller" ? "PC" : aboveCard != null && chips.Count > 1 && chips.Contains(aboveCard) ? $"chip {chips.IndexOf(aboveCard) + 1}" : "hub";
+        return $"{(side.IsUsb2Companion ? "USB 2" : "USB 3")} link · {owner} port {side.Port:00} · {ShortSpeed(side)} · {carries}";
+    }
+    // Hub chips wired together inside one unit share an outline around their cards and the wiring between them, named
+    // with what the scan shows: how many chips and how many ports they offer. A user's own linked stages are framed
+    // already in the vertical layout, so there they're left as they are.
+    private void AddHubUnits()
+    {
+        foreach (var root in mergedSides.Keys.Select(id => snapshot.Nodes.FirstOrDefault(n => n.Id == id)).OfType<UsbNode>().Where(n => !InUnit(n) && cards.ContainsKey(n.Id)))
+        {
+            var chips = UnitChips(root).Where(c => cards.ContainsKey(c.Id)).ToList();
+            if (chips.Count < 2 || !horizontalTree && chips.Any(c => c.SnapToParentHub || mergedSides[c.Id].SnapToParentHub)) continue;
+            Geometry outline = Geometry.Empty;
+            void Add(Rect r) { r.Inflate(12, 12); outline = new CombinedGeometry(GeometryCombineMode.Union, outline, new RectangleGeometry(r, 12, 12)); }
+            foreach (var chip in chips)
+            {
+                var (card, at) = cards[chip.Id];
+                // The first chip's band reaches above it, to carry the unit's header.
+                Add(chip == root ? new Rect(at.X, at.Y - UnitHeader, card.Width, card.Height + UnitHeader) : new Rect(at, new Size(card.Width, card.Height)));
+                if (chip != root)
+                    foreach (var link in new[] { chip.Id, mergedSides[chip.Id].Id }.Where(wireRoutes.ContainsKey))
+                    {
+                        var route = wireRoutes[link];
+                        Add(new Rect(new Point(route.Min(p => p.X), route.Min(p => p.Y)), new Point(route.Max(p => p.X), route.Max(p => p.Y))));
+                    }
+            }
+            string upstream = Above(root)?.Kind is "Root hub" or "Controller" ? "the PC" : "a hub";
+            string help = $"One hub unit: {chips.Count} hub chips wired together inside one box, offering {UnitPorts(chips)} ports, on one cable to {upstream}. Windows reports the port joining each chip to the one before it as built in, with nothing to plug into, so the muted double lines inside this band are wiring between chips, not cables. Many 7- and 10-port hubs are built this way from 4-port chips; everything plugged in shares the cable into the first chip.";
+            // A filled band with no edge, so nothing about it can be mistaken for a connection.
+            var frame = new System.Windows.Shapes.Path { Data = outline, Fill = Brush("UnitFill"), Tag = HubUnitTag, ToolTip = help };
+            Panel.SetZIndex(frame, -1); Graph.Children.Add(frame);
+            // The header names the unit in the band above its first chip, as a card names itself.
+            var first = cards[root.Id];
+            // It stays within the first chip's width, shortened on smaller cards, so it never runs over a neighbor.
+            var header = new DockPanel { Width = first.Card.Width - 4, Tag = HubUnitTag, ToolTip = help, Background = Brushes.Transparent };
+            var icon = NodeVisuals.Symbol("device_hub", Brush("TextSecondary"), 14); icon.Margin = new Thickness(0, 0, 6, 0);
+            DockPanel.SetDock(icon, Dock.Left); header.Children.Add(icon);
+            header.Children.Add(new TextBlock { Text = detail == CardDetail.Full ? $"One hub unit · {chips.Count} chips · {UnitPorts(chips)} ports · one cable to {upstream}" : $"Hub unit · {chips.Count} chips",
+                FontSize = detail == CardDetail.Full ? 12 : 11, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary"), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+            Canvas.SetLeft(header, first.Point.X + 2); Canvas.SetTop(header, first.Point.Y - UnitHeader - 12 + 7);
+            Panel.SetZIndex(header, 2); Graph.Children.Add(header);
+        }
+    }
+    private static string Devices(int n) => n == 1 ? "1 device" : $"{n} devices";
+    private static string CableHelp(UsbNode usb3, UsbNode usb2)
+    {
+        string uses = (HasDevicesBelow(usb3), HasDevicesBelow(usb2)) switch
+        {
+            (false, false) => "Nothing is plugged into it yet, so both lines are dotted.",
+            (false, true) => "Everything plugged in here uses the USB 2 link, so the USB 3 line is dotted: nothing uses it now.",
+            (true, false) => "Everything plugged in here uses the USB 3 link, so the USB 2 line is dotted: nothing uses it now.",
+            _ => "Some of what's plugged in here uses the USB 3 link and some the USB 2 link."
+        };
+        string what = BuiltIn(usb3)
+            ? $"Two links inside one unit. This hub chip is built in: the hub above reports its port {usb3.Port:00} as one nothing can be plugged into, so the two are wired together inside the same box, as a 7- or 10-port hub is made of several 4-port chips. Like every USB 3 hub, this chip is a USB 3 hub and a USB 2 hub in one, with a link to each"
+            : "One cable, two links. A USB 3 hub is two hubs in one box, a USB 3 hub and a USB 2 hub, and its cable carries a link to each";
+        return $"{what}. Windows sees them as two connections: port {usb3.Port:00} for USB 3 at {ShortSpeed(usb3)}, the thicker line, and port {usb2.Port:00} for USB 2 at {ShortSpeed(usb2)}.\n\n"
+            + $"Each device plugged into the hub uses the link that matches its speed. {uses}\n\nSelecting a device lights the link it uses.";
+    }
+    // A route moved sideways by a fixed distance, to run beside the original; corners keep the distance on both legs.
+    private static List<Point> OffsetRoute(List<Point> route, double distance)
+    {
+        static Vector Normal(Point a, Point b) { var v = b - a; if (v.Length < 1e-9) return new Vector(); v.Normalize(); return new Vector(-v.Y, v.X); }
+        var result = new List<Point>(route.Count);
+        for (int i = 0; i < route.Count; i++)
+        {
+            Vector before = i > 0 ? Normal(route[i - 1], route[i]) : Normal(route[i], route[Math.Min(i + 1, route.Count - 1)]);
+            Vector after = i < route.Count - 1 ? Normal(route[i], route[i + 1]) : before;
+            if (before.Length < 1e-9) before = after; if (after.Length < 1e-9) after = before;
+            double dot = before * after;
+            result.Add(route[i] + (before + after) * (distance / (1 + Math.Max(dot, -0.5))));
+        }
+        return result;
+    }
+    private void DrawWire(UsbNode node, List<Point> route, string? cableHelp)
+    {
+        var wire = new System.Windows.Shapes.Path { Data = RoundedRoute(route, 6), Stroke = Brush(InkFor(node)), StrokeThickness = NodeVisuals.WireWidth(node), StrokeDashArray = NodeVisuals.WireDashes(node), Tag = node, IsHitTestVisible = false };
         Graph.Children.Add(wire); wires[node.Id] = wire; wireRoutes[node.Id] = route;
         var parent = nodeParents.GetValueOrDefault(node.Id);
         string from = parent == null ? "its host" : $"{NodeVisuals.ShortName(DrawnAs(parent))} port {node.Port:00}";
-        var hit = new System.Windows.Shapes.Path { Data = wire.Data, Stroke = Brushes.Transparent, StrokeThickness = HitWidth, Tag = node, Uid = WireHitUid, Cursor = Cursors.Hand, ToolTip = Explanations.LinkHelp(node, from) };
+        string help = Explanations.LinkHelp(node, from, FindPath(node.Id)) + (cableHelp != null ? "\n\n" + cableHelp : "");
+        var hit = new System.Windows.Shapes.Path { Data = wire.Data, Stroke = Brushes.Transparent, StrokeThickness = HitWidth, Tag = node, Uid = WireHitUid, Cursor = Cursors.Hand, ToolTip = help };
         System.Windows.Automation.AutomationProperties.SetName(hit, $"Connection to {node.DisplayName}");
         ExplainOnHover(hit, node.Id);
-        hit.MouseLeftButtonDown += (_, e) => { SelectNode(node); e.Handled = true; };
+        // The line thickens under the pointer, so it's plain that lines can be pointed at, as cards can.
+        double width = wire.StrokeThickness;
+        hit.MouseEnter += (_, _) => wire.StrokeThickness = width + WireHoverGrowth;
+        hit.MouseLeave += (_, _) => wire.StrokeThickness = width;
+        // A slow link opens what it means and what to do, as its card's warning does; any other selects its device.
+        bool slow = HubRelationships.ReducedSpeed(node);
+        hit.MouseLeftButtonDown += (_, e) => { if (slow) OpenExplanation(node, Explanations.SpeedLabel(node)); else SelectNode(node); e.Handled = true; };
         Graph.Children.Add(hit); wireHits[node.Id] = hit;
     }
     // Softened corners make orthogonal routes read as cables.
@@ -654,10 +852,18 @@ public partial class MainWindow
         fade.Completed += (_, _) => Graph.Children.Remove(ring);
         ring.BeginAnimation(OpacityProperty, fade);
     }
+    // The path to the selection, lit on the graph. A USB 3 hub's card is both of its sides, so both of their
+    // paths light, and with them both links of its cable; a device behind it lights only the link it uses.
+    private HashSet<string> SelectedChain()
+    {
+        var chain = FindPath(selected?.Id ?? "").Select(n => n.Id).ToHashSet();
+        if (selected != null && mergedSides.TryGetValue(selected.Id, out var usb2)) chain.UnionWith(FindPath(usb2.Id).Select(n => n.Id));
+        return chain;
+    }
     private void UpdateSelection(bool revealInTree = false)
     {
         SyncTreeSelection(revealInTree);
-        var chain = FindPath(selected?.Id ?? "").Select(n => n.Id).ToHashSet();
+        var chain = SelectedChain();
         foreach (var (id, item) in cards)
         {
             var node = (UsbNode)item.Card.Tag;
@@ -673,7 +879,7 @@ public partial class MainWindow
             item.Card.Effect = chosen ? new System.Windows.Media.Effects.DropShadowEffect { Color = ((SolidColorBrush)Brush("Accent")).Color, BlurRadius = 14, ShadowDepth = 0, Opacity = 0.75 } : null;
         }
         // The selected path recolors its connections; their widths and dashes keep saying what each link is.
-        foreach (var (id, wire) in wires) wire.Stroke = Brush(chain.Contains(id) ? "Accent" : NodeVisuals.WireInk((UsbNode)wire.Tag));
+        foreach (var (id, wire) in wires) { wire.Stroke = Brush(chain.Contains(id) ? "Accent" : InkFor((UsbNode)wire.Tag)); }
         // An occupied socket's cavity fills in the color of its wire, as a plug would, accent on the selected
         // path; an empty one stays hollow, so occupancy reads even on folded hubs. Tongues keep their color.
         foreach (var (id, slot) in connectedPorts)

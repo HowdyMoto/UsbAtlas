@@ -9,7 +9,7 @@ public partial class MainWindow
         if (horizontalTree || first.Kind != "Hub") return [];
         var members = new List<UsbNode> { first };
         var current = first;
-        while (Children(current).FirstOrDefault(n => n.Kind == "Hub" && n.SnapToParentHub) is UsbNode next && !members.Contains(next))
+        while (Children(current).FirstOrDefault(n => n.Kind == "Hub" && SnappedToParent(n)) is UsbNode next && !members.Contains(next))
         { members.Add(next); current = next; }
         return members;
     }
@@ -22,14 +22,20 @@ public partial class MainWindow
         Canvas.SetLeft(enclosure, firstX - 10); Canvas.SetTop(enclosure, top); Panel.SetZIndex(enclosure, -1); Graph.Children.Add(enclosure);
         foreach (var stage in stages) Place(stage, left + stage.X, top + stage.Y);
         // Each link steps just below its socket and across into the next stage's left edge, level with that
-        // stage's sockets, so the chain reads as one short hand-off.
+        // stage's sockets, so the chain reads as one short hand-off. A merged stage has a link from each half
+        // of its socket: the outer half's wraps around the inner's, lower, turning nearer the card and
+        // entering it below, so the two never cross.
         for (int i = 1; i < stages.Count; i++)
         {
             var child = stages[i].Node;
-            snappedWires.Add(child.Id);
-            if (!portAnchors.TryGetValue(child.Id, out var start)) continue;
-            var card = cards[child.Id]; double lane = start.Y + 10, entryX = card.Point.X - 12, entryY = card.Point.Y + card.Card.Height - NodeVisuals.SocketHeight / 2;
-            AddWire(child, [start, new Point(start.X, lane), new Point(entryX, lane), new Point(entryX, entryY), new Point(card.Point.X, entryY)]);
+            var card = cards[child.Id]; double entryX = card.Point.X - 12, entryY = card.Point.Y + card.Card.Height - NodeVisuals.SocketHeight / 2;
+            var links = Sides(child).Where(s => portAnchors.ContainsKey(s.Id)).OrderByDescending(s => portAnchors[s.Id].X).ToList();
+            foreach (var side in Sides(child)) snappedWires.Add(side.Id);
+            for (int k = 0; k < links.Count; k++)
+            {
+                var start = portAnchors[links[k].Id]; double lane = start.Y + 10 + k * 8, x = entryX + k * 6, y = entryY - (links.Count - 1 - k) * 8;
+                AddWire(links[k], [start, new Point(start.X, lane), new Point(x, lane), new Point(x, y), new Point(card.Point.X, y)]);
+            }
         }
         // Every stage's devices, in one row, each connected from its own socket; connections turn below the frame.
         var entries = Entries(layout.Children, left, top);
@@ -58,11 +64,13 @@ public partial class MainWindow
             return;
         }
         Text("Arrange hub stages", 14);
-        var action = new Button { Content = node.SnapToParentHub ? "Unlink from upstream hub" : "Snap to upstream hub", Tag = "snap-upstream-hub", Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Left, ToolTip = parent.DisplayName };
+        bool linked = SnappedToParent(node);
+        var action = new Button { Content = linked ? "Unlink from upstream hub" : "Snap to upstream hub", Tag = "snap-upstream-hub", Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Left, ToolTip = parent.DisplayName };
         action.Click += (_, _) =>
         {
-            bool enabled = !node.SnapToParentHub;
-            if (!deviceLabels.TrySetSnap(node, snapshot, enabled, out var message)) { StatusText.Text = message; return; }
+            bool enabled = !linked;
+            foreach (var side in CardSides(node))
+                if (!deviceLabels.TrySetSnap(side, snapshot, enabled, out var message)) { StatusText.Text = message; return; }
             // Stages are drawn only in the vertical layout, so linking one makes it the remembered layout; they
             // show at full size, framed on this hub, since a far view draws the real hierarchy instead.
             horizontalTree = false; ShowLayoutChoice();

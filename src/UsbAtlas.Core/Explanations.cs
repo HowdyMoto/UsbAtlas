@@ -265,24 +265,33 @@ internal static class Explanations
         return new(what, speed.Affects, speed.Cause, speed.Steps);
     }
 
-    // A connection on the canvas: what its width, dashes and color say about the link it stands for.
-    internal static string LinkHelp(UsbNode n, string fromPath)
+    // A connection on the canvas. Pointing at a line asks "what's going on here?", so a slow link leads with what's
+    // wrong, whether it matters now and why, as Properties would, and only then says how the line is drawn; a link
+    // that's fine says where it runs and how fast, then what its width means.
+    internal static string LinkHelp(UsbNode n, string fromPath, IReadOnlyList<UsbNode> path)
     {
         string rate = n.LinkMbps switch { 1.5 => "1.5 Mb/s (low speed)", 12 => "12 Mb/s (full speed, USB 1)", 480 => "480 Mb/s (high speed, USB 2)", 5000 => "5 Gb/s (SuperSpeed, USB 3)",
             _ => n.Speed.StartsWith("SuperSpeedPlus", StringComparison.Ordinal) ? "10 Gb/s or faster (SuperSpeedPlus)" : "an unreported rate" };
-        var lines = new List<string>
-        {
-            $"{Topology.ShortName(n)} connects to {fromPath} at {rate}.",
-            "Width is the negotiated link rate, the most the connection can signal, shared with everything upstream. Wider is faster: 12 Mb/s, 480 Mb/s, 5 Gb/s and 10 Gb/s+.",
-        };
+        string name = Topology.ShortName(n);
         if (HubRelationships.ReducedSpeed(n))
-            lines.Add($"Dashed: it runs slower than it supports ({SpeedLabel(n)}). " + (SpeedSeverity(n) == Severity.Warning
-                ? "Amber because that slows something plugged in now."
-                : n.Connector == "Internal" ? "Gray because it's built in, so there's nothing to change."
-                : "Gray because nothing plugged in is slowed by it now."));
-        lines.Add("It turns blue along the path to the selected card.");
-        lines.Add($"Click to select {Topology.ShortName(n)}.");
-        return string.Join("\n", lines);
+        {
+            var speed = Speed(n, path);
+            var lines = new List<string> { $"{SpeedLabel(n)}: {speed.What}" };
+            if (speed.Affects.Length > 0) lines.Add(speed.Affects);
+            if (speed.Cause.Length > 0) lines.Add("Likely cause: " + speed.Cause);
+            lines.Add("");
+            lines.Add($"{name} connects to {fromPath} at {rate}. Dashed because it runs slower than it supports; "
+                + (SpeedSeverity(n) == Severity.Warning ? "amber because that slows something plugged in now."
+                    : n.Connector == "Internal" ? "gray because it's built in, so there's nothing to change."
+                    : "gray because nothing plugged in is slowed by it now."));
+            lines.Add($"Click for what to do.");
+            return string.Join("\n", lines);
+        }
+        return string.Join("\n",
+            $"{name} connects to {fromPath} at {rate}.",
+            "Width is the negotiated link rate, the most the connection can signal, shared with everything upstream. Wider is faster: 12 Mb/s, 480 Mb/s, 5 Gb/s and 10 Gb/s+.",
+            "It's lit teal along the path to the selected card.",
+            $"Click to select {name}.");
     }
 
     // path runs from the host controller down to n.

@@ -806,13 +806,20 @@ public partial class MainWindow : Window
         var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = File.Create(filename); png.Save(stream);
     }
-    // --render --select TEXT previews Properties for the first node whose search text matches.
+    // --render --select TEXT previews Properties for the first node whose search text matches; --focus TEXT first
+    // focuses that node's branch, as Focus branch does, so one hub on a busy computer previews at full detail.
     public string? RenderSelection { get; init; }
+    public string? RenderFocus { get; init; }
     private async Task RenderPreview()
     {
         await Task.Delay(400);
         OpenInitialView(); UpdateLayout();
-        if (RenderSelection != null && snapshot.Nodes.FirstOrDefault(n => Topology.SearchText(n, pathLabels.GetValueOrDefault(n.Id)).Contains(RenderSelection, StringComparison.OrdinalIgnoreCase)) is UsbNode chosen)
+        UsbNode? Find(string text) => snapshot.Nodes.FirstOrDefault(n => Topology.SearchText(n, pathLabels.GetValueOrDefault(n.Id)).Contains(text, StringComparison.OrdinalIgnoreCase));
+        if (RenderFocus != null && Find(RenderFocus) is UsbNode branch)
+        {
+            SelectNode(branch); FocusBranchClick(this, new RoutedEventArgs()); selected = null; UpdateSelection(); UpdateLayout();
+        }
+        if (RenderSelection != null && Find(RenderSelection) is UsbNode chosen)
         {
             SelectNode(chosen); UpdateLayout();
         }

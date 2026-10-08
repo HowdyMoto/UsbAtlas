@@ -98,6 +98,21 @@ public partial class MainWindow
             var wire = wireHits[monitor.Children[0].Id];
             Check(((string)wire.ToolTip).Contains("480 Mb/s") && ((string)wire.ToolTip).Contains("Width is the negotiated link rate"), "A connection's tooltip must give its rate and what its width means.");
             Check(((string)wireHits[monitor.Id].ToolTip).Contains("Dashed"), "A slow connection's tooltip must say why it's dashed.");
+            // Pointing at a slow line answers what's wrong first, then whether it matters and why; clicking it opens what to do.
+            var slowTip = (string)wireHits[monitor.Id].ToolTip;
+            Check(slowTip.StartsWith(Explanations.SpeedLabel(monitor) + ": ", StringComparison.Ordinal) && slowTip.Contains("Likely cause: ") && slowTip.IndexOf("Dashed", StringComparison.Ordinal) > slowTip.IndexOf("Likely cause", StringComparison.Ordinal),
+                "A slow connection's tooltip must lead with its status and cause, before how it's drawn.");
+            Check(!slowTip.Contains("blue"), "Selection is teal; a connection's tooltip mustn't call it blue.");
+            openExplanations.Clear(); SelectNode(monitor.Children[0]); UpdateLayout();
+            wireHits[monitor.Id].RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left) { RoutedEvent = MouseLeftButtonDownEvent });
+            UpdateLayout();
+            Check(selected == monitor && openExplanations.Contains(Explanations.SpeedLabel(monitor)), "Clicking a slow connection must select its hub and open what its slow link means.");
+            // A line thickens under the pointer, so it reads as something to point at, and settles back after.
+            double resting = wires[monitor.Id].StrokeThickness;
+            wireHits[monitor.Id].RaiseEvent(new System.Windows.Input.MouseEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0) { RoutedEvent = MouseEnterEvent });
+            Check(wires[monitor.Id].StrokeThickness > resting, "A connection must thicken under the pointer.");
+            wireHits[monitor.Id].RaiseEvent(new System.Windows.Input.MouseEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0) { RoutedEvent = MouseLeaveEvent });
+            Check(wires[monitor.Id].StrokeThickness == resting, "A connection must settle back when the pointer leaves.");
 
             // Properties for the empty half leads with what it's for and offers the hub.
             SelectNode(snapshot.Nodes.First(n => n.Id == "demo/root/7")); UpdateLayout();
@@ -124,7 +139,7 @@ public partial class MainWindow
             // The legend names the stub and every card color.
             UpdateLayout();
             var legendText = string.Join(" ", VisualDescendants(SocketLegend).OfType<TextBlock>().Select(t => t.Text));
-            Check(legendText.Contains("USB 3 side not connected") && new[] { "Input", "Gaming", "Audio", "Video", "Storage", "Connectivity" }.All(legendText.Contains),
+            Check(legendText.Contains("USB 3 link not connected") && new[] { "Input", "Gaming", "Audio", "Video", "Storage", "Connectivity" }.All(legendText.Contains),
                 "The legend must name the missing USB 3 side's stub and what each card color means.");
             Check(VisualDescendants(SocketLegend).OfType<StackPanel>().Where(p => p.ToolTip != null).Count() >= 10, "Each link and color entry in the legend must explain itself.");
         }
