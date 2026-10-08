@@ -202,9 +202,11 @@ internal static class Reports
         if (n.Kind is "Device" or "Hub" or "Root hub" or "Controller")
             node["powerSaving"] = J.Obj(("setting", Topology.PowerSavingText(Topology.MergedRoot(n) ?? n, s.Snapshot)), ("plan", PowerSaving.PlanSummary(s.Snapshot)),
                 ("canWakeComputer", n.Kind is "Device" or "Hub" ? n.WakeSetting : null), ("wokeComputerAt", n.WokeComputerAt?.ToString("yyyy-MM-dd HH:mm")));
+        // What the reservation can do, and why that means its link can or can't fill, as the app's cards say it.
         if (n.ReservedMbps != null || n.PollIntervalMs != null || n.OpenPipes.Count > 0)
             node["bandwidth"] = J.Obj(("reservedMbps", J.N(n.ReservedMbps, 4)), ("peakReservedMbps", J.N(n.PeakReservedMbps, 4)),
                 ("pollIntervalMs", J.N(n.PollIntervalMs)), ("pollingRate", n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : null),
+                ("reservation", n.Kind == "Device" ? ReservationKind(n) : null), ("note", n.Kind == "Device" ? ReservationNote(s, n) : null),
                 ("openPipes", J.Some(n.OpenPipes.Select(x => (JsonNode)x))));
         if (n.Kind is "Hub" or "Root hub" or "Controller")
         {
@@ -292,6 +294,10 @@ internal static class Reports
         return report;
     }
 
+    // "fixed", "none", "streaming" or "unknown": what a device's reservation can do.
+    private static string ReservationKind(UsbNode n) => UsbBudgets.ReservationOf(n).ToString().ToLowerInvariant();
+    private static string ReservationNote(Session s, UsbNode n) => string.Join(" ", new[] { UsbBudgets.ReservationNote(n), UsbBudgets.LinkSharing(n, s.Parent(n)) }.Where(x => x.Length > 0));
+
     private static JsonObject BudgetOf(Session s, UsbNode n)
     {
         var o = Ref(s, n);
@@ -301,7 +307,8 @@ internal static class Reports
             o["link"] = J.Obj(("rate", Topology.ShortSpeed(n)), ("reservableMbps", J.N(capacity, 2)), ("reservedNowMbps", J.N(reserved, 4)), ("peakMbps", J.N(peak, 4)),
                 ("nowShare", UsbBudgets.Share(reserved, capacity)), ("peakShare", UsbBudgets.Share(peak, capacity)),
                 ("unreportedDevices", unknown > 0 ? unknown : null),
-                ("state", UsbBudgets.LinkNearlyFull(n) ? "nearly full" : UsbBudgets.CouldExceedWhenStreaming(n) ? "could exceed when streaming" : "fits"));
+                ("state", UsbBudgets.LinkNearlyFull(n) ? "nearly full" : UsbBudgets.CouldExceedWhenStreaming(n) ? "could exceed when streaming" : "fits"),
+                ("reservation", n.Kind == "Device" ? ReservationKind(n) : null), ("note", n.Kind == "Device" ? ReservationNote(s, n) : null));
             // A hub's own status pipe reserves a few bits per second; under 1 kb/s isn't worth listing.
             var contributors = (n.Kind == "Hub" ? n.Walk() : [n]).Where(d => d.Kind is "Device" or "Hub" && Math.Max(d.ReservedMbps ?? 0, d.PeakReservedMbps ?? 0) >= 0.001)
                 .OrderByDescending(d => Math.Max(d.PeakReservedMbps ?? 0, d.ReservedMbps ?? 0)).ToList();

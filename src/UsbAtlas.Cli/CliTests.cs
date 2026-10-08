@@ -122,6 +122,14 @@ internal static class CliTests
         // Waking: show reports the setting, search finds devices that can, and issues opens with the last wake.
         Check(Reports.Show(s, s.Resolve("Mechanical keyboard"))["node"]!["powerSaving"]!["canWakeComputer"]!.ToString() == "On" && s.Find("wakes computer").Select(n => n.Name).Order().SequenceEqual(["Mechanical keyboard", "Wireless mouse receiver"]),
             "show reports whether a device can wake the computer, and search finds those that can.");
+        // Why a keyboard's link never fills while a camera's can, in the same words as the app's cards.
+        var keyboardBandwidth = Reports.Show(s, s.Resolve("Mechanical keyboard"))["node"]!["bandwidth"]!;
+        Check(keyboardBandwidth["reservation"]!.ToString() == "fixed" && keyboardBandwidth["note"]!.ToString().Contains("can't grow, so its own link never fills") && keyboardBandwidth["note"]!.ToString().EndsWith("It's on a port of the computer itself, so nothing shares its link.")
+            && Reports.Show(s, s.Resolve("Portable SSD"))["node"]!["bandwidth"]!["reservation"]!.ToString() == "none" && Reports.Show(s, s.Resolve("Portable SSD"))["node"]!["bandwidth"]!["note"]!.ToString().Contains("Studio desktop hub's link")
+            && Reports.Show(s, s.Resolve("Studio camera"))["node"]!["bandwidth"]!["reservation"]!.ToString() == "streaming" && Reports.Show(s, s.Resolve("Studio desktop hub"))["node"]!["bandwidth"]!["reservation"] == null,
+            "show says whether a device's reservation is fixed, nothing or streams, why its link can or can't fill, and whose link it shares.");
+        var keyboardBudget = Reports.Budget(s, s.Resolve("Mechanical keyboard"))["nodes"]![0]!["link"]!;
+        Check(keyboardBudget["reservation"]!.ToString() == "fixed" && keyboardBudget["note"]!.ToString().StartsWith("It holds 6.4 kb/s"), "budget says the same for a device.");
         var woken = DemoData.Create();
         var wakingMouse = woken.Nodes.First(n => n.Name == "Wireless mouse receiver");
         wakingMouse.InstanceId = @"USB\VID_046D&PID_C52B\5&1&0&4";

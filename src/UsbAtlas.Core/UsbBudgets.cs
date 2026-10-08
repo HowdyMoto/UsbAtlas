@@ -94,6 +94,59 @@ internal static class UsbBudgets
         return (reserved, capacity, unknown);
     }
 
+    // What a device's reservation can do, which decides whether its own link is worth watching. A device
+    // that streams reserves little while idle and far more while active, so its link can fill. An input
+    // device holds the same small slice idle or busy, set by how often it's polled and how much it can
+    // send each poll, so its own link never fills; what it adds counts on the hub above it. Drives and
+    // other bulk devices reserve nothing at all.
+    internal enum Reservation { Unknown, None, Fixed, Streaming }
+    // Headroom between a device's idle and busiest settings that marks it as one that streams.
+    internal const double StreamingHeadroomMbps = 0.5;
+    internal static Reservation ReservationOf(UsbNode n)
+    {
+        if (n.Kind is not ("Device" or "Hub") || n.ReservedMbps is not double now) return Reservation.Unknown;
+        double peak = Math.Max(now, n.PeakReservedMbps ?? 0);
+        if (peak <= 0) return Reservation.None;
+        return peak - now >= StreamingHeadroomMbps || n.DeviceType is "Audio" or "Camera / video" ? Reservation.Streaming : Reservation.Fixed;
+    }
+
+    // What a device's reservation means for its link, in plain words: why a keyboard's or a drive's link
+    // never fills while a microphone's can, or why that isn't known. The card's figures and `show` say it.
+    internal static string ReservationNote(UsbNode n)
+    {
+        if (n.ReservedMbps is not double now)
+            return n.Kind == "Hub" ? "Windows didn't report this hub's open pipes, so what it and the devices behind it reserve isn't known."
+                : "Windows didn't report which of its pipes are open, so what it reserves isn't known.";
+        double peak = Math.Max(now, n.PeakReservedMbps ?? 0);
+        // "6.4 kb/s, <1% of the 10.8 Mb/s this link can set aside", or the rate alone when the link's rate isn't known.
+        string Of(double mbps) => ReservableMbps(n) is double capacity ? $"{Rate(mbps)}, {Share(mbps, capacity).Split(' ')[0]} of the {Rate(capacity)} this link can set aside" : Rate(mbps);
+        return ReservationOf(n) switch
+        {
+            Reservation.None => "It reserves no bus time: it has no timed pipes open, the kind audio, video and input devices use. "
+                + (DeviceIdentity.IsStorage(n.DeviceType) ? "A drive moves its data in bulk transfers, which take whatever time the link has left, so its speed depends on what else is busy on the same hub and controller."
+                    : "Anything it moves goes in bulk or control transfers, which take whatever time the link has left."),
+            Reservation.Fixed => (now > 0 ? $"It holds {Of(now)}, the same whether it's idle or in use." : $"Nothing on it is open now; its timed pipes hold {Of(peak)} when they are, idle or in use.")
+                + " That's set by how often it's polled and how much it can send each poll, and it can't grow, so its own link never fills.",
+            Reservation.Streaming => peak > now + 0.01 ? $"It holds {Rate(now)} now and up to {Of(peak)} at its busiest, so its link fills as it streams."
+                : $"It holds {Of(now)}, as much as it reserves at its busiest.",
+            _ => ""
+        };
+    }
+
+    // Whose link a device's reservation also counts against: the hub above it, whose upstream link everything
+    // on that hub shares, and on a single-TT hub the one 12 Mb/s bus its slower devices share; or nothing, on a
+    // port of the computer itself.
+    internal static string LinkSharing(UsbNode n, UsbNode? above)
+    {
+        if (above == null || n.Kind != "Device") return "";
+        if (above.Kind != "Hub") return "It's on a port of the computer itself, so nothing shares its link.";
+        string hub = Topology.ShortName(above);
+        string text = $"What it adds to {hub}'s link, which everything on that hub shares, counts there";
+        return above.TransactionTranslators == "Single" && n.LinkMbps is 1.5 or 12
+            ? text + ", as does its share of the one 12 Mb/s link the slower devices on that hub have between them."
+            : text + ".";
+    }
+
     // Past this share of what a link can reserve, the next audio, video or input device may be refused.
     internal const double NearlyFullShare = 0.8;
     internal static bool LinkNearlyFull(UsbNode n) => LinkUse(n) is (var reserved, var capacity, _) && reserved / capacity >= NearlyFullShare;

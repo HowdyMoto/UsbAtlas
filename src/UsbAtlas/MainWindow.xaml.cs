@@ -273,7 +273,9 @@ public partial class MainWindow : Window
             if (UsbBudgets.LinkUse(node) is (var use, var room, _))
             {
                 var usage = new DockPanel { ToolTip = MetricHelp(node) };
-                var share = new TextBlock { Text = UsbBudgets.Share(use, room), FontSize = 12, Margin = new Thickness(8, 0, 0, 0) };
+                // A keyboard's slice can't grow and a drive's is nothing, which is why their cards have no meter; the row says so.
+                string kind = node.Kind == "Device" ? UsbBudgets.ReservationOf(node) switch { UsbBudgets.Reservation.Fixed => " · can't grow", UsbBudgets.Reservation.None => " · reserves nothing", _ => "" } : "";
+                var share = new TextBlock { Text = UsbBudgets.Share(use, room) + kind, FontSize = 12, Margin = new Thickness(8, 0, 0, 0) };
                 DockPanel.SetDock(share, Dock.Right); usage.Children.Add(share);
                 var bar = NodeVisuals.LinkBar(use / room); bar.VerticalAlignment = VerticalAlignment.Center; usage.Children.Add(bar);
                 Field("Link use", usage, LinkUseHelp);
@@ -498,7 +500,8 @@ public partial class MainWindow : Window
     private const string PortsHelp = "Logical ports Windows reports. On the computer, a USB 3 socket counts as two, one USB 2 and one USB 3; a USB 3 hub instead appears as two hubs, each with one port per socket.";
     private const string PollingHelp = "How often the host asks it for input, as its endpoint descriptor requests. Not a measured report rate: a device skips a poll when it has nothing new.";
     private const string PowerSavingHelp = "Device Manager's “Allow the computer to turn off this device to save power”. When it's on and the power plan's USB selective suspend is on, Windows may suspend the device when it looks idle.";
-    private const string LinkUseHelp = "How much of the time this link can set aside for timed transfers, such as audio, video and input, is held now. Bulk transfers, such as storage, reserve nothing and share what is left.";
+    private const string LinkUseHelp = "How much of the time this link can set aside for timed transfers, such as audio, video and input, is held now. Bulk transfers, such as storage, reserve nothing and share what is left. "
+        + "Cards show this as a meter only where it can fill: on hubs and on devices that stream. A keyboard's or mouse's slice can't grow and a drive's is nothing, so their cards leave it out and this row says which.";
     private const string SharedLinkHelp = "How much of the shared 12 Mb/s link's reservable time (10.8 Mb/s) the slower devices on every port hold. Low-speed devices count eight times their payload, since each byte takes eight times as long.";
     private const string ConnectorHelp = "The socket it's plugged into, as Windows reports it or as you set it in Socket type: USB-A, USB-C, or built in with no socket. The tongue's color is the fastest speed the socket is known to carry.";
     private const string SupplyHelp = "How much power the port can supply. Windows doesn't report it, so USB Atlas can't tell.";

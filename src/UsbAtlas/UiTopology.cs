@@ -78,9 +78,24 @@ public partial class MainWindow
     private List<(Severity Severity, string Text)> OtherIssues(UsbNode n) =>
         n.Kind is "Controller" or "Root hub" ? Issues(n).Concat(MergedRoot(n) is UsbNode root ? Issues(root) : []).Distinct().ToList() : CardIssues(n).Where(i => RowOf(i.Text) == IssueRow.Other).ToList();
     // Reserved bandwidth earns a place on a card where it can decide anything: hubs, whose upstream link
-    // everything behind them shares, and devices that stream, which reserve far more while active.
+    // everything behind them shares, and devices that stream, which reserve far more while active. A
+    // keyboard's fixed slice and a drive's nothing can't fill a link, so their cards leave the meter out
+    // and their figures' tooltip says why (NoMeterReason).
     private static bool ShowsMeter(UsbNode n) => UsbBudgets.LinkUse(n) != null
-        && (n.Kind == "Hub" || NodeVisuals.Color(n) is "Audio" or "Video" || (n.PeakReservedMbps ?? 0) - (n.ReservedMbps ?? 0) >= 0.5);
+        && (n.Kind == "Hub" || UsbBudgets.ReservationOf(n) == UsbBudgets.Reservation.Streaming);
+    // Why a card has no meter, so a keyboard beside a metered microphone explains itself: what it reserves,
+    // why that can't fill its link, and where what it adds does count, with the way to see it there.
+    private string NoMeterReason(UsbNode n)
+    {
+        if (n.ReservedMbps == null) return UsbBudgets.ReservationNote(n);
+        if (UsbBudgets.LinkUse(n) == null) return "Its link rate isn't known, so there's no scale to show what it reserves on.";
+        var above = nodeParents.GetValueOrDefault(n.Id);
+        string where = UsbBudgets.LinkSharing(n, above);
+        if (above is { Kind: "Hub" } && where.Length > 0)
+            where += mergedHubs.ContainsKey(above.Id) ? " That hub's card meters its USB 3 side's link; this device is on its USB 2 side."
+                : ShowsMeter(above) ? " It's a part of that hub's meter; pointing at the part rings this card." : "";
+        return UsbBudgets.ReservationNote(n) + (where.Length > 0 ? " " + where : "");
+    }
     private static (double Now, double Peak, double Capacity, string Label)? MeterFor(UsbNode n)
     {
         if (!ShowsMeter(n) || UsbBudgets.LinkUse(n) is not (var now, var capacity, _)) return null;
@@ -118,7 +133,9 @@ public partial class MainWindow
         partRing = new Border { Width = area.Width, Height = area.Height, CornerRadius = new CornerRadius(9), BorderBrush = Brush("Accent"), BorderThickness = new Thickness(2), IsHitTestVisible = false, Tag = PartRingTag };
         Canvas.SetLeft(partRing, area.X); Canvas.SetTop(partRing, area.Y); Panel.SetZIndex(partRing, 3); Graph.Children.Add(partRing);
     }
-    private static string MetricHelp(UsbNode n)
+    // The figures' tooltip, line by line: each number, what the meter shows or, on a card without one, why
+    // there's nothing to meter, so the keyboard beside a metered microphone answers the question itself.
+    private string MetricHelp(UsbNode n)
     {
         var lines = new List<string>();
         if (n.Kind is "Device" or "Hub") lines.Add($"Link: {n.Speed}. The signaling rate negotiated when the device connected, shared with everything upstream on the same path. Not a measured speed.");
@@ -128,8 +145,9 @@ public partial class MainWindow
             lines.Add($"Reserved: {UsbBudgets.Rate(through)} of bus time held by the hub and the devices behind it, which share its upstream link." + (missing > 0 ? $" {missing} device(s) behind it did not report." : "") + " Bulk transfers, such as storage, reserve nothing and share what is left.");
         else if (n.ReservedMbps is double reserved)
             lines.Add($"Reserved: {UsbBudgets.Rate(reserved)} of bus time held by open interrupt and isochronous pipes" + (n.PeakReservedMbps > reserved ? $", up to {UsbBudgets.Rate(n.PeakReservedMbps.Value)} when fully active" : "") + ". Bulk transfers, such as storage, reserve nothing and share what is left.");
-        if (UsbBudgets.LinkUse(n) is (var used, var capacity, _))
+        if (ShowsMeter(n) && UsbBudgets.LinkUse(n) is (var used, var capacity, _))
             lines.Add($"Meter: reservations fill {UsbBudgets.Share(used, capacity)}, the most this link reserves for timed transfers; the lighter part runs to {UsbBudgets.Rate(Math.Max(used, UsbBudgets.PeakThroughLink(n).Mbps))} if everything on it streams at once. It shows bus time set aside, not traffic measured.");
+        else if (n.Kind is "Device" or "Hub") lines.Add("No meter: " + NoMeterReason(n));
         if (UsbBudgets.SharedTtUse(n) is (var ttNow, var ttPeak, _, > 0 and var ports))
             lines.Add($"Shared TT: full- and low-speed devices on {ports} port(s) share one 12 Mb/s bus behind this hub and hold {UsbBudgets.Share(ttNow, UsbBudgets.FullSpeedReservableMbps)} of what it can reserve" + (ttPeak > ttNow + 0.01 ? $", up to {UsbBudgets.Rate(ttPeak)} at peak." : "."));
         if (UsesExternalPower(n))

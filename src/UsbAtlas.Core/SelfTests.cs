@@ -592,6 +592,31 @@ internal static class SelfTests
         Check(!UsbBudgets.CouldExceedWhenStreaming(new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [Kiyo()] }), "One webcam's peak fits a USB 2 hub.");
         Check(!UsbBudgets.CouldExceedWhenStreaming(crowded) && !UsbBudgets.CouldExceedWhenStreaming(cameras.Children[0]), "A link already nearly full warns only as nearly full; a device that fits its own link is fine.");
         Check(!UsbBudgets.CouldExceedWhenStreaming(new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [new UsbNode { Kind = "Device" }, Kiyo()] }), "Devices without reservation data add nothing to the peak.");
+        // What a reservation can do decides whether a device's own link is worth watching: a keyboard's fixed
+        // slice and a drive's nothing never fill it, a camera's or microphone's can. Each says so in plain words.
+        UsbNode Demo(string id) => demo.Nodes.Single(n => n.Id == id);
+        var demoKeyboard = Demo("demo/root/3"); var demoSsd = Demo("demo/root/1/1"); var demoLight = Demo("demo/root/5/2");
+        Check(UsbBudgets.ReservationOf(demoKeyboard) == UsbBudgets.Reservation.Fixed && UsbBudgets.ReservationOf(demoSsd) == UsbBudgets.Reservation.None
+            && UsbBudgets.ReservationOf(Demo("demo/root/1/2")) == UsbBudgets.Reservation.Streaming && UsbBudgets.ReservationOf(Demo("demo/root/2")) == UsbBudgets.Reservation.Streaming
+            && UsbBudgets.ReservationOf(Kiyo()) == UsbBudgets.Reservation.Streaming && UsbBudgets.ReservationOf(truncated) == UsbBudgets.Reservation.Unknown && UsbBudgets.ReservationOf(demo.Controllers[0]) == UsbBudgets.Reservation.Unknown,
+            "A keyboard's reservation is fixed, a drive's is none, a camera's and an audio interface's stream, and an unread pipe list is unknown.");
+        Check(UsbBudgets.ReservationOf(new UsbNode { DeviceType = "Audio", ReservedMbps = 0, PeakReservedMbps = 0 }) == UsbBudgets.Reservation.None
+            && UsbBudgets.ReservationOf(new UsbNode { DeviceType = "Audio", LinkMbps = 12, ReservedMbps = 4.6, PeakReservedMbps = 4.6 }) == UsbBudgets.Reservation.Streaming,
+            "Audio and video devices stream whenever they have timed pipes at all, even while holding their peak.");
+        string keyboardNote = UsbBudgets.ReservationNote(demoKeyboard);
+        Check(keyboardNote.StartsWith("It holds 6.4 kb/s, <1% of the 10.8 Mb/s this link can set aside, the same whether it's idle or in use.") && keyboardNote.Contains("how often it's polled") && keyboardNote.Contains("can't grow, so its own link never fills"),
+            $"A keyboard's note must give its fixed slice and why it can't fill its link: \"{keyboardNote}\".");
+        Check(UsbBudgets.ReservationNote(demoSsd).StartsWith("It reserves no bus time") && UsbBudgets.ReservationNote(demoSsd).Contains("bulk transfers") && UsbBudgets.ReservationNote(demoSsd).Contains("same hub and controller"),
+            "A drive's note must say it reserves nothing and where its speed really comes from.");
+        Check(UsbBudgets.ReservationNote(Demo("demo/root/1/2")) == "It holds 98.3 Mb/s now and up to 197 Mb/s, 5% of the 3.6 Gb/s this link can set aside at its busiest, so its link fills as it streams."
+            && UsbBudgets.ReservationNote(truncated).StartsWith("Windows didn't report") && UsbBudgets.ReservationNote(new UsbNode { Kind = "Hub" }).Contains("devices behind it"),
+            $"A camera's note gives its peak; unread pipe lists say so, for a hub too: \"{UsbBudgets.ReservationNote(Demo("demo/root/1/2"))}\".");
+        Check(UsbBudgets.ReservationNote(new UsbNode { LinkMbps = 12, ReservedMbps = 0, PeakReservedMbps = 0.064 }).StartsWith("Nothing on it is open now; its timed pipes hold 64 kb/s, <1% of the 10.8 Mb/s this link can set aside when they are"),
+            "An input device with nothing open yet is described by what its pipes will hold.");
+        Check(UsbBudgets.LinkSharing(demoKeyboard, demo.Controllers[0].Children[0]) == "It's on a port of the computer itself, so nothing shares its link."
+            && UsbBudgets.LinkSharing(demoLight, Demo("demo/root/5")) == "What it adds to Travel hub's link, which everything on that hub shares, counts there, as does its share of the one 12 Mb/s link the slower devices on that hub have between them."
+            && UsbBudgets.LinkSharing(demoSsd, studio) == "What it adds to Studio desktop hub's link, which everything on that hub shares, counts there." && UsbBudgets.LinkSharing(demoKeyboard, null) == "" && UsbBudgets.LinkSharing(studio, demo.Controllers[0].Children[0]) == "",
+            "A device says whose link it shares: nothing on a root port, the hub above it, and a single TT's 12 Mb/s bus for a slower device.");
         // Full- and low-speed devices behind a single-TT hub share one 12 Mb/s bus, whatever the hub's own link.
         UsbNode FullSpeed(double now, double peak) => new() { Kind = "Device", LinkMbps = 12, ReservedMbps = now, PeakReservedMbps = peak };
         UsbNode SingleTt(params UsbNode[] children) => new() { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, TransactionTranslators = "Single", Children = [.. children] };

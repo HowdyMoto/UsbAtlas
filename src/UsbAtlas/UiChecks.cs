@@ -628,6 +628,20 @@ public partial class MainWindow
                 var panel = (StackPanel)item.Card.Child;
                 var meters = panel.Children.OfType<Grid>().Where(b => b.Tag is NodeVisuals.MeterTag).ToList();
                 Check(meters.Count == (ShowsMeter(node) ? 1 : 0), $"Card {id} must show a meter exactly when its reservations matter and are known.");
+                // The figures' tooltip describes the meter, or says why the card has none: a keyboard beside a
+                // metered microphone must answer the question itself, and say where what it adds does count.
+                if (node.Kind is "Device" or "Hub")
+                {
+                    string help = MetricHelp(node);
+                    Check(help.Contains("\nMeter: ") == (meters.Count == 1) && help.Contains("\nNo meter: ") == (meters.Count == 0), $"Card {id}'s figures must explain its meter, or why it has none: \"{help}\".");
+                    Check(id switch
+                    {
+                        "demo/root/3" => help.Contains("No meter: It holds 6.4 kb/s, <1% of the 10.8 Mb/s this link can set aside, the same whether it's idle or in use.") && help.Contains("can't grow") && help.Contains("port of the computer itself"),
+                        "demo/root/1/1" => help.Contains("No meter: It reserves no bus time") && help.Contains("Studio desktop hub's link") && help.Contains("It's a part of that hub's meter; pointing at the part rings this card."),
+                        "demo/root/5/2" => help.Contains("No meter: It holds 6.4 kb/s") && help.Contains("12 Mb/s link the slower devices on that hub have between them") && help.Contains("part of that hub's meter"),
+                        _ => true
+                    }, $"Card {id}'s figures must say what it reserves, why that can't fill its link, and whose link it shares: \"{help}\".");
+                }
                 if (meters.Count == 0) continue;
                 var (now, peak, capacity, label) = MeterFor(node)!.Value;
                 var text = meters[0].Children.OfType<TextBlock>().Single(t => Equals(t.Tag, NodeVisuals.MeterLabelTag));
@@ -679,6 +693,14 @@ public partial class MainWindow
             string Row(string label) => Details.Children.OfType<Grid>().Where(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == label).Select(g => g.Children[1]).OfType<TextBlock>().Single().Text;
             Check(Row("Polling rate") == "1000 Hz · every 1 ms" && Row("Power saving") == "On", "Properties must show the wheel base's polling rate and power-saving setting.");
             Check(Row("Slower devices") == NotApplicable && Row("Shared link") == NotApplicable, "A device has no transaction translator.");
+            // Link use in Properties says why a device's card has no meter: its slice can't grow, or it reserves nothing.
+            string LinkUse() => VisualDescendants(Details.Children.OfType<Grid>().Single(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == "Link use")).OfType<TextBlock>().Last().Text;
+            Check(LinkUse() == "5% of 10.8 Mb/s · can't grow", $"A game controller's link use must say its slice can't grow: \"{LinkUse()}\".");
+            SelectNode(snapshot.Nodes.First(n => n.Id == "demo/root/1/1")); UpdateLayout();
+            Check(LinkUse() == "0% of 3.6 Gb/s · reserves nothing", $"A drive's link use must say it reserves nothing: \"{LinkUse()}\".");
+            SelectNode(snapshot.Nodes.First(n => n.Id == "demo/root/1/2")); UpdateLayout();
+            Check(LinkUse() == "3% of 3.6 Gb/s", $"A camera's link use needs no qualifier, since its card has the meter: \"{LinkUse()}\".");
+            SelectNode(wheel); UpdateLayout();
             SelectNode(snapshot.Nodes.First(n => n.Id == "demo/root/5")); UpdateLayout();
             Check(Row("Slower devices") == "Share one link · single TT", "Properties must show a hub's single transaction translator.");
             SelectNode(wheel); UpdateLayout();
