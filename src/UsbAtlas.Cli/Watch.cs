@@ -48,14 +48,30 @@ internal static class Watch
             }
             return 0;
         };
+        // The power source flips when a USB-C supply drops out or its contract is renegotiated, which a loose cable and a
+        // supply that can't keep up both cause; the time of each flip, set against the drops, tells them apart.
+        var sources = new ConcurrentQueue<(DateTime At, bool OnAc)>();
+        SourceCallback sourceCallback = (_, type, setting) =>
+        {
+            // PBT_POWERSETTINGCHANGE; POWERBROADCAST_SETTING is a GUID, a length, then the data: 0 is AC, 1 is battery, 2 is short-term (UPS).
+            if (type == 0x8013 && setting != IntPtr.Zero)
+            {
+                sources.Enqueue((DateTime.Now, Marshal.ReadInt32(setting, 20) == 0));
+                try { signal.Release(); } catch (ObjectDisposedException) { }
+            }
+            return 0;
+        };
         var registrations = new List<IntPtr>();
-        IntPtr powerRegistration = IntPtr.Zero;
+        IntPtr powerRegistration = IntPtr.Zero, sourceRegistration = IntPtr.Zero;
         EtwSession? etw = null;
         try
         {
             // DEVICE_NOTIFY_CALLBACK. Watching goes on without sleep tracking if Windows refuses.
             var subscription = new PowerSubscription { Callback = Marshal.GetFunctionPointerForDelegate(powerCallback) };
             if (PowerRegisterSuspendResumeNotification(2, ref subscription, out powerRegistration) != 0) powerRegistration = IntPtr.Zero;
+            var sourceSubscription = new PowerSubscription { Callback = Marshal.GetFunctionPointerForDelegate(sourceCallback) };
+            var acdc = AcDcPowerSource;
+            if (PowerSettingRegisterNotification(ref acdc, 2, ref sourceSubscription, out sourceRegistration) != 0) sourceRegistration = IntPtr.Zero;
             foreach (var guid in UsbInterfaces)
             {
                 var filter = Marshal.AllocHGlobal(FilterSize);
@@ -85,11 +101,12 @@ internal static class Watch
             }
             emit(J.Obj(("time", Time(start)), ("event", "watching"), ("for", duration == TimeSpan.Zero ? "until stopped" : $"{duration.TotalSeconds:0} s"),
                 ("devices", current.Snapshot.Nodes.Count(n => n.Kind == "Device")), ("hubs", current.Snapshot.Nodes.Count(n => n.Kind == "Hub")),
-                ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()), ("tracksSleep", powerRegistration != IntPtr.Zero)));
+                ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()), ("tracksSleep", powerRegistration != IntPtr.Zero), ("battery", Battery())));
             DateTime deadline = duration == TimeSpan.Zero ? DateTime.MaxValue : start + duration;
             DateTime? settleAt = null, wakeCheckAt = null, lastWake = null;
             Session? beforeSleep = null;
-            int rescans = 0, changes = 0, sleeps = 0, notBack = 0, slower = 0, returns = 0;
+            int rescans = 0, changes = 0, sleeps = 0, notBack = 0, slower = 0, returns = 0, flips = 0;
+            bool? onAc = null;
             // The notifications since the last scan, to find what dropped and came back before it.
             var burst = new List<(DateTime At, bool Arrived, string Instance)>();
             Session Settled() => ScanUntilSteady(current, () => { rescans++; return Scan(tracker, redact); }, () => !cancel.WaitHandle.WaitOne(Steady));
@@ -109,6 +126,14 @@ internal static class Watch
                     lastWake = p.At; tracker.Woke(p.At);
                     wakeCheckAt = DateTime.Now + WakeSettle;
                     emit(J.Obj(("time", Time(p.At)), ("event", "wake"), ("checkingIn", $"{WakeSettle.TotalSeconds:0} s")));
+                }
+                // Windows reports the current source on registering; that is the starting point, not a flip.
+                while (sources.TryDequeue(out var src))
+                {
+                    if (onAc == src.OnAc) continue;
+                    if (onAc != null) flips++;
+                    bool first = onAc == null; onAc = src.OnAc;
+                    if (!first) emit(J.Obj(("time", Time(src.At)), ("event", "power-source"), ("source", src.OnAc ? "AC" : "battery"), ("battery", Battery())));
                 }
                 while (events.TryDequeue(out var e))
                 {
@@ -133,9 +158,9 @@ internal static class Watch
                     settleAt = null;
                     var next = Settled();
                     var diff = Diff.Compare(current, next, reported);
-                    if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; emit(diff); }
+                    if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; diff["battery"] = Battery(); emit(diff); }
                     // A drop that's back before the scan leaves no difference, so it's reported from the notifications.
-                    if (Returns(next, burst, diff) is JsonObject back) { returns += back["returned"]!.AsArray().Count; back["time"] = Time(DateTime.Now); emit(back); }
+                    if (Returns(next, burst, diff) is JsonObject back) { returns += back["returned"]!.AsArray().Count; back["time"] = Time(DateTime.Now); back["battery"] = Battery(); emit(back); }
                     burst.Clear();
                     current = next;
                 }
@@ -143,7 +168,7 @@ internal static class Watch
             if (trace != null) { etw!.Dispose(); etw = null; emit(trace.Summary(start, current)); }
             var unstable = current.Listed.Where(n => n.QuickReconnects > 0).ToList();
             return J.Obj(("time", Time(DateTime.Now)), ("event", "summary"), ("watchedSeconds", Math.Round((DateTime.Now - start).TotalSeconds)),
-                ("rescans", rescans), ("changes", changes), ("droppedAndBack", returns > 0 ? returns : null),
+                ("rescans", rescans), ("changes", changes), ("droppedAndBack", returns > 0 ? returns : null), ("powerSourceChanges", flips > 0 ? flips : null),
                 ("sleeps", sleeps > 0 ? sleeps : null), ("notBackAfterWaking", sleeps > 0 ? notBack : null), ("slowerAfterWaking", sleeps > 0 ? slower : null),
                 ("unstable", J.Arr(unstable.Select(n => (JsonNode)J.Obj(("path", current.PathOf(n)), ("name", Topology.ShortName(n)), ("quickReconnects", n.QuickReconnects),
                     ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))))))),
@@ -154,7 +179,8 @@ internal static class Watch
             etw?.Dispose();
             foreach (var handle in registrations) CM_Unregister_Notification(handle);
             if (powerRegistration != IntPtr.Zero) PowerUnregisterSuspendResumeNotification(powerRegistration);
-            GC.KeepAlive(callback); GC.KeepAlive(powerCallback);
+            if (sourceRegistration != IntPtr.Zero) PowerSettingUnregisterNotification(sourceRegistration);
+            GC.KeepAlive(callback); GC.KeepAlive(powerCallback); GC.KeepAlive(sourceCallback);
         }
     }
 
@@ -194,6 +220,23 @@ internal static class Watch
         return new(redact ? Session.Redact(snapshot) : snapshot, "live") { Redacted = redact };
     }
     private static string Time(DateTime t) => t.ToString("HH:mm:ss.fff");
+
+    // The battery as Windows reports it now, or null on a computer without one. A negative rate is the battery
+    // supplying power: on AC, that means the supply can't keep up with the computer.
+    private static JsonObject? Battery()
+    {
+        if (!OperatingSystem.IsWindows() || CallNtPowerInformation(5 /* SystemBatteryState */, IntPtr.Zero, 0, out var s, (uint)Marshal.SizeOf<BatteryState>()) != 0 || s.BatteryPresent == 0) return null;
+        // Rate is in milliwatts; Windows reports an unknown rate as the lowest value.
+        double? watts = s.Rate == int.MinValue ? null : Math.Round(s.Rate / 1000.0, 1);
+        return J.Obj(("onAc", s.AcOnLine != 0), ("charging", s.Charging != 0), ("discharging", s.Discharging != 0),
+            ("percent", s.MaxCapacity == 0 ? null : (int?)Math.Round(100.0 * s.RemainingCapacity / s.MaxCapacity)), ("watts", watts));
+    }
+    private static string BatteryText(JsonNode? b)
+    {
+        if (b is not JsonObject o) return "";
+        string flow = o["watts"] is JsonNode w ? $", {(o["discharging"]!.GetValue<bool>() ? "draining" : "charging")} at {Math.Abs(w.GetValue<double>()):0.#} W" : "";
+        return $" · {(o["onAc"]!.GetValue<bool>() ? "on AC" : "on battery")}{(o["percent"] is JsonNode p ? $", {p}%" : "")}{flow}";
+    }
 
     // Scans until two scans in a row agree, pausing between them, up to SteadyTries more scans.
     internal static Session ScanUntilSteady(Session current, Func<Session> scan, Func<bool> pause)
@@ -262,13 +305,15 @@ internal static class Watch
             case "watching":
                 var issues = e["issues"]!;
                 string span = e["for"]?.ToString() == "until stopped" ? "until stopped" : $"for {e["for"]}";
-                return $"{time} watching {span} · {Count(e["devices"], "device")}, {Count(e["hubs"], "hub")} · {Count(issues["errors"], "error")}, {Count(issues["warnings"], "warning")}, {Count(issues["notes"], "note")}{(e["polls"] != null ? " · rescanning every second" : e["tracksSleep"]?.GetValue<bool>() == false ? " · Windows refused sleep notifications, so sleep isn't tracked" : "")}. Plug, unplug or wiggle now.\n";
+                return $"{time} watching {span} · {Count(e["devices"], "device")}, {Count(e["hubs"], "hub")} · {Count(issues["errors"], "error")}, {Count(issues["warnings"], "warning")}, {Count(issues["notes"], "note")}{(e["polls"] != null ? " · rescanning every second" : e["tracksSleep"]?.GetValue<bool>() == false ? " · Windows refused sleep notifications, so sleep isn't tracked" : "")}{BatteryText(e["battery"])}. Plug, unplug or wiggle now.\n";
             case "usb" or "trace-start" or "trace-summary":
                 return UsbTrace.Text(e);
+            case "power-source":
+                return $"{time} power    {(e["source"]!.ToString() == "AC" ? "AC power is back" : "AC power lost; running on the battery")}{BatteryText(e["battery"])}\n";
             case "arrival" or "removal":
                 return $"{time} {e["event"],-8} {e["instanceId"]}\n";
             case "returned":
-                return string.Concat(e["returned"]!.AsArray().Select(r => $"{time} ↺ dropped and came back  {r!["path"]} {r["name"]}{Behind(r["behindDevices"], r["behindHubs"])} · gone {r["goneSeconds"]} s\n"));
+                return string.Concat(e["returned"]!.AsArray().Select(r => $"{time} ↺ dropped and came back  {r!["path"]} {r["name"]}{Behind(r["behindDevices"], r["behindHubs"])} · gone {r["goneSeconds"]} s{BatteryText(e["battery"])}\n"));
             case "change":
                 return string.Concat(Diff.Text(e, false).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => $"{time} {line}\n"));
             case "sleep":
@@ -284,6 +329,7 @@ internal static class Watch
             case "summary":
                 var sb = new System.Text.StringBuilder($"{time} done after {e["watchedSeconds"]} s · {Count(e["rescans"], "rescan")}, {e["changes"]} with changes\n");
                 if (e["droppedAndBack"] != null) sb.AppendLine($"  {e["droppedAndBack"]} dropped and came back before a scan could see them gone (↺ lines above)");
+                if (e["powerSourceChanges"] != null) sb.AppendLine($"  power switched between AC and battery {e["powerSourceChanges"]} times (power lines above)");
                 if (e["sleeps"] != null) sb.AppendLine($"  slept {(e["sleeps"]!.GetValue<int>() == 1 ? "once" : e["sleeps"] + " times")}: {e["notBackAfterWaking"]} not back after waking, {e["slowerAfterWaking"]} back slower");
                 foreach (var u in e["unstable"]!.AsArray())
                     sb.AppendLine($"  unstable: {u!["path"]} {u["name"]} dropped and came back {u["quickReconnects"]} times ({string.Join(", ", u["times"]!.AsArray().Select(t => t!.ToString()))})");
@@ -305,4 +351,19 @@ internal static class Watch
     [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate int PowerCallback(IntPtr context, int type, IntPtr setting);
     [DllImport("powrprof.dll")] private static extern int PowerRegisterSuspendResumeNotification(int flags, ref PowerSubscription recipient, out IntPtr handle);
     [DllImport("powrprof.dll")] private static extern int PowerUnregisterSuspendResumeNotification(IntPtr handle);
+    // The AC/DC power source setting changes through the same subscription type; its callback gets the new value.
+    private static readonly Guid AcDcPowerSource = new("5d3e9a59-e9d5-4b00-a6bd-ff34ff516548");
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate int SourceCallback(IntPtr context, int type, IntPtr setting);
+    [DllImport("powrprof.dll")] private static extern int PowerSettingRegisterNotification(ref Guid setting, int flags, ref PowerSubscription recipient, out IntPtr handle);
+    [DllImport("powrprof.dll")] private static extern int PowerSettingUnregisterNotification(IntPtr handle);
+    // SYSTEM_BATTERY_STATE: four flags, four more bytes (the last a tag), then capacities and the rate in milliwatts.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BatteryState
+    {
+        public byte AcOnLine, BatteryPresent, Charging, Discharging, Spare1, Spare2, Spare3, Tag;
+        public uint MaxCapacity, RemainingCapacity;
+        public int Rate;
+        public uint EstimatedTime, DefaultAlert1, DefaultAlert2;
+    }
+    [DllImport("powrprof.dll")] private static extern int CallNtPowerInformation(int level, IntPtr input, uint inputLength, out BatteryState output, uint outputLength);
 }
