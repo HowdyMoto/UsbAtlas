@@ -67,7 +67,7 @@
    </Border>
    <GridSplitter x:Name="TreeSplitter" Grid.Column="1" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Grid Grid.Column="2" Background="{DynamicResource CanvasSurface}">
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto" MinHeight="44"/></Grid.RowDefinitions>
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/><RowDefinition Height="Auto" MinHeight="44"/></Grid.RowDefinitions>
     <StackPanel>
     <DockPanel Margin="16,0" Height="32">
      <TextBlock x:Name="TopologyTitle" Text="TOPOLOGY" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
@@ -76,6 +76,7 @@
       <Button x:Name="NextMatchButton" Content="Next ↓" Click="NextMatchClick" Padding="6,1" Visibility="Collapsed"/>
       <Button x:Name="FocusBranchButton" Content="Focus branch" Click="FocusBranchClick" Padding="6,1" Margin="8,0,0,0" ToolTip="Show the selected branch and its upstream path; click again to restore all branches"/>
       <Button x:Name="IssuesButton" Content="No issues" Click="IssuesClick" Padding="6,1" Margin="8,0,0,0"/>
+      <Button x:Name="ActivityButton" Content="Activity" Click="ActivityClick" Padding="6,1" Margin="8,0,0,0" ToolTip="Show or hide what has happened since USB Atlas opened: devices and monitors connecting and dropping, power switching, sleep and wake"/>
      </StackPanel>
     </DockPanel>
     <!-- What to fix first: the few issues that matter most, each with its most likely fix (UiFixFirst). -->
@@ -135,7 +136,19 @@
       </StackPanel>
      </Border>
     </StackPanel>
-    <StackPanel Grid.Row="2" Margin="16,3,0,4" VerticalAlignment="Center"><WrapPanel x:Name="SocketLegend" Margin="0,0,16,0"/></StackPanel>
+    <!-- What has happened since the app opened, newest first (UiActivity). -->
+    <Border x:Name="ActivityPanel" Grid.Row="2" Visibility="Collapsed" Margin="16,6,16,2" Padding="10,5,6,6" Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Divider}" BorderThickness="1" CornerRadius="8" AutomationProperties.Name="Activity">
+     <DockPanel>
+      <DockPanel DockPanel.Dock="Top" Margin="0,0,0,3">
+       <Button DockPanel.Dock="Right" Content="Close" Click="ActivityClick" Padding="6,1" Margin="6,0,0,0" FontSize="12"/>
+       <Button DockPanel.Dock="Right" Content="Clear" Click="ActivityClearClick" Padding="6,1" Margin="6,0,0,0" FontSize="12"/>
+       <Button DockPanel.Dock="Right" Content="Copy" Click="ActivityCopyClick" Padding="6,1" FontSize="12" ToolTip="Copy the activity as text, to share when asking for help" AutomationProperties.Name="Copy activity"/>
+       <TextBlock Text="ACTIVITY" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+      </DockPanel>
+      <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="ActivityList"/></ScrollViewer>
+     </DockPanel>
+    </Border>
+    <StackPanel Grid.Row="3" Margin="16,3,0,4" VerticalAlignment="Center"><WrapPanel x:Name="SocketLegend" Margin="0,0,16,0"/></StackPanel>
    </Grid>
    <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" ResizeBehavior="PreviousAndNext" DragCompleted="SplitterDragCompleted"/>
    <Border x:Name="InspectorPanel" Grid.Column="4" Background="{DynamicResource Surface}">

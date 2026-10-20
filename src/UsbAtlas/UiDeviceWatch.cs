@@ -27,24 +27,31 @@ public partial class MainWindow
         // Registering for USB device and hub interfaces adds arrival and removal messages that name the
         // device, so a quick drop and return is counted even when it settles into a single rescan.
         if (source != null)
-            foreach (var guid in UsbInterfaces)
+            foreach (var guid in (Guid[])[.. UsbInterfaces, MonitorInterface])
             {
                 var filter = new DevBroadcastInterface { Size = Marshal.SizeOf<DevBroadcastInterface>(), DeviceType = DbtDevTypDeviceInterface, ClassGuid = guid };
                 if (RegisterDeviceNotification(source.Handle, ref filter, 0) is var handle && handle != IntPtr.Zero) deviceNotifications.Add(handle);
             }
         Closed += (_, _) => { deviceSettle.Stop(); foreach (var handle in deviceNotifications) UnregisterDeviceNotification(handle); };
+        WatchActivity(source?.Handle ?? IntPtr.Zero);
     }
 
     // DBT_DEVNODES_CHANGED is broadcast to every top-level window without registration.
     private IntPtr DeviceChangeHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         int change = unchecked((int)wParam.ToInt64());
+        if (message == WmPowerBroadcast) HandlePower(change, lParam);
+        bool monitor = false;
         if (message == WmDeviceChange && change is DbtDeviceArrival or DbtDeviceRemoveComplete && lParam != IntPtr.Zero
             && Marshal.ReadInt32(lParam, 4) == DbtDevTypDeviceInterface && ReconnectTracker.InstanceIdFromPath(Marshal.PtrToStringUni(lParam + 28) ?? "") is string id)
         {
-            if (change == DbtDeviceArrival) reconnects.Arrived(id, DateTime.Now); else reconnects.Removed(id, DateTime.Now);
+            // DEV_BROADCAST_DEVICEINTERFACE: size, type, reserved, then the interface class GUID.
+            var guid = new byte[16]; Marshal.Copy(lParam + 12, guid, 0, 16);
+            if (monitor = new Guid(guid) == MonitorInterface) { if (!demo) NoteMonitor(id, change == DbtDeviceArrival, DateTime.Now); }
+            else if (change == DbtDeviceArrival) reconnects.Arrived(id, DateTime.Now); else reconnects.Removed(id, DateTime.Now);
         }
-        if (message == WmDeviceChange && change is DbtDevNodesChanged or DbtDeviceArrival or DbtDeviceRemoveComplete && !demo) QueueDeviceRescan();
+        // A monitor changes what is shown, not what is plugged in, so it doesn't rescan the USB topology.
+        if (message == WmDeviceChange && change is DbtDevNodesChanged or DbtDeviceArrival or DbtDeviceRemoveComplete && !demo && !monitor) QueueDeviceRescan();
         return IntPtr.Zero;
     }
 
@@ -69,7 +76,8 @@ public partial class MainWindow
         if (summary.Count == 0) return;
         StatusText.Text += " · " + string.Join(" · ", summary);
         StatusText.ToolTip = StatusText.Text;
-        foreach (var node in added) Pulse(node, 2.4);
+        foreach (var node in added) { Pulse(node, 2.4); AddActivity($"Connected: {NodeVisuals.ShortName(CardNode(node))}", Severity.Note, node.Id); }
+        foreach (var node in removed) AddActivity($"Disconnected: {NodeVisuals.ShortName(CardNode(node))}", Severity.Note);
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
