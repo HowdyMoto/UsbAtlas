@@ -70,7 +70,7 @@ internal static class Watch
             var subscription = new PowerSubscription { Callback = Marshal.GetFunctionPointerForDelegate(powerCallback) };
             if (PowerRegisterSuspendResumeNotification(2, ref subscription, out powerRegistration) != 0) powerRegistration = IntPtr.Zero;
             var sourceSubscription = new PowerSubscription { Callback = Marshal.GetFunctionPointerForDelegate(sourceCallback) };
-            var acdc = AcDcPowerSource;
+            var acdc = PowerStatus.AcDcPowerSource;
             if (PowerSettingRegisterNotification(ref acdc, 2, ref sourceSubscription, out sourceRegistration) != 0) sourceRegistration = IntPtr.Zero;
             foreach (var guid in UsbInterfaces)
             {
@@ -223,20 +223,10 @@ internal static class Watch
 
     // The battery as Windows reports it now, or null on a computer without one. A negative rate is the battery
     // supplying power: on AC, that means the supply can't keep up with the computer.
-    private static JsonObject? Battery()
-    {
-        if (!OperatingSystem.IsWindows() || CallNtPowerInformation(5 /* SystemBatteryState */, IntPtr.Zero, 0, out var s, (uint)Marshal.SizeOf<BatteryState>()) != 0 || s.BatteryPresent == 0) return null;
-        // Rate is in milliwatts; Windows reports an unknown rate as the lowest value.
-        double? watts = s.Rate == int.MinValue ? null : Math.Round(s.Rate / 1000.0, 1);
-        return J.Obj(("onAc", s.AcOnLine != 0), ("charging", s.Charging != 0), ("discharging", s.Discharging != 0),
-            ("percent", s.MaxCapacity == 0 ? null : (int?)Math.Round(100.0 * s.RemainingCapacity / s.MaxCapacity)), ("watts", watts));
-    }
-    private static string BatteryText(JsonNode? b)
-    {
-        if (b is not JsonObject o) return "";
-        string flow = o["watts"] is JsonNode w ? $", {(o["discharging"]!.GetValue<bool>() ? "draining" : "charging")} at {Math.Abs(w.GetValue<double>()):0.#} W" : "";
-        return $" · {(o["onAc"]!.GetValue<bool>() ? "on AC" : "on battery")}{(o["percent"] is JsonNode p ? $", {p}%" : "")}{flow}";
-    }
+    private static JsonObject? Battery() => PowerStatus.Read() is { } b
+        ? J.Obj(("onAc", b.OnAc), ("charging", b.Charging), ("discharging", b.Discharging), ("percent", b.Percent), ("watts", b.Watts)) : null;
+    private static string BatteryText(JsonNode? b) => b is JsonObject o
+        ? " · " + PowerStatus.Describe(new(o["onAc"]!.GetValue<bool>(), o["charging"]!.GetValue<bool>(), o["discharging"]!.GetValue<bool>(), o["percent"]?.GetValue<int>(), o["watts"]?.GetValue<double>())) : "";
 
     // Scans until two scans in a row agree, pausing between them, up to SteadyTries more scans.
     internal static Session ScanUntilSteady(Session current, Func<Session> scan, Func<bool> pause)
@@ -352,18 +342,7 @@ internal static class Watch
     [DllImport("powrprof.dll")] private static extern int PowerRegisterSuspendResumeNotification(int flags, ref PowerSubscription recipient, out IntPtr handle);
     [DllImport("powrprof.dll")] private static extern int PowerUnregisterSuspendResumeNotification(IntPtr handle);
     // The AC/DC power source setting changes through the same subscription type; its callback gets the new value.
-    private static readonly Guid AcDcPowerSource = new("5d3e9a59-e9d5-4b00-a6bd-ff34ff516548");
     [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate int SourceCallback(IntPtr context, int type, IntPtr setting);
     [DllImport("powrprof.dll")] private static extern int PowerSettingRegisterNotification(ref Guid setting, int flags, ref PowerSubscription recipient, out IntPtr handle);
     [DllImport("powrprof.dll")] private static extern int PowerSettingUnregisterNotification(IntPtr handle);
-    // SYSTEM_BATTERY_STATE: four flags, four more bytes (the last a tag), then capacities and the rate in milliwatts.
-    [StructLayout(LayoutKind.Sequential)]
-    private struct BatteryState
-    {
-        public byte AcOnLine, BatteryPresent, Charging, Discharging, Spare1, Spare2, Spare3, Tag;
-        public uint MaxCapacity, RemainingCapacity;
-        public int Rate;
-        public uint EstimatedTime, DefaultAlert1, DefaultAlert2;
-    }
-    [DllImport("powrprof.dll")] private static extern int CallNtPowerInformation(int level, IntPtr input, uint inputLength, out BatteryState output, uint outputLength);
 }
