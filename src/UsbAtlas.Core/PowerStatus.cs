@@ -27,7 +27,7 @@ internal static class PowerStatus
     // "on AC, 22%, charging at 15 W", for a line of text.
     internal static string Describe(Battery b)
     {
-        string flow = b.Watts is double w ? $", {(b.Discharging ? "draining" : "charging")} at {Math.Abs(w):0.#} W" : "";
+        string flow = b.Watts is double w && (b.Charging || b.Discharging) ?$", {(b.Discharging ? "draining" : "charging")} at {Math.Abs(w):0.#} W" : "";
         return $"{(b.OnAc ? "on AC" : "on battery")}{(b.Percent is int p ? $", {p}%" : "")}{flow}";
     }
 

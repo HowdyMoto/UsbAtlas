@@ -61,6 +61,9 @@ internal static class Watch
             }
             return 0;
         };
+        // Lenovo's own account of what the adapter supplies, as status codes, from wherever the firmware reports one.
+        var adapter = new ConcurrentQueue<(DateTime At, int Status)>();
+        using var stopAdapter = new CancellationTokenSource();
         var registrations = new List<IntPtr>();
         IntPtr powerRegistration = IntPtr.Zero, sourceRegistration = IntPtr.Zero;
         EtwSession? etw = null;
@@ -72,6 +75,7 @@ internal static class Watch
             var sourceSubscription = new PowerSubscription { Callback = Marshal.GetFunctionPointerForDelegate(sourceCallback) };
             var acdc = PowerStatus.AcDcPowerSource;
             if (PowerSettingRegisterNotification(ref acdc, 2, ref sourceSubscription, out sourceRegistration) != 0) sourceRegistration = IntPtr.Zero;
+            bool adapterEvents = LenovoPowerDelivery.Listen(status => { adapter.Enqueue((DateTime.Now, status)); try { signal.Release(); } catch (ObjectDisposedException) { } }, stopAdapter.Token);
             foreach (var guid in UsbInterfaces)
             {
                 var filter = Marshal.AllocHGlobal(FilterSize);
@@ -101,7 +105,7 @@ internal static class Watch
             }
             emit(J.Obj(("time", Time(start)), ("event", "watching"), ("for", duration == TimeSpan.Zero ? "until stopped" : $"{duration.TotalSeconds:0} s"),
                 ("devices", current.Snapshot.Nodes.Count(n => n.Kind == "Device")), ("hubs", current.Snapshot.Nodes.Count(n => n.Kind == "Hub")),
-                ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()), ("tracksSleep", powerRegistration != IntPtr.Zero), ("battery", Battery())));
+                ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()), ("tracksSleep", powerRegistration != IntPtr.Zero), ("battery", Battery()), ("adapterEvents", adapterEvents)));
             DateTime deadline = duration == TimeSpan.Zero ? DateTime.MaxValue : start + duration;
             DateTime? settleAt = null, wakeCheckAt = null, lastWake = null;
             Session? beforeSleep = null;
@@ -135,6 +139,8 @@ internal static class Watch
                     bool first = onAc == null; onAc = src.OnAc;
                     if (!first) emit(J.Obj(("time", Time(src.At)), ("event", "power-source"), ("source", src.OnAc ? "AC" : "battery"), ("battery", Battery())));
                 }
+                // The codes aren't documented; each is reported as it arrives, so the one that comes with a drop shows.
+                while (adapter.TryDequeue(out var pd)) emit(J.Obj(("time", Time(pd.At)), ("event", "adapter-status"), ("status", pd.Status), ("battery", Battery())));
                 while (events.TryDequeue(out var e))
                 {
                     burst.Add(e);
@@ -176,6 +182,7 @@ internal static class Watch
         }
         finally
         {
+            stopAdapter.Cancel();
             etw?.Dispose();
             foreach (var handle in registrations) CM_Unregister_Notification(handle);
             if (powerRegistration != IntPtr.Zero) PowerUnregisterSuspendResumeNotification(powerRegistration);
@@ -295,9 +302,11 @@ internal static class Watch
             case "watching":
                 var issues = e["issues"]!;
                 string span = e["for"]?.ToString() == "until stopped" ? "until stopped" : $"for {e["for"]}";
-                return $"{time} watching {span} · {Count(e["devices"], "device")}, {Count(e["hubs"], "hub")} · {Count(issues["errors"], "error")}, {Count(issues["warnings"], "warning")}, {Count(issues["notes"], "note")}{(e["polls"] != null ? " · rescanning every second" : e["tracksSleep"]?.GetValue<bool>() == false ? " · Windows refused sleep notifications, so sleep isn't tracked" : "")}{BatteryText(e["battery"])}. Plug, unplug or wiggle now.\n";
+                return $"{time} watching {span} · {Count(e["devices"], "device")}, {Count(e["hubs"], "hub")} · {Count(issues["errors"], "error")}, {Count(issues["warnings"], "warning")}, {Count(issues["notes"], "note")}{(e["polls"] != null ? " · rescanning every second" : e["tracksSleep"]?.GetValue<bool>() == false ? " · Windows refused sleep notifications, so sleep isn't tracked" : "")}{BatteryText(e["battery"])}{(e["adapterEvents"]?.GetValue<bool>() == true ? " · listening for Lenovo adapter events" : "")}. Plug, unplug or wiggle now.\n";
             case "usb" or "trace-start" or "trace-summary":
                 return UsbTrace.Text(e);
+            case "adapter-status":
+                return $"{time} adapter  Lenovo reports AC_PD_Status {e["status"]} (its meaning isn't documented){BatteryText(e["battery"])}\n";
             case "power-source":
                 return $"{time} power    {(e["source"]!.ToString() == "AC" ? "AC power is back" : "AC power lost; running on the battery")}{BatteryText(e["battery"])}\n";
             case "arrival" or "removal":
