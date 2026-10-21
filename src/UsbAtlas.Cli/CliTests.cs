@@ -274,6 +274,16 @@ internal static class CliTests
         Check(Descriptors.Decode([8, 0x10, 0x0F, 1, 0x45, 0x0C, 0, 0], 2, 0x0201)["dwAlternateModeVdo"]!.ToString() == "0x00000C45", "Billboard Ex decodes its VDO.");
         Check(Descriptors.Walk([0x09, 0x29, 0x04], 2, 0x0200)[0]["error"] != null && Descriptors.Decode([0x05, 0x29, 0x04, 0x00, 0x00], 2, 0x0200)["hex"] != null, "Truncated descriptors don't read past their bytes.");
         Check(Descriptors.ServiceMs(1, 1, 1) == 1 && Descriptors.ServiceMs(4, 1, 1) == 8 && Descriptors.ServiceMs(4, 2, 3) == 1, "Isochronous full-speed endpoints count 2^(bInterval-1) frames.");
+        // USB Power Delivery capabilities: the spec's 14-byte Power Delivery capability, a consumer that runs on up to
+        // 18 W between 5 and 9 V, and a provider offering 5 V 3 A and PPS 3.3–11 V 3 A.
+        var pd = Descriptors.Decode(Convert.FromHexString("0E100600" + "54400000" + "0000" + "0003" + "0002"), 3, 0x0320);
+        Check(pd["bDevCapabilityType"]!.ToString() == "0x06 Power Delivery" && pd["bmAttributes"]!.ToString().Contains("USB PD, consumer, USB Type-C Current, uses VBUS")
+            && pd["bcdPDVersion"]!.ToString() == "3.00" && pd["bmProviderPorts"] == null, "The spec's Power Delivery capability decodes its attributes and versions.");
+        var consumer = Descriptors.Decode(Convert.FromHexString("18100800" + "0200" + "6400" + "B400" + "0000" + "08070000" + "D0070000" + "FFFF0000"), 3, 0x0320);
+        Check(consumer["bDevCapabilityType"]!.ToString() == "0x08 PD Consumer Port" && consumer["bmCapabilities"]!.ToString() == "0x0002 (USB PD)" && consumer["wMaxVoltage"]!.ToString() == "180 (9 V)"
+            && consumer["dwMaxOperatingPower"]!.ToString() == "1800 (18 W)" && consumer["dwMaxPeakPowerTime"]!.ToString().Contains("unknown"), "A PD Consumer Port capability decodes at the spec's offsets.");
+        var provider = Descriptors.Decode(Convert.FromHexString("10100900" + "0600" + "02" + "00" + "2C910100" + "3C21DCC0"), 3, 0x0320);
+        Check(provider["powerDataObjects"]!.AsArray().Select(x => x!.ToString()).SequenceEqual(["0x0001912C: Fixed 5 V 3 A", "0xC0DC213C: PPS 3.3 V–11 V 3 A"]), "A PD Provider Port capability lists its power data objects.");
     }
 
     private static void DriverProblemTests()

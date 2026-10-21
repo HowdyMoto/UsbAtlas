@@ -167,6 +167,10 @@ internal static class Explanations
                 return Interference.Explain(n, path);
             case Uas.NotInUse:
                 return Uas.Explain(n, path);
+            case Battery.Draining when n.BatteryPercent != null:
+                return Battery.Explain(n);
+            case PowerNeeds.SlowCharging when PowerNeeds.SlowHere(n):
+                return PowerNeeds.Explain(n);
             case HubDepth.AtLimit:
                 return HubDepth.Explain(n, path);
             case KnownProblems.Label when KnownProblems.For(n) != null:

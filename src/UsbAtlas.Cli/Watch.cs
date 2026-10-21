@@ -18,6 +18,8 @@ internal static class Watch
     // A device Windows is still setting up changes from scan to scan: its descriptor and driver arrive, its power
     // and pipes appear, a passing problem code clears. Rescanning until two scans agree reports where it settles.
     private static readonly TimeSpan Steady = TimeSpan.FromMilliseconds(1500);
+    // How often a device that reports its battery is rescanned, so a battery falling while plugged in shows.
+    private static readonly TimeSpan BatteryPoll = TimeSpan.FromMinutes(1);
     internal const int SteadyTries = 4;
 
     internal static JsonObject Run(Options o, TimeSpan duration, bool verbose, bool redact, Action<JsonObject> emit, CancellationToken cancel)
@@ -25,6 +27,7 @@ internal static class Watch
         if (o.Has("demo") || o.Has("input")) throw new CliException("watch needs live hardware; it can't watch --demo or --input.");
         if (!OperatingSystem.IsWindows()) return Poll(o, duration, redact, emit, cancel);
         var tracker = new ReconnectTracker();
+        var batteries = new BatteryTracker();
         var wakeReturns = new WakeReturns();
         var events = new ConcurrentQueue<(DateTime At, bool Arrived, string Instance)>();
         using var signal = new SemaphoreSlim(0);
@@ -72,7 +75,7 @@ internal static class Watch
                 finally { Marshal.FreeHGlobal(filter); }
             }
 
-            var current = Scan(tracker, redact);
+            var current = Scan(tracker, batteries, redact);
             // Issues already announced, so a device that leaves and returns with one doesn't announce it again.
             var reported = Diff.IssueKeys(current);
             var start = DateTime.Now;
@@ -88,17 +91,20 @@ internal static class Watch
                 ("devices", current.Snapshot.Nodes.Count(n => n.Kind == "Device")), ("hubs", current.Snapshot.Nodes.Count(n => n.Kind == "Hub")),
                 ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()), ("tracksSleep", powerRegistration != IntPtr.Zero)));
             DateTime deadline = duration == TimeSpan.Zero ? DateTime.MaxValue : start + duration;
-            DateTime? settleAt = null, wakeCheckAt = null, lastWake = null;
+            DateTime? settleAt = null, wakeCheckAt = null, lastWake = null, batteryAt = null;
             Session? beforeSleep = null;
             int rescans = 0, changes = 0, sleeps = 0, notBack = 0, slower = 0, returns = 0;
             // The notifications since the last scan, to find what dropped and came back before it.
             var burst = new List<(DateTime At, bool Arrived, string Instance)>();
-            Session Settled() => ScanUntilSteady(current, () => { rescans++; return Scan(tracker, redact); }, () => !cancel.WaitHandle.WaitOne(Steady));
+            Session Settled() => ScanUntilSteady(current, () => { rescans++; return Scan(tracker, batteries, redact); }, () => !cancel.WaitHandle.WaitOne(Steady));
             // A change still settling at the deadline gets its rescan, and a wake its check, so the summary is current.
             while (!cancel.IsCancellationRequested && (DateTime.Now < deadline || settleAt != null || wakeCheckAt != null))
             {
                 var until = settleAt is DateTime s && s < deadline ? s : deadline;
                 if (wakeCheckAt is DateTime w && w < until) until = w;
+                // A battery changes without a notification, so a device that reports one is rescanned every minute.
+                batteryAt ??= DateTime.Now < deadline && current.Snapshot.Nodes.Any(n => n.BatteryPercent != null) ? DateTime.Now + BatteryPoll : null;
+                if (batteryAt is DateTime b && b < until) until = b;
                 int wait = until == DateTime.MaxValue ? Timeout.Infinite : (int)Math.Clamp((until - DateTime.Now).TotalMilliseconds, 0, int.MaxValue);
                 try { signal.Wait(wait, cancel); } catch (OperationCanceledException) { break; }
                 // A wake is taken first, so the devices returning after it aren't counted as drops.
@@ -143,6 +149,18 @@ internal static class Watch
                     burst.Clear();
                     current = next;
                 }
+                if (batteryAt is DateTime poll && DateTime.Now >= poll)
+                {
+                    batteryAt = null;
+                    // A change still settling rescans anyway; the next poll is a minute on.
+                    if (settleAt == null && wakeCheckAt == null)
+                    {
+                        var next = Scan(tracker, batteries, redact); rescans++;
+                        var diff = Diff.Compare(current, next, reported);
+                        if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; emit(diff); }
+                        current = next;
+                    }
+                }
             }
             if (trace != null) { etw!.Dispose(); etw = null; emit(trace.Summary(start, current)); }
             var unstable = current.Listed.Where(n => n.QuickReconnects > 0).ToList();
@@ -152,6 +170,8 @@ internal static class Watch
                 ("stillMissingAfterWaking", wakeReturns.Missing()),
                 ("unstable", J.Arr(unstable.Select(n => (JsonNode)J.Obj(("path", current.PathOf(n)), ("name", Topology.ShortName(n)), ("quickReconnects", n.QuickReconnects),
                     ("times", J.Arr(n.QuickReconnectTimes.Select(t => (JsonNode)t.ToString("HH:mm:ss")))))))),
+                ("batteries", J.Some(current.Listed.Where(n => n.BatteryPercent != null).Select(n => (JsonNode)J.Obj(("path", current.PathOf(n)), ("name", Topology.ShortName(n)),
+                    ("percent", n.BatteryPercent), ("sessionHighPercent", n.BatteryHighPercent), ("draining", Battery.IsDraining(n)))))),
                 ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()));
         }
         finally
@@ -169,7 +189,8 @@ internal static class Watch
     {
         if (o.Has("trace")) throw new CliException("--trace records Windows' USB hub driver. On Linux, the kernel's USB messages are in journalctl -k.");
         var tracker = new ReconnectTracker();
-        var current = Scan(tracker, redact);
+        var batteries = new BatteryTracker();
+        var current = Scan(tracker, batteries, redact);
         var reported = Diff.IssueKeys(current);
         var start = DateTime.Now;
         emit(J.Obj(("time", Time(start)), ("event", "watching"), ("for", duration == TimeSpan.Zero ? "until stopped" : $"{duration.TotalSeconds:0} s"),
@@ -179,9 +200,9 @@ internal static class Watch
         int rescans = 0, changes = 0;
         while (DateTime.Now < deadline && !cancel.WaitHandle.WaitOne(TimeSpan.FromSeconds(1)))
         {
-            var next = Scan(tracker, redact); rescans++;
+            var next = Scan(tracker, batteries, redact); rescans++;
             if (Diff.Empty(Diff.Compare(current, next))) continue;
-            next = ScanUntilSteady(current, () => { rescans++; return Scan(tracker, redact); }, () => !cancel.WaitHandle.WaitOne(Steady));
+            next = ScanUntilSteady(current, () => { rescans++; return Scan(tracker, batteries, redact); }, () => !cancel.WaitHandle.WaitOne(Steady));
             var diff = Diff.Compare(current, next, reported);
             if (!Diff.Empty(diff)) { changes++; diff["time"] = Time(DateTime.Now); diff["event"] = "change"; emit(diff); }
             current = next;
@@ -190,12 +211,13 @@ internal static class Watch
             ("unstable", new JsonArray()), ("issues", Reports.Issues(current, Severity.Note, false)["summary"]!.DeepClone()));
     }
 
-    private static Session Scan(ReconnectTracker tracker, bool redact)
+    private static Session Scan(ReconnectTracker tracker, BatteryTracker batteries, bool redact)
     {
         var snapshot = Scanner.ThisComputer();
         var labels = new DeviceLabels();
         if (labels.LoadError == null) labels.Apply(snapshot);
         tracker.Apply(snapshot);
+        batteries.Apply(snapshot, DateTime.Now);
         return new(redact ? Session.Redact(snapshot) : snapshot, "live") { Redacted = redact };
     }
     private static string Time(DateTime t) => t.ToString("HH:mm:ss.fff");
@@ -323,6 +345,9 @@ internal static class Watch
                     foreach (var n in missing) sb.AppendLine($"  still missing after waking: {n!["path"]} {n["name"]}");
                 foreach (var u in e["unstable"]!.AsArray())
                     sb.AppendLine($"  unstable: {u!["path"]} {u["name"]} dropped and came back {u["quickReconnects"]} times ({string.Join(", ", u["times"]!.AsArray().Select(t => t!.ToString()))})");
+                foreach (var b in e["batteries"]?.AsArray() ?? new JsonArray())
+                    sb.AppendLine(b!["draining"]!.GetValue<bool>() ? $"  battery draining: {b["path"]} {b["name"]} fell from {b["sessionHighPercent"]}% to {b["percent"]}% while plugged in"
+                        : $"  battery: {b["path"]} {b["name"]} at {b["percent"]}%, not falling while watched");
                 var final = e["issues"]!;
                 sb.AppendLine($"  now: {Count(final["errors"], "error")}, {Count(final["warnings"], "warning")}, {Count(final["notes"], "note")}. atlascli issues explains them.");
                 return sb.ToString();

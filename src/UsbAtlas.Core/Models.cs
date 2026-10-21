@@ -116,6 +116,23 @@ public sealed class UsbNode
     // the driver doesn't say; and whether its descriptors offer UAS. Null when they weren't read (Uas.cs).
     public string StorageProtocol { get; set; } = "";
     public bool? OffersUas { get; set; }
+    // The most power it runs on, in watts, when its own Power Delivery descriptor says (BOS PD Consumer Port
+    // capability). Null when it doesn't say, as most devices don't (PowerNeeds.cs).
+    public double? PdConsumerWatts { get; set; }
+    // Its battery, for a device that reports one through Windows Portable Devices, as phones and headsets sharing
+    // files over MTP do: the level, and Battery or External when it says what it runs on. Null or empty otherwise.
+    public int? BatteryPercent { get; set; }
+    public string BatterySource { get; set; } = "";
+    // The highest level read while it stayed connected this session, and when, so a falling battery shows (Battery.cs).
+    public int? BatteryHighPercent { get; set; }
+    public DateTime? BatteryHighAt { get; set; }
+    // A USB-C port's power as Linux reports it (/sys/class/typec and /sys/class/usb_power_delivery): what it advertises
+    // (default, 1.5A, 3.0A or usb_power_delivery), the supplies it offers under Power Delivery and the most of them in
+    // watts, and the most the device in it asks for. Empty on Windows, which doesn't give apps any of this.
+    public string TypeCPowerMode { get; set; } = "";
+    public List<string> PdOffers { get; set; } = [];
+    public double? PdOfferWatts { get; set; }
+    public double? PdPartnerWatts { get; set; }
     // Hubs between the computer and this node, not counting the root hub or the node itself (HubDepth).
     public int HubsAbove { get; set; }
     public bool SpeedLimited { get; set; }

@@ -24,6 +24,7 @@ internal static class Diff
         ("driver", (n, _) => string.Join(" ", new[] { n.DriverService, n.DriverVersion }.Where(x => x.Length > 0))),
         ("driverProblems", (n, _) => string.Join(", ", n.DriverProblems.Select(p => "Code " + p.Code))),
         ("label", (n, _) => n.UserLabel), ("reconnects", (n, _) => n.QuickReconnects > 0 ? n.QuickReconnects.ToString() : ""),
+        ("battery", (n, _) => n.BatteryPercent is int percent ? $"{percent}%" : ""),
     ];
 
     // An issue is known by what it's on and what it says.

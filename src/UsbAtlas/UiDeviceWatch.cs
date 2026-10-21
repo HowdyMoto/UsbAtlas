@@ -18,6 +18,8 @@ public partial class MainWindow
     private readonly DispatcherTimer deviceSettle = new() { Interval = TimeSpan.FromMilliseconds(600) };
     private bool rescanQueued;
     private readonly ReconnectTracker reconnects = new();
+    // Each connected device's highest battery level this session, so one falling while plugged in shows on a refresh.
+    private readonly BatteryTracker batteries = new();
     private readonly List<IntPtr> deviceNotifications = [];
     private IntPtr powerNotification;
 

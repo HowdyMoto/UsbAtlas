@@ -99,6 +99,7 @@ public sealed class UsbScanner
         UsbBudgets.AnalyzePower(snapshot);
         Drivers.Apply(snapshot, devices);
         Uas.Apply(snapshot, devices);
+        PortableDevices.Apply(snapshot, devices);
         try
         {
             var (gpus, displays, billboards) = UsbAtlas.Displays.Read();
@@ -243,12 +244,14 @@ public sealed class UsbScanner
                 }
             }
             // The BOS descriptor lists USB 2.1+ and USB 3 capabilities, such as SuperSpeedPlus and LPM. A Billboard's
-            // says how its USB-C alternate modes went, so it's read on every scan.
+            // says how its USB-C alternate modes went, and a device's may say how much power it runs on under Power
+            // Delivery, so a device's is read on every scan; Windows reads it too when the device connects.
             bool billboard = data[8] == Billboard.Class || node.InterfaceFunctions.Contains("Billboard");
-            if ((CaptureRaw || billboard) && bcd >= 0x0201 && Descriptor(handle, port, 15, 0, 0, 5) is { Length: >= 5 } bosHead && bosHead[1] == 15
+            if ((CaptureRaw || billboard || node.Kind == "Device") && bcd >= 0x0201 && Descriptor(handle, port, 15, 0, 0, 5) is { Length: >= 5 } bosHead && bosHead[1] == 15
                 && Descriptor(handle, port, 15, 0, 0, Math.Max((ushort)5, BitConverter.ToUInt16(bosHead, 2))) is { } bos)
             {
                 if (CaptureRaw) node.Raw!.Bos = Convert.ToHexString(bos);
+                node.PdConsumerWatts = PdDescriptors.ConsumerWatts(bos);
                 if (billboard && Billboard.Decode(bos) is { } decoded)
                 {
                     node.Billboard = decoded.Info;

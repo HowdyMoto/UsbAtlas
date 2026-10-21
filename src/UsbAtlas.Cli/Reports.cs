@@ -185,7 +185,9 @@ internal static class Reports
                 ("userConnectable", n.PortIsUserConnectable), ("usbC", n.PortConnectorIsTypeC), ("debugCapable", n.PortIsDebugCapable),
                 ("sharesSocketWith", n.CompanionId.Length > 0 && s.ById(n.CompanionId) is UsbNode c ? s.PathOf(c) : null),
                 ("alsoSharesSocketWith", J.Some(n.MoreCompanions.Where(m => m.Id.Length > 0 && s.ById(m.Id) != null).Select(m => (JsonNode)s.PathOf(s.ById(m.Id)!)))),
-                ("usbCFeatures", UsbC.Socket(s.Snapshot, n) is { Count: > 0 } features ? J.Obj([.. features.Select(f => (f.Feature, (JsonNode?)f.Text))]) : null));
+                ("usbCFeatures", UsbC.Socket(s.Snapshot, n) is { Count: > 0 } features ? J.Obj([.. features.Select(f => (f.Feature, (JsonNode?)f.Text))]) : null),
+                ("powerAvailable", PowerNeeds.Available(n)), ("powerCeiling", PowerNeeds.Ceiling(n) is (double most, var why) ? J.Obj(("atMostW", most), ("why", why)) : null),
+                ("typeCPower", n.TypeCPowerMode.Length > 0 ? J.Obj(("mode", n.TypeCPowerMode), ("offers", J.Some(n.PdOffers.Select(x => (JsonNode)x))), ("offersUpToW", J.N(n.PdOfferWatts, 2))) : null));
         if (n.PciId.Length > 0 || n.PcieTunneled == true)
             node["controller"] = J.Obj(("pciId", J.S(n.PciId)), ("vendor", J.S(Topology.PciVendor(n.PciId))), ("subsystem", J.S(n.PciSubsystem)), ("revision", J.S(n.PciRevision)), ("pciAddress", J.S(n.PciAddress)),
                 ("pcieLink", n.PcieGeneration is int g && n.PcieLanes is int l ? J.Obj(("generation", g), ("lanes", l), ("maxGeneration", n.PcieMaxGeneration), ("maxLanes", n.PcieMaxLanes), ("mbps", J.N(UsbBudgets.PcieMbps(g, l)))) : null),
@@ -198,7 +200,12 @@ internal static class Reports
             node["hubsAbove"] = J.Obj(("count", n.HubsAbove), ("limit", HubDepth.Max), ("chain", J.Some(HubDepth.Above(s.Chain(n)).Select(h => (JsonNode)$"{s.PathOf(h)} {Topology.ShortName(h)}"))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable), ("evidence", Topology.PowerEvidence(n)),
-                ("drawThroughPortMa", n.Kind == "Hub" ? UsbBudgets.Demand(n).Known : null), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))));
+                ("drawThroughPortMa", n.Kind == "Hub" ? UsbBudgets.Demand(n).Known : null), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))),
+                ("charging", PowerNeeds.For(n) is PowerNeeds.Need need ? J.Obj(("needsUpToW", need.Watts), ("basis", need.Basis), ("source", need.Source),
+                    ("portGivesAtMostW", PowerNeeds.Ceiling(n)?.Watts), ("summary", PowerNeeds.Summary(n))) : null),
+                ("pdConsumerW", J.N(n.PdConsumerWatts, 2)), ("pdPartnerAsksW", J.N(n.PdPartnerWatts, 2)),
+                ("battery", n.BatteryPercent is int percent ? J.Obj(("percent", percent), ("source", J.S(n.BatterySource)), ("sessionHighPercent", n.BatteryHighPercent),
+                    ("sessionHighAt", n.BatteryHighAt?.ToString("yyyy-MM-dd HH:mm:ss")), ("draining", Battery.IsDraining(n) ? true : null), ("summary", Battery.Summary(n))) : null));
         if (n.Kind is "Device" or "Hub" or "Root hub" or "Controller")
             node["powerSaving"] = J.Obj(("setting", Topology.PowerSavingText(Topology.MergedRoot(n) ?? n, s.Snapshot)), ("plan", PowerSaving.PlanSummary(s.Snapshot)),
                 ("canWakeComputer", n.Kind is "Device" or "Hub" ? n.WakeSetting : null), ("wokeComputerAt", n.WokeComputerAt?.ToString("yyyy-MM-dd HH:mm")));

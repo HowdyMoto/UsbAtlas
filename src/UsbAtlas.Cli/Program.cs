@@ -23,9 +23,10 @@ internal static class Program
                                  rate, power, VID:PID and issues. --ports lists every empty port; --hidden
                                  also lists devices Windows remembers that aren't connected, where each was,
                                  its COM number and when it was last connected.
-          show <target>          Everything about one node: identity, driver, link, socket, power,
-                                 bandwidth, power saving, the chain to the host, its neighbors, its issues
-                                 explained, and the evidence behind them.
+          show <target>          Everything about one node: identity, driver, link, socket, power (what it
+                                 needs to charge, what its port can give, its battery), bandwidth, power
+                                 saving, the chain to the host, its neighbors, its issues explained, and
+                                 the evidence behind them.
           find <text>            Search names, VID:PID, types, paths, sockets ("USB-C"), polling rates
                                  ("1000 Hz"), HID collections ("Joystick") and issue names.
           budget [<target>]      Bandwidth and power arithmetic with its inputs. Without a target: every
@@ -44,7 +45,9 @@ internal static class Program
                                  reports what didn't come back or came back slower. --for 60s (default; 0
                                  runs until Ctrl+C), --verbose for every Windows notification, --out FILE
                                  to also append each event to FILE as a line of JSON, --trace to add the
-                                 USB hub driver's own events (see trace).
+                                 USB hub driver's own events (see trace). A device that reports its battery,
+                                 as phones and headsets sharing files do, is rescanned every minute, and a
+                                 battery that falls while plugged in is flagged.
           trace                  Record what Windows' USB hub driver reports, placed on the topology:
                                  connections, port and warm resets, USB 3 link failures, overcurrent,
                                  enumeration retries and failures, rejected descriptors, SuperSpeed

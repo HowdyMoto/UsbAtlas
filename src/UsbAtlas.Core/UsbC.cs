@@ -43,7 +43,9 @@ internal static class UsbC
         [
             ("USB4 / Thunderbolt", usb4),
             ("DisplayPort", "Not reported: Windows doesn't say whether a socket carries video. A USB-C monitor or adapter whose DisplayPort mode doesn't start shows a Billboard device with the reason."),
-            ("Power Delivery", "Not reported: Windows doesn't give apps a port's Power Delivery contract (voltage and current) or how much it can supply. A USB-C power meter between port and device shows it.")
+            ("Power Delivery", n.PdOffers.Count > 0 ? $"Offers up to {PowerNeeds.W(n.PdOfferWatts ?? 0)}: {string.Join(", ", n.PdOffers)}, as Linux reports it. Linux shows what a port offers, not the contract it agreed with the device; a USB-C power meter between port and device shows that."
+                : n.TypeCPowerMode.Length > 0 ? $"Not in use: Linux reports the port advertising {(n.TypeCPowerMode == "default" ? "USB's default current" : n.TypeCPowerMode)} at 5 V."
+                : "Not reported: Windows doesn't give apps a port's Power Delivery contract (voltage and current) or how much it can supply. A USB-C power meter between port and device shows it.")
         ];
     }
 

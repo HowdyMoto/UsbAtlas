@@ -40,6 +40,10 @@ internal static class IssueRules
         // A drive that could use UAS but doesn't is slower than it could be, so it's a warning; on a drive Linux
         // avoids UAS with too, bulk-only may be the safer choice, so it's a note.
         if (Uas.NotUsed(n)) issues.Add((KnownProblems.AvoidsUas(n) ? Severity.Note : Severity.Warning, Uas.NotInUse));
+        // A battery seen falling while plugged in is a warning. A port that can't give what a device charges at is
+        // worked out from specifications and only slows its charging, so it's a note, and the warning covers it.
+        if (Battery.IsDraining(n)) issues.Add((Severity.Warning, Battery.Draining));
+        else if (PowerNeeds.SlowHere(n)) issues.Add((Severity.Note, PowerNeeds.SlowCharging));
         // A known chip problem is a lead, not a diagnosis, so it's a note, and only where something here looks like it.
         if (KnownProblems.Raised(n)) issues.Add((Severity.Note, KnownProblems.Label));
         // A hub at the limit works; only another hub plugged into it won't.
