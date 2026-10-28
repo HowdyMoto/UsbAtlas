@@ -21,7 +21,10 @@ internal static class Diff
         ("powerSaving", (n, s) => Topology.PowerSavingText(n, s.Snapshot)), ("deviceType", (n, _) => n.DeviceType),
         ("polling", (n, _) => n.PollIntervalMs is double ms ? UsbBudgets.PollingRate(ms) : ""),
         ("reserved", (n, _) => n.ReservedMbps is double r ? UsbBudgets.Rate(r) : ""),
-        ("driver", (n, _) => string.Join(" ", new[] { n.DriverService, n.DriverVersion }.Where(x => x.Length > 0))),
+        // The drivers that do its work, as Properties summarizes them: a maker's driver installed, updated or
+        // removed, or one handed to an app. A composite device's own driver is Windows' and says nothing.
+        ("driver", (n, _) => n.DriverStackRead ? Drivers.Summary(n) : string.Join(" ", new[] { n.DriverService, n.DriverVersion }.Where(x => x.Length > 0))),
+        ("filters", (n, _) => Drivers.FilterSummary(n)),
         ("driverProblems", (n, _) => string.Join(", ", n.DriverProblems.Select(p => "Code " + p.Code))),
         ("label", (n, _) => n.UserLabel), ("reconnects", (n, _) => n.QuickReconnects > 0 ? n.QuickReconnects.ToString() : ""),
         ("battery", (n, _) => n.BatteryPercent is int percent ? $"{percent}%" : ""),
@@ -52,9 +55,10 @@ internal static class Diff
         {
             if (!now.TryGetValue(key, out var m)) m = moved.FirstOrDefault(p => p.From == n).To;
             if (m == null) continue;
-            // A snapshot saved before revisions were recorded has none; that isn't a firmware change.
+            // A snapshot saved before revisions, or each function's drivers and filters, were recorded has none; that isn't a change.
             var changes = Fields.Select(f => (f.Field, Before: f.Value(n, before), After: f.Value(m, after)))
-                .Where(c => c.Before != c.After && !(c.Field == "revision" && (c.Before.Length == 0 || c.After.Length == 0))).ToList();
+                .Where(c => c.Before != c.After && !(c.Field == "revision" && (c.Before.Length == 0 || c.After.Length == 0))
+                    && !(c.Field is "driver" or "filters" && n.DriverStackRead != m.DriverStackRead)).ToList();
             if (changes.Count > 0)
                 changed.Add(J.Obj(("path", after.PathOf(m)), ("name", Topology.ShortName(m)), ("changes", J.Arr(changes.Select(c => (JsonNode)J.Obj(("field", c.Field), ("before", c.Before), ("after", c.After)))))));
         }

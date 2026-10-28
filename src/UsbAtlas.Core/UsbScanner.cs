@@ -12,7 +12,8 @@ public sealed class UsbScanner
     private readonly Dictionary<string, (string Name, string Manufacturer, string InstanceId)> names = new(StringComparer.OrdinalIgnoreCase);
     // Every present devnode by instance ID: its parent, its driver service and, for a HID collection, its
     // usages; its name, driver key and any Device Manager problem code.
-    internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0, string ContainerId = "", string LocationPath = "");
+    internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0, string ContainerId = "", string LocationPath = "",
+        string[]? UpperFilters = null, string[]? LowerFilters = null, string ClassGuid = "");
     private readonly Dictionary<string, DevNode> devices = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> hidUsages = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
@@ -455,7 +456,9 @@ public sealed class UsbScanner
                 int problem = Native.CM_Get_DevNode_Status(out var devStatus, out var code, d.DevInst, 0) == 0 && (devStatus & 0x400) != 0 ? (int)code : 0;
                 // SPDRP_LOCATION_PATHS: the first is PCIROOT(0)#…#USBROOT(0)#USB(1), which places remembered entries.
                 string location = instance.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase) ? MultiProperty(set, ref d, 35).FirstOrDefault() ?? "" : "";
-                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem, ContainerProperty(set, ref d), location);
+                // SPDRP_UPPERFILTERS, SPDRP_LOWERFILTERS and SPDRP_CLASSGUID: filters on this devnode and on its class.
+                devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem, ContainerProperty(set, ref d), location,
+                    MultiProperty(set, ref d, 17), MultiProperty(set, ref d, 18), Property(set, ref d, 8) ?? "");
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }

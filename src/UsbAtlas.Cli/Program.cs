@@ -20,15 +20,18 @@ internal static class Program
                                  anything now, the likely cause and what to do. Start here.
                                  --min note|warning|error leaves out less severe ones.
           tree                   The topology as an indented tree: path, name, kind, link rate, polling
-                                 rate, power, VID:PID and issues. --ports lists every empty port; --hidden
+                                 rate, power, VID:PID, a maker's driver or another program's filter
+                                 driver where there is one, and issues. --ports lists every empty port; --hidden
                                  also lists devices Windows remembers that aren't connected, where each was,
                                  its COM number and when it was last connected.
-          show <target>          Everything about one node: identity, driver, link, socket, power (what it
+          show <target>          Everything about one node: identity, drivers (a maker's driver and its age,
+                                 filters other programs added, every function's driver), link, socket, power (what it
                                  needs to charge, what its port can give, its battery), bandwidth, power
                                  saving, the chain to the host, its neighbors, its issues explained, and
                                  the evidence behind them.
           find <text>            Search names, VID:PID, types, paths, sockets ("USB-C"), polling rates
-                                 ("1000 Hz"), HID collections ("Joystick") and issue names.
+                                 ("1000 Hz"), HID collections ("Joystick"), drivers ("WinUSB"), drivers'
+                                 makers ("Razer"), "filter driver" and issue names.
           budget [<target>]      Bandwidth and power arithmetic with its inputs. Without a target: every
                                  hub and anything with a budget issue.
           raw <target>           The node's USB descriptors, decoded field by field with their hex.

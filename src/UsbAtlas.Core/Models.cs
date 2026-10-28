@@ -94,6 +94,11 @@ public sealed class UsbNode
     public string DriverInf { get; set; } = "";
     // Device Manager problem codes on the device or one of its functions (interfaces, HID collections).
     public List<DeviceProblem> DriverProblems { get; set; } = [];
+    // The other drivers in its stacks: each function's (interface, HID collection) and every filter driver
+    // on the device, its functions or their device classes. DriverStackRead says Windows was asked, so an
+    // empty list means none rather than not read.
+    public List<DriverInfo> StackDrivers { get; set; } = [];
+    public bool DriverStackRead { get; set; }
     // On Linux, what keeps the kernel from using the device: no driver bound, or not authorized.
     public string KernelProblem { get; set; } = "";
     // Descriptors as read, only when a scan is asked to keep them.
@@ -195,6 +200,20 @@ public sealed class PortCompanion
     public string Id { get; set; } = "";
 }
 // A devnode Windows reports a problem on: Device Manager's "Code N" on its General tab.
+// A driver in a device's stacks. Role is "function", "upper filter", "lower filter", "class upper filter" or
+// "class lower filter"; Function names the devnode it is on. A function driver's version, date and INF come
+// from its driver package; a filter's maker and version from its driver file.
+public sealed class DriverInfo
+{
+    public string Role { get; set; } = "";
+    public string InstanceId { get; set; } = "";
+    public string Function { get; set; } = "";
+    public string Service { get; set; } = "";
+    public string Provider { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string Date { get; set; } = "";
+    public string Inf { get; set; } = "";
+}
 public sealed class DeviceProblem
 {
     public string InstanceId { get; set; } = "";

@@ -72,7 +72,21 @@ internal static class DemoData
             if (node.Kind is "Device" or "Hub") node.ReportedProduct = node.Name;
             if (node.Kind is "Device" or "Hub" or "Root hub") node.PowerSaving = "On";
             if (node.Kind is "Device" or "Hub") node.WakeSetting = node.DeviceType is "Keyboard" or "Mouse" ? "On" : "Not supported";
+            // Windows' own drivers run most devices, as they do on most computers.
+            if (node.Kind is "Device" or "Hub" or "Root hub" or "Controller")
+            {
+                node.DriverStackRead = true; node.DriverProvider = "Microsoft"; node.DriverVersion = "10.0.26100.1"; node.DriverDate = "6-21-2006";
+                node.DriverService = node.Kind switch { "Controller" => "USBXHCI", "Device" => node.DeviceClass switch { "Mass storage" => node.StorageProtocol == "UAS" ? "UASPStor" : "USBSTOR", "Video" or "Audio" => "usbccgp", _ => "HidUsb" }, _ => "USBHUB3" };
+            }
         }
+        // The audio interface runs on its maker's driver, and a webcam effects program filters every camera.
+        var audio = root.Children[1];
+        audio.StackDrivers = [new() { Role = "function", InstanceId = @"USB\VID_0000&PID_0A11&MI_00\demo", Function = "Audio interface", Service = "studiousb", Provider = "Studio Audio", Version = "4.65.5", Date = "3-14-2019", Inf = "oem42.inf" },
+            new() { Role = "function", InstanceId = @"USB\VID_0000&PID_0A11&MI_03\demo", Function = "USB Input Device", Service = "HidUsb", Provider = "Microsoft", Version = "10.0.26100.1", Date = "6-21-2006", Inf = "input.inf" }];
+        var camera = hub.Children[1];
+        camera.StackDrivers = [new() { Role = "function", InstanceId = @"USB\VID_0000&PID_0CA4&MI_00\demo", Function = "Studio camera", Service = "usbvideo", Provider = "Microsoft", Version = "10.0.26100.1", Date = "6-21-2006", Inf = "usbvideo.inf" },
+            new() { Role = "class upper filter", InstanceId = @"USB\VID_0000&PID_0CA4&MI_00\demo", Function = "Studio camera", Service = "camfx", Provider = "FaceFX Software", Version = "2.1.0" },
+            new() { Role = "class upper filter", InstanceId = @"USB\VID_0000&PID_0CA4&MI_00\demo", Function = "Studio camera", Service = "ksthunk", Provider = "Microsoft Corporation", Version = "10.0.26100.1" }];
         DeviceIdentity.ClassifySockets(snapshot);
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
         PortMap.Analyze(snapshot);

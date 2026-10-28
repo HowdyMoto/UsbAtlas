@@ -210,6 +210,21 @@ internal static class CliTests
         Check(Diff.Empty(Diff.Compare(Revised(""), Revised("1.10"))), "A snapshot without revisions doesn't report every device as changed.");
         var revised = Revised("1.10");
         Check(Reports.Show(revised, revised.Resolve("H01/01"))["node"]!["revision"]!.ToString() == "1.10" && revised.Find("rev 1.10").Count == 1, "show and find carry the revision.");
+        // A maker's driver updated or a filter added is a change; an old snapshot without function drivers isn't.
+        static Session Drivered(Action<UsbNode> change) { var s = DemoData.Create(); change(s.Nodes.First(n => n.Name == "Audio interface")); return new(s, "demo"); }
+        var driverUpdate = Diff.Text(Diff.Compare(Drivered(_ => { }), Drivered(n => { n.StackDrivers[0].Version = "4.70.0"; n.StackDrivers.Add(new() { Role = "lower filter", Service = "vmusbfilter", Provider = "VMware, Inc." }); })));
+        Check(driverUpdate.Contains("driver Studio Audio · Mar 2019 · studiousb 4.65.5 + Windows' own → Studio Audio · Mar 2019 · studiousb 4.70.0 + Windows' own")
+            && driverUpdate.Contains("filters None from other programs → vmusbfilter (VMware, Inc.)"), $"A maker's driver updated and a filter added are reported: {driverUpdate}");
+        Check(Diff.Empty(Diff.Compare(Drivered(n => { n.StackDrivers.Clear(); n.DriverStackRead = false; }), Drivered(_ => { }))), "A snapshot without function drivers doesn't report every device's driver as changed.");
+        // tree names only drivers that set a device apart; find searches drivers, their makers and filters.
+        var demo = Demo();
+        string treeText = TextOut.Render(Reports.Tree(demo, false));
+        Check(treeText.Contains("driver Studio Audio · Mar 2019 · studiousb 4.65.5 + Windows' own") && treeText.Contains("filters camfx (FaceFX Software, on every device of its kind)")
+            && !treeText.Contains("Windows' own ·") && !treeText.Contains("driver Windows' own"), $"tree names a maker's driver and another program's filter, and not Windows' own: {treeText}");
+        Check(demo.Find("Studio Audio").Single().Name == "Audio interface" && demo.Find("filter driver").Single().Name == "Studio camera" && demo.Find("usbvideo").Single().Name == "Studio camera"
+            && demo.Find("Microsoft").Count == 0, "find searches drivers, their makers and filters, but not Windows' own maker.");
+        var shown = Reports.Show(demo, demo.Resolve("H01/02"))["node"]!["driver"]!.AsObject();
+        Check(shown.Select(p => p.Key).Take(2).SequenceEqual(["summary", "filters"]), "show leads its driver block with the summary and filters.");
         // A redacted baseline compared with a redacted scan: redaction must be stable and idempotent.
         var serialed = DemoData.Create(); serialed.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";
         var again = DemoData.Create(); again.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";
@@ -300,6 +315,20 @@ internal static class CliTests
         var controller = new UsbNode { Kind = "Controller", Children = [root] };
         Check(Explanations.For(controller, Explanations.DriverProblem, [controller]).What.Contains("Code 43 on this host"), "A host explains its merged root hub's problem.");
         Check(Explanations.For(new UsbNode { Kind = "Device" }, Explanations.DriverProblem, []).What.Length > 0, "A node without problems still gets an explanation, not a crash.");
+        // A composite device's own driver only splits it into functions; their drivers, and filters other programs added, are what matter.
+        DriverInfo Fn(string service, string provider, string role = "function", string version = "", string date = "") => new() { Role = role, Service = service, Provider = provider, Version = version, Date = date };
+        var composite = new UsbNode { Kind = "Device", DriverService = "usbccgp", DriverProvider = "Microsoft", DriverStackRead = true, StackDrivers = [Fn("usbaudio2", "Microsoft"), Fn("HidUsb", "Microsoft"), Fn("ksthunk", "Microsoft Corporation", "class upper filter")] };
+        Check(Drivers.Summary(composite) == "Windows' own" && Drivers.FilterSummary(composite) == "None from other programs", "Windows' own drivers and filters are summarized, not listed.");
+        composite.StackDrivers.Add(Fn("studiousb", "Studio Audio", version: "4.65.5", date: "3-14-2019"));
+        composite.StackDrivers.Add(Fn("vmusbfilter", "VMware, Inc.", "lower filter"));
+        composite.StackDrivers.Add(Fn("camfx", "", "class upper filter"));
+        Check(Drivers.Summary(composite) == "Studio Audio · Mar 2019 · studiousb 4.65.5 + Windows' own", $"A maker's driver is named with its version and age: {Drivers.Summary(composite)}");
+        Check(Drivers.FilterSummary(composite) == "vmusbfilter (VMware, Inc.), camfx (maker unknown, on every device of its kind)", $"Filters from other programs are named: {Drivers.FilterSummary(composite)}");
+        var camera = new UsbNode { DriverService = "usbccgp", DriverProvider = "Microsoft", DriverStackRead = true, StackDrivers = [Fn("usbvideo", "Razer Inc", version: "6.2.1", date: "1-2-2017"), Fn("usbaudio", "Razer Inc", version: "6.2.2", date: "1-2-2017")] };
+        Check(Drivers.Summary(camera) == "Razer Inc · Jan 2017 · usbvideo 6.2.1, usbaudio 6.2.2", $"One package's drivers name their maker and date once: {Drivers.Summary(camera)}");
+        Check(Drivers.Summary(new UsbNode { DriverService = "WinUSB", DriverProvider = "Microsoft", DriverStackRead = true }).Contains("an app drives it directly"), "WinUSB means an app drives the device.");
+        Check(Drivers.FilterSummary(new UsbNode()) == "", "Filters not read aren't reported as none.");
+        Check(Drivers.Summary(new UsbNode { DriverService = "usbhid, snd-usb-audio" }) == "usbhid, snd-usb-audio", "Linux's bound drivers are named without a maker.");
         // Problems the scan can't place are reported for the whole scan.
         var devices = new Dictionary<string, UsbScanner.DevNode>(StringComparer.OrdinalIgnoreCase)
         {

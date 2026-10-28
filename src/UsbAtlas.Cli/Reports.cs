@@ -126,6 +126,10 @@ internal static class Reports
             var children = (Topology.MergedRoot(n) ?? n).Children;
             var o = J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("figures", J.S(Figures(n))),
                 ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)),
+                // Only drivers that make this device differ from the same device elsewhere: a maker's, one an app
+                // drives, or a filter another program added. Windows' own would be on nearly every line.
+                ("driver", J.S(n.DriverStackRead && Drivers.Summary(n) is var driver && driver != "Windows' own" ? driver : "")),
+                ("filters", J.S(Drivers.FilterSummary(n) is var filters && filters != Drivers.NoFilters ? filters : "")),
                 ("issues", J.Some(IssuesOf(s, n).Select(i => (JsonNode)$"{i.Severity.ToString().ToLowerInvariant()}: {i.Text}"))),
                 ("usb3HalfOf", HalfOf(s, n)));
             var shown = children.Where(c => ports || c.Kind != "Empty port").OrderBy(c => c.Port).ToList();
@@ -223,9 +227,14 @@ internal static class Reports
                 ("pairedWith", n.CompanionHubId.Length > 0 && s.ById(n.CompanionHubId) is UsbNode pair ? s.PathOf(pair) : null),
                 ("usb3SideMissing", n.Usb3SideMissing ? true : null), ("relationship", J.S(HubRelationships.Description(n, s.Snapshot))));
         }
-        if (n.DriverService.Length > 0 || n.DriverVersion.Length > 0 || n.DriverProblems.Count > 0)
-            node["driver"] = J.Obj(("service", J.S(n.DriverService)), ("version", J.S(n.DriverVersion)), ("date", J.S(n.DriverDate)), ("provider", J.S(n.DriverProvider)), ("inf", J.S(n.DriverInf)),
-                ("problems", J.Some(n.DriverProblems.Select(p => (JsonNode)J.Obj(("code", p.Code), ("meaning", p.Meaning), ("instanceId", p.InstanceId), ("name", J.S(p.Name)))))));
+        if (n.DriverService.Length > 0 || n.DriverVersion.Length > 0 || n.DriverProblems.Count > 0 || n.StackDrivers.Count > 0)
+            // What explains a problem leads: a problem code, a maker's driver and its age, filters other programs
+            // added. The device's own driver follows; on a composite device it is only Windows' usbccgp.
+            node["driver"] = J.Obj(("summary", J.S(Drivers.Summary(n))), ("filters", J.S(Drivers.FilterSummary(n))),
+                ("problems", J.Some(n.DriverProblems.Select(p => (JsonNode)J.Obj(("code", p.Code), ("meaning", p.Meaning), ("instanceId", p.InstanceId), ("name", J.S(p.Name)))))),
+                ("service", J.S(n.DriverService)), ("version", J.S(n.DriverVersion)), ("date", J.S(n.DriverDate)), ("provider", J.S(n.DriverProvider)), ("inf", J.S(n.DriverInf)),
+                ("stack", J.Some(n.StackDrivers.Select(d => (JsonNode)J.Obj(("role", d.Role), ("service", d.Service), ("provider", J.S(d.Provider)), ("version", J.S(d.Version)), ("date", J.S(d.Date)), ("inf", J.S(d.Inf)),
+                    ("instanceId", d.InstanceId), ("function", J.S(d.Function)))))));
         if (n.ContainerId.Length > 0 && !Containers.IsRoot(n.ContainerId))
         {
             var c = s.Snapshot.Containers.FirstOrDefault(x => x.Id.Equals(n.ContainerId, StringComparison.OrdinalIgnoreCase));

@@ -286,6 +286,7 @@ public partial class MainWindow : Window
                 Field("Link use", usage, LinkUseHelp);
             }
             else Field("Link use", attached ? "Not reported" : Reported(""), LinkUseHelp);
+            DriverFields(node);
             Section("Port");
             Field("Path", pathLabels.GetValueOrDefault(node.Id, NotApplicable), PathHelp);
             Field("Port number", node.Port.ToString("00"), "The number Windows gives this port on its hub. A USB 3 socket has two, one for its USB 2 half and one for its USB 3 half.");
@@ -344,6 +345,7 @@ public partial class MainWindow : Window
             Field("Power saving", PowerSavingText(MergedRoot(node) ?? node), PowerSavingHelp);
             Field("Power plan", PowerSaving.PlanSummary(snapshot), "The power plan's USB selective suspend setting. While it's off, Windows suspends no USB device, whatever each device's own power-saving setting says.");
             Field("Power available", "Unknown · not measured", SupplyHelp);
+            DriverFields(node);
         }
         Section("Upstream path");
         // A merged root hub is part of its host, so the path reads H01 › 03.
@@ -432,6 +434,27 @@ public partial class MainWindow : Window
         Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 20, 0, 16) });
         Text("Link rates are shared signaling limits. Reserved bandwidth, polling rates and requested power come from device descriptors, not live measurements. Power checks compare declared draw with what the USB specification guarantees a port; supply capacity itself is not measured.", 11, "TextMuted");
 
+    }
+    // The driver Windows loaded and whether Device Manager shows a problem, as on its General and Driver tabs.
+    // Every kind of selection gets the same rows, so flipping between ports keeps them in place.
+    private void DriverFields(UsbNode node)
+    {
+        bool has = node.Kind is "Device" or "Hub" or "Controller" or "Root hub";
+        string Value(string v) => !has ? node.Kind == "Unavailable" ? "Unknown" : NotApplicable : v.Length > 0 ? v : "Not reported";
+        // A host's card also stands for its merged root hub, whose problems its badge already shows.
+        var problems = node.DriverProblems.Count > 0 ? node.DriverProblems : node.Kind == "Controller" ? MergedRoot(node)?.DriverProblems ?? [] : [];
+        var worst = problems.OrderBy(p => p.Code is 22 or 29 ? 2 : p.Code is 14 or 47 ? 1 : 0).FirstOrDefault();
+        Section("Driver");
+        Field("Status", worst != null ? $"Code {worst.Code} · {worst.Meaning}" + (problems.Count > 1 ? $" · {problems.Count - 1} more" : "") : Value(has ? "No problem reported" : ""),
+            "What Device Manager's General tab says about it: a problem code and what it means, or none. A problem on one of a device's functions, such as its audio or a HID collection, counts as the device's. Detection details lists every one.");
+        Field("Driver", Value(Drivers.Summary(node)),
+            "Whether Windows' own drivers run it, the same as on any computer, or a maker's driver does, with its version and date. An old maker's driver is the first thing to update when a device misbehaves; "
+            + "removing one in Device Manager (Uninstall device, with “Attempt to remove the driver”) falls back to Windows' own. “An app drives it directly” means WinUSB or libusb, often installed by a vendor tool or Zadig: "
+            + "Windows doesn't treat it as a keyboard, audio or storage device, only that app can use it. Detection details lists every driver and function.");
+        Field("Filters", Value(Drivers.FilterSummary(node)),
+            "Filter drivers other programs put in its stack, such as virtual machine USB passthrough, antivirus, backup, encryption, webcam effects or input remapping. "
+            + "They see everything the device does, and a faulty or outdated one is a common cause of devices that drop out, fail to start or perform poorly. "
+            + "One on every device of its kind sits under all cameras, or all disks. Windows' own filters are listed in Detection details.");
     }
     private string PowerSavingText(UsbNode n) => Topology.PowerSavingText(n, snapshot);
     private List<UsbNode> FindPath(string id) => Topology.FindPath(snapshot, id);
