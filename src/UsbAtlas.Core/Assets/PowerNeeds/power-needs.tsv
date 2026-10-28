@@ -1,0 +1,23 @@
+# Devices that need more power to charge at full speed than an ordinary USB port gives, read by PowerNeeds.cs.
+#
+# Each line is one device: tab-separated vendor ID, product ID, product string, watts, name, basis and source.
+#   vendor     Four hex digits, as USB Atlas shows VID:PID.
+#   product    Four hex digits, or * when the maker changes the product ID with what the device is doing, as a
+#              headset's changes between file sharing, Link and developer modes.
+#   string     The product string the device reports, or * for any.
+#   watts      What it needs to charge at full speed.
+#   name       What it is, in our own words.
+#   basis      Where the figure comes from, in a phrase that reads after the name and figure.
+#   source     The maker's page the figure is taken from.
+#
+# Sourcing: every figure is the maker's own, from its own support or product pages; reviews, forums and resale
+# listings aren't used. Only devices that need more than a 5 V port can give (15 W), or close to it, are worth
+# listing. Quest 3 reports the product string "Quest 3" (seen on hardware, as 2833:5010 in Link and 2833:5011 with
+# file sharing on); "Quest 2" is what Quest 2 reports in lsusb output quoted in libmtp's issue tracker. The Quest 3S
+# and Quest Pro strings are Meta's product names, not yet seen on hardware.
+#
+# vendor	product	string	watts	name	basis	source
+2833	*	Quest 3	18	Meta Quest 3	Meta's figure, from a Power Delivery charger or port	https://www.meta.com/help/quest/3482884435359892/
+2833	*	Quest 3S	18	Meta Quest 3S	Meta's figure, from a Power Delivery charger or port	https://www.meta.com/help/quest/3482884435359892/
+2833	*	Quest Pro	45	Meta Quest Pro	Meta's figure for its 45 W charger and dock	https://www.meta.com/help/quest/3482884435359892/
+2833	*	Quest 2	10	Meta Quest 2	Meta's figure for its 10 W charger	https://www.meta.com/help/quest/3482884435359892/

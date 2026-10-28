@@ -304,7 +304,7 @@ public partial class MainWindow
         }
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
     private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
 
     // Device notifications reach the window, settle into one rescan, queue behind a running
@@ -323,6 +323,42 @@ public partial class MainWindow
             Check(deviceSettle.IsEnabled, "Device change notifications did not reach the window.");
         }
         finally { demo = true; deviceSettle.Stop(); }
+
+        Check(powerNotification != IntPtr.Zero, "Windows refused the app's sleep/wake registration.");
+        // Use the real window hook and USB interface payloads, including drops that settle before a scan.
+        static Snapshot Probe(string id)
+        {
+            var device = new UsbNode { Id = id, InstanceId = id, Kind = "Device" };
+            return new Snapshot { Controllers = [new UsbNode { Kind = "Host controller", Children = [device] }] };
+        }
+        void Notify(string id, int change)
+        {
+            string link = @"\\?\USB#VID_FFFF&PID_FFFF#" + id + "#{a5dcbf10-6530-11d2-901f-00c04fb951ed}";
+            var data = System.Runtime.InteropServices.Marshal.AllocHGlobal(28 + (link.Length + 1) * 2);
+            try
+            {
+                System.Runtime.InteropServices.Marshal.WriteInt32(data, 0, 28 + (link.Length + 1) * 2);
+                System.Runtime.InteropServices.Marshal.WriteInt32(data, 4, DbtDevTypDeviceInterface);
+                System.Runtime.InteropServices.Marshal.WriteInt32(data, 8, 0);
+                System.Runtime.InteropServices.Marshal.Copy(UsbInterfaces[0].ToByteArray(), 0, data + 12, 16);
+                System.Runtime.InteropServices.Marshal.Copy((link + '\0').ToCharArray(), 0, data + 28, link.Length + 1);
+                SendMessage(hwnd, WmDeviceChange, change, data);
+            }
+            finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(data); }
+        }
+        const string awakeId = @"USB\VID_FFFF&PID_FFFF\awake", sleepingId = @"USB\VID_FFFF&PID_FFFF\sleeping";
+        for (int i = 0; i < 3; i++) { Notify("awake", DbtDeviceRemoveComplete); Notify("awake", DbtDeviceArrival); }
+        var awakeProbe = Probe(awakeId); reconnects.Apply(awakeProbe);
+        Check(awakeProbe.Nodes.Single(n => n.InstanceId == awakeId).QuickReconnects == 3, $"Repeated returns without sleep must still count as unstable (observed {awakeProbe.Nodes.Single(n => n.InstanceId == awakeId).QuickReconnects}).");
+        foreach (int resume in new[] { PbtApmResumeAutomatic, PbtApmResumeSuspend, PbtApmResumeAutomatic })
+        {
+            SendMessage(hwnd, WmPowerBroadcast, PbtApmSuspend, 0);
+            SendMessage(hwnd, WmPowerBroadcast, resume, 0);
+            Notify("sleeping", DbtDeviceRemoveComplete); Notify("sleeping", DbtDeviceArrival);
+        }
+        var sleepingProbe = Probe(sleepingId); reconnects.Apply(sleepingProbe);
+        Check(sleepingProbe.Nodes.Single(n => n.InstanceId == sleepingId).QuickReconnects == 0, "Returns after wake notifications must not count as unstable.");
+        Check(!deviceSettle.IsEnabled, "Power notifications must not rescan the sample topology.");
 
         int version = refreshIndicatorVersion;
         for (int i = 0; i < 5; i++) { QueueDeviceRescan(); await Task.Delay(60); }
@@ -422,9 +458,15 @@ public partial class MainWindow
             double Span(Rect r) => horizontalTree ? r.Height : r.Width;
             var order = kids.Select(Along).ToList();
             Check(order.Zip(order.Skip(1)).All(p => p.First < p.Second), $"Children of {node.Id} are out of socket order.");
-            if (!packedHubs.Contains(node.Id)) { Check(kids.All(r => Near(Flow(r), Flow(kids[0]))), $"Children of {node.Id} wrapped onto another row."); continue; }
-            Check(horizontalTree && detail == CardDetail.Far, $"Children of {node.Id} are packed outside far cards in the horizontal layout.");
-            Check(kids.Select((r, i) => Near(Flow(r), Flow(kids[i % 2]))).All(same => same) && Flow(kids[1]) > Flow(kids[0]) + kids[0].Width,
+            if (!packedHubs.Contains(node.Id))
+            {
+                Check(kids.All(r => Near(Flow(r), Flow(kids[0]))), $"Children of {node.Id} wrapped onto another row.");
+                Check(!TopologyLayout.CanPack(node, Children, PackFrom), $"The {Children(node).Count} end devices of {node.Id} must pack into two rows.");
+                continue;
+            }
+            Check(!horizontalTree || detail == CardDetail.Far, $"Children of {node.Id} are packed outside far cards in the horizontal layout.");
+            Check(Children(node).Count >= PackFrom, $"Children of {node.Id} are packed in a group smaller than {PackFrom}.");
+            Check(kids.Select((r, i) => Near(Flow(r), Flow(kids[i % 2]))).All(same => same) && Flow(kids[1]) > Flow(kids[0]) + (horizontalTree ? kids[0].Width : kids[0].Height),
                 $"Packed children of {node.Id} must alternate between exactly two rows.");
             for (int i = 1; i < kids.Count; i += 2)
             {
@@ -788,7 +830,7 @@ public partial class MainWindow
                 var rows = Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is "field" or "section").ToList();
                 double origin = rows[0].TranslatePoint(new Point(), Details).Y;
                 rowsStart = origin - Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is string tag && tag.StartsWith("warning:", StringComparison.Ordinal)).Sum(e => e.ActualHeight + e.Margin.Top + e.Margin.Bottom);
-                return rows.Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)e).Text)}@{e.TranslatePoint(new Point(), Details).Y - origin:0}").ToList();
+                return rows.Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)((Border)e).Child).Text)}@{e.TranslatePoint(new Point(), Details).Y - origin:0}").ToList();
             }
             var expected = Layout("demo/root/1");
             double expectedStart = rowsStart;

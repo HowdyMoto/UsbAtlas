@@ -15,6 +15,8 @@ internal static class Theme
         ("WindowSurface", "#FAFAF8", "#16191E"), ("CanvasSurface", "#E9EBE9", "#0D0F12"),
         ("HostSurface", "#EAEEEF", "#202731"), ("HostBorder", "#DCE1E3", "#303A47"),
         ("Border", "#CED3D7", "#3A414B"), ("Divider", "#E1E4E7", "#2A3038"),
+        // Properties headings sit on a band a step off the panel, so each section reads as its own group.
+        ("HeadingFill", "#EEF1F4", "#272E38"),
         // Hub chips wired together inside one unit sit on a band a step off the canvas, outlined like a card.
         ("UnitFill", "#DCE0DC", "#1A2029"), ("UnitEdge", "#A8B0B7", "#4A5462"),
         // The search field is recessed below the title bar it sits on, and its edge keeps 3:1 against the bar.

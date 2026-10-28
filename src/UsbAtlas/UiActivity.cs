@@ -60,6 +60,9 @@ public partial class MainWindow
 
     private void HandlePower(int type, IntPtr data)
     {
+        // Waking powers devices back up, which looks like drops and quick returns, so every wake notification marks
+        // the returns after it as expected, on the sample topology too.
+        if (type is PbtApmResumeAutomatic or PbtApmResumeSuspend) reconnects.Woke(DateTime.Now);
         if (demo) return;
         if (type == PbtPowerSettingChange && data != IntPtr.Zero)
         {
@@ -82,7 +85,6 @@ public partial class MainWindow
             var now = DateTime.Now;
             if (now - lastWake < WakeSettle) return;
             lastWake = now;
-            reconnects.Woke(now);
             AddActivity($"The computer woke; checking what came back in {WakeSettle.TotalSeconds:0} s");
             _ = CheckAfterWaking(beforeSleep); beforeSleep = null;
         }

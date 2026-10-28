@@ -156,9 +156,46 @@ internal static class Descriptors
     private static void DecodeCapability(byte[] d, Action<string, JsonNode?> F)
     {
         byte cap = d[2];
-        F("bDevCapabilityType", $"0x{cap:X2} {cap switch { 1 => "Wireless USB", 2 => "USB 2.0 Extension", 3 => "SuperSpeed USB", 4 => "Container ID", 5 => "Platform", 0x0A => "SuperSpeedPlus USB", 0x0B => "Precision Time Measurement", 0x0D => "Billboard", 0x0E => "Authentication", 0x0F => "Billboard Ex", 0x10 => "Configuration Summary", _ => "other" }}");
+        F("bDevCapabilityType", $"0x{cap:X2} {cap switch { 1 => "Wireless USB", 2 => "USB 2.0 Extension", 3 => "SuperSpeed USB", 4 => "Container ID", 5 => "Platform", 0x0A => "SuperSpeedPlus USB", 0x0B => "Precision Time Measurement", 0x0D => "Billboard", 0x0E => "Authentication", 0x0F => "Billboard Ex", 0x10 => "Configuration Summary", _ when PdDescriptors.Name(cap) is { Length: > 0 } pd => pd, _ => "other" }}");
         switch (cap)
         {
+            // USB Power Delivery's capabilities, at the spec's offsets (PdDescriptors).
+            case PdDescriptors.PowerDelivery when d.Length >= 14:
+            {
+                uint a = BitConverter.ToUInt32(d, 4);
+                var bits = new[] { (a & 2) != 0 ? "Battery Charging" : null, (a & 4) != 0 ? "USB PD" : null, (a & 8) != 0 ? "provider" : null, (a & 16) != 0 ? "consumer" : null,
+                    (a & 32) != 0 ? "charging policy" : null, (a & 64) != 0 ? "USB Type-C Current" : null, (a & 0x100) != 0 ? "AC supply" : null,
+                    (a & 0x200) != 0 ? $"battery ×{(a >> 11) & 7}" : null, (a & 0x400) != 0 ? "other supply" : null, (a & 0x4000) != 0 ? "uses VBUS" : null }.Where(x => x != null);
+                F("bmAttributes", $"0x{a:X8} ({string.Join(", ", bits)})");
+                // The spec's 14 bytes, or 18 with the port bitmaps the Linux and Windows headers put first.
+                int at = 8;
+                if (d.Length >= 18) { F("bmProviderPorts", $"0x{U16(d, 8):X4}"); F("bmConsumerPorts", $"0x{U16(d, 10):X4}"); at = 12; }
+                F("bcdBCVersion", Bcd(U16(d, at))); F("bcdPDVersion", Bcd(U16(d, at + 2))); F("bcdUSBTypeCVersion", Bcd(U16(d, at + 4)));
+                break;
+            }
+            case PdDescriptors.BatteryInfo when d.Length >= 24:
+                F("iBattery", d[3]); F("iSerial", d[4]); F("iManufacturer", d[5]); F("bBatteryId", d[6]);
+                F("dwChargedThreshold", $"{BitConverter.ToUInt32(d, 8)} mWh"); F("dwWeakThreshold", $"{BitConverter.ToUInt32(d, 12)} mWh");
+                F("dwBatteryDesignCapacity", $"{BitConverter.ToUInt32(d, 16)} mWh"); F("dwBatteryLastFullchargeCapacity", $"{BitConverter.ToUInt32(d, 20)} mWh");
+                break;
+            case PdDescriptors.ConsumerPort when d.Length >= 24:
+            {
+                uint peakTime = BitConverter.ToUInt32(d, 20);
+                F("bmCapabilities", $"0x{U16(d, 4):X4} ({PdDescriptors.PortModes(U16(d, 4))})");
+                F("wMinVoltage", $"{U16(d, 6)} ({U16(d, 6) * 0.05:0.##} V)"); F("wMaxVoltage", $"{U16(d, 8)} ({U16(d, 8) * 0.05:0.##} V)");
+                F("dwMaxOperatingPower", $"{BitConverter.ToUInt32(d, 12)} ({BitConverter.ToUInt32(d, 12) / 100.0:0.##} W)");
+                F("dwMaxPeakPower", $"{BitConverter.ToUInt32(d, 16)} ({BitConverter.ToUInt32(d, 16) / 100.0:0.##} W)");
+                F("dwMaxPeakPowerTime", peakTime is 0xFFFF or 0xFFFFFFFF ? $"0x{peakTime:X} (unknown)" : $"{peakTime} ({peakTime / 10.0:0.#} s)");
+                break;
+            }
+            case PdDescriptors.ProviderPort when d.Length >= 8:
+            {
+                int count = Math.Min(d[6], (d.Length - 8) / 4);
+                F("bmCapabilities", $"0x{U16(d, 4):X4} ({PdDescriptors.PortModes(U16(d, 4))})"); F("bNumOfPDObjects", d[6]);
+                F("powerDataObjects", J.Arr(Enumerable.Range(0, count).Select(i => BitConverter.ToUInt32(d, 8 + 4 * i))
+                    .Select(pdo => (JsonNode)$"0x{pdo:X8}: {PdDescriptors.SourcePdo(pdo).Text}")));
+                break;
+            }
             case 2 when d.Length >= 7:
             {
                 uint a = BitConverter.ToUInt32(d, 3);

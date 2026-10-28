@@ -17,13 +17,17 @@ public partial class MainWindow
     private readonly DispatcherTimer deviceSettle = new() { Interval = TimeSpan.FromMilliseconds(600) };
     private bool rescanQueued;
     private readonly ReconnectTracker reconnects = new();
+    // Each connected device's highest battery level this session, so one falling while plugged in shows on a refresh.
+    private readonly BatteryTracker batteries = new();
     private readonly List<IntPtr> deviceNotifications = [];
+    private IntPtr powerNotification;
 
     private void WatchDevices()
     {
         deviceSettle.Tick += async (_, _) => { deviceSettle.Stop(); await RescanAfterDeviceChange(); };
         var source = PresentationSource.FromVisual(this) as HwndSource;
         source?.AddHook(DeviceChangeHook);
+        if (source != null) powerNotification = RegisterSuspendResumeNotification(source.Handle, 0);
         // Registering for USB device and hub interfaces adds arrival and removal messages that name the
         // device, so a quick drop and return is counted even when it settles into a single rescan.
         if (source != null)
@@ -32,7 +36,7 @@ public partial class MainWindow
                 var filter = new DevBroadcastInterface { Size = Marshal.SizeOf<DevBroadcastInterface>(), DeviceType = DbtDevTypDeviceInterface, ClassGuid = guid };
                 if (RegisterDeviceNotification(source.Handle, ref filter, 0) is var handle && handle != IntPtr.Zero) deviceNotifications.Add(handle);
             }
-        Closed += (_, _) => { deviceSettle.Stop(); foreach (var handle in deviceNotifications) UnregisterDeviceNotification(handle); };
+        Closed += (_, _) => { deviceSettle.Stop(); if (powerNotification != IntPtr.Zero) UnregisterSuspendResumeNotification(powerNotification); source?.RemoveHook(DeviceChangeHook); foreach (var handle in deviceNotifications) UnregisterDeviceNotification(handle); };
         WatchActivity(source?.Handle ?? IntPtr.Zero);
     }
 
@@ -40,6 +44,7 @@ public partial class MainWindow
     private IntPtr DeviceChangeHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         int change = unchecked((int)wParam.ToInt64());
+        // Sleep, wake and AC/battery switches: waking marks the returns that follow as expected and rescans (UiActivity).
         if (message == WmPowerBroadcast) HandlePower(change, lParam);
         bool monitor = false;
         if (message == WmDeviceChange && change is DbtDeviceArrival or DbtDeviceRemoveComplete && lParam != IntPtr.Zero
@@ -82,6 +87,8 @@ public partial class MainWindow
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct DevBroadcastInterface { public int Size, DeviceType, Reserved; public Guid ClassGuid; public short Name; }
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr RegisterSuspendResumeNotification(IntPtr recipient, int flags);
+    [DllImport("user32.dll")] private static extern bool UnregisterSuspendResumeNotification(IntPtr handle);
     [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr RegisterDeviceNotification(IntPtr recipient, ref DevBroadcastInterface filter, int flags);
     [DllImport("user32.dll")] private static extern bool UnregisterDeviceNotification(IntPtr handle);
 }

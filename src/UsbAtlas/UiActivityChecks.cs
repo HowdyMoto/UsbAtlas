@@ -54,6 +54,8 @@ public partial class MainWindow
 
             // A hub that drops takes what is behind it along; devices returning with it belong to its entry.
             hub.InstanceId = "TEST/HUB/1"; behind.InstanceId = "TEST/DEVICE/1";
+            // The wake checks before this one leave a wake seconds ago, after which returns are expected, not quick drops.
+            reconnects.Woke(DateTime.MinValue);
             var gone = DateTime.Now.AddSeconds(-2.2);
             foreach (var id in new[] { hub.InstanceId, behind.InstanceId }) reconnects.Removed(id, gone);
             reconnects.Arrived(hub.InstanceId, gone.AddSeconds(2.3)); reconnects.Arrived(behind.InstanceId, gone.AddSeconds(2.4));

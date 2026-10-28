@@ -122,7 +122,12 @@ internal sealed class LinuxUsbScanner(ISysfs sys)
             var node = new UsbNode { Id = $"{hub.Id}/{port}", Port = port, Protocols = superSpeed ? "USB 3.x" : usb1 ? "USB 1.x" : "USB 1.x / USB 2.0" };
             hub.Children.Add(node);
             node.PortIsUserConnectable = sys.Read($"{portDir}/connect_type") switch { "hotplug" => true, "hardwired" or "not used" => false, _ => null };
-            if (sys.Link($"{portDir}/connector") != null) node.PortConnectorIsTypeC = true;
+            // The connector links to its Type-C port, such as …/typec/port0, which says what power the socket gives.
+            if (sys.Link($"{portDir}/connector") is string connector)
+            {
+                node.PortConnectorIsTypeC = true;
+                ReadTypeC(connector.Split('/')[^1], node);
+            }
             // The other half of a USB 3 socket: ../../usb2/2-0:1.0/usb2-port1, or …/2-1:1.0/2-1-port3 on a hub.
             if (sys.Link($"{portDir}/peer")?.Split('/')[^1] is string peer && Regex.Match(peer, @"^(.+)-port(\d+)$") is { Success: true } m)
                 (node.CompanionHubSymbolicLink, node.CompanionPortNumber) = (m.Groups[1].Value, int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture));
@@ -132,6 +137,47 @@ internal sealed class LinuxUsbScanner(ISysfs sys)
             if (sys.Read($"{Devices}/{child}/idVendor") == null) { node.Kind = "Empty port"; node.Name = "Available port " + port; node.Status = "Empty"; continue; }
             ReadDevice(child, node, depth);
         }
+    }
+
+    // A USB-C port's power, from the Type-C class (Documentation/ABI/testing/sysfs-class-typec): what it advertises now
+    // and, under Power Delivery, the supplies it offers (its source capabilities) and the most the device in it asks for
+    // (its partner's sink capabilities), each linked as usb_power_delivery. Linux shows capabilities, not the contract
+    // the two agreed on, and offers only mean something while the port supplies power: its current role is bracketed.
+    private void ReadTypeC(string port, UsbNode node)
+    {
+        string dir = $"class/typec/{port}";
+        if (sys.Read($"{dir}/power_operation_mode") is not { Length: > 0 } mode) return;
+        node.TypeCPowerMode = mode;
+        if (sys.Read($"{dir}/power_role")?.Contains("[source]", StringComparison.Ordinal) == true && Pdos(sys.Link($"{dir}/usb_power_delivery"), "source-capabilities") is { Count: > 0 } offers)
+            (node.PdOffers, node.PdOfferWatts) = ([.. offers.Select(o => o.Text)], offers.Max(o => o.Watts));
+        if (Pdos(sys.Link($"{dir}-partner/usb_power_delivery"), "sink-capabilities") is { Count: > 0 } asks) node.PdPartnerWatts = asks.Max(a => a.Watts);
+    }
+
+    // The power data objects under /sys/class/usb_power_delivery/pdN/<kind>, in order: "1:fixed_supply" and so on, each
+    // with its values in files that end in their unit, such as 5000mV, 3000mA or 45000mW
+    // (Documentation/ABI/testing/sysfs-class-usb_power_delivery). A sink states the current it operates at.
+    internal List<(string Text, double Watts)> Pdos(string? link, string kind)
+    {
+        var result = new List<(string, double)>();
+        if (link?.Split('/')[^1] is not { Length: > 0 } pd) return result;
+        string dir = $"class/usb_power_delivery/{pd}/{kind}";
+        bool sink = kind.StartsWith("sink", StringComparison.Ordinal);
+        foreach (var pdo in sys.List(dir).OrderBy(p => int.TryParse(p.Split(':')[0], out var i) ? i : int.MaxValue))
+        {
+            double? Value(string file) => double.TryParse(Regex.Match(sys.Read($"{dir}/{pdo}/{file}") ?? "", @"^\d+").Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
+            double? current = sink ? Value("operational_current") ?? Value("maximum_current") : Value("maximum_current");
+            static string Volts(double mv) => (mv / 1000).ToString("0.##", CultureInfo.InvariantCulture) + " V";
+            static string Amps(double ma) => (ma / 1000).ToString("0.##", CultureInfo.InvariantCulture) + " A";
+            (string, double)? entry = pdo.Split(':').ElementAtOrDefault(1) switch
+            {
+                "fixed_supply" when Value("voltage") is double mv && current is double ma => ($"{Volts(mv)} {Amps(ma)}", mv * ma / 1e6),
+                "variable_supply" or "programmable_supply" when Value("maximum_voltage") is double mv && current is double ma => ($"{Volts(Value("minimum_voltage") ?? 0)}–{Volts(mv)} {Amps(ma)}", mv * ma / 1e6),
+                "battery" when Value(sink ? "operational_power" : "maximum_power") is double mw => ($"{Volts(Value("minimum_voltage") ?? 0)}–{Volts(Value("maximum_voltage") ?? 0)} {PowerNeeds.W(mw / 1000)}", mw / 1000),
+                _ => null
+            };
+            if (entry is (string text, double watts)) result.Add((text, watts));
+        }
+        return result;
     }
 
     private void ReadDevice(string name, UsbNode node, int depth)

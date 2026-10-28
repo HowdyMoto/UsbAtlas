@@ -19,8 +19,9 @@ internal static partial class TopologyLayout
     // A packed node's children alternate between two rows (see MeasureCore).
     internal sealed record Item(UsbNode Node, double X, double Y, double Width, double Height, double CardX, double CardY, List<Item> Children, bool Packed) { internal List<Item>? SnappedStages { get; init; } }
 
+    // Pack is the smallest group of end devices that packs into two rows, or 0 for none.
     internal static Item Measure(UsbNode node, Func<UsbNode, List<UsbNode>> children, bool horizontal, Func<UsbNode, double> width, Func<UsbNode, double> height,
-        Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups = null, double gap = Gap, bool pack = false, Func<UsbNode, UsbNode?>? twin = null)
+        Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups = null, double gap = Gap, int pack = 0, Func<UsbNode, UsbNode?>? twin = null)
     {
         var tree = horizontal
             ? MeasureCore(node, children, height, width, portOffset, null, gap, pack, twin)
@@ -28,21 +29,21 @@ internal static partial class TopologyLayout
         return horizontal ? Transpose(tree) : tree;
     }
 
-    // Packing takes a group of four or more end devices: rows of grandchildren wouldn't fit between them,
-    // and a folded hub is still a hub.
-    internal static bool CanPack(UsbNode node, Func<UsbNode, List<UsbNode>> children)
+    // Packing takes a group of end devices only: rows of grandchildren wouldn't fit between them, and a
+    // folded hub is still a hub.
+    internal static bool CanPack(UsbNode node, Func<UsbNode, List<UsbNode>> children, int minimum)
     {
         var kids = children(node);
-        return kids.Count >= 4 && kids.All(k => k.Kind != "Hub" && children(k).Count == 0);
+        return minimum > 0 && kids.Count >= minimum && kids.All(k => k.Kind != "Hub" && children(k).Count == 0);
     }
 
     private static Item Transpose(Item item) =>
         new(item.Node, item.Y, item.X, item.Height, item.Width, item.CardY, item.CardX, item.Children.Select(Transpose).ToList(), item.Packed);
 
     private static Item MeasureCore(UsbNode node, Func<UsbNode, List<UsbNode>> children, Func<UsbNode, double> cross, Func<UsbNode, double> along,
-        Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups, double gap, bool pack, Func<UsbNode, UsbNode?>? twin = null)
+        Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups, double gap, int pack, Func<UsbNode, UsbNode?>? twin = null)
     {
-        if (groups?.Invoke(node) is { Count: > 1 } members) return MeasureSnapped(members, children, cross, along, portOffset, groups, twin);
+        if (groups?.Invoke(node) is { Count: > 1 } members) return MeasureSnapped(members, children, cross, along, portOffset, groups, pack, twin);
         double width = cross(node), height = along(node);
         var kids = children(node);
         if (kids.Count == 0) return new(node, 0, 0, width, height, 0, 0, [], false);
@@ -59,7 +60,7 @@ internal static partial class TopologyLayout
         // make the first row, and each other one sits beyond it, centered on the gap after its neighbor,
         // so its connection passes straight between two cards of the first row. Connections still leave
         // the hub in socket order and reach their rows in that order, so they never cross.
-        bool packed = pack && CanPack(node, children);
+        bool packed = CanPack(node, children, pack);
         double siblingGap = packed ? PackGap : gap;
         var xs = new double[items.Count];
         double x = 0, firstRow = packed ? items.Where((_, i) => i % 2 == 0).Max(i => i.Height) : 0;
