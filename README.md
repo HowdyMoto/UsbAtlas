@@ -2,6 +2,13 @@
 
 A native Windows USB topology explorer built with WPF and .NET 10. No third-party NuGet packages, driver installation, or administrator manifest required. Bundled fonts and Google Material Symbols icons are credited in [Third-party notices](THIRD-PARTY-NOTICES.md).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/usb-atlas-dark.png">
+  <img src="docs/images/usb-atlas-light.png" alt="USB Atlas showing a USB host with its hubs and devices as a map of cards and sockets. Fix first leads with a portable hard drive that Windows turned off for insufficient power, and Properties explains why and what to do.">
+</picture>
+
+*USB Atlas on its demo hardware (`--demo`): what to fix first, the map of every hub, device and socket, and what the selected problem means.*
+
 ## Getting started
 
 1. [Download](#download) the ZIP, extract it, and open `UsbAtlas.exe`. It only reads; nothing is installed or changed.
