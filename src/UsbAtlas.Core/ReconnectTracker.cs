@@ -14,6 +14,8 @@ internal sealed class ReconnectTracker
     internal static readonly TimeSpan WakeSettle = TimeSpan.FromSeconds(20);
     private DateTime wokeAt = DateTime.MinValue;
 
+    // Raised for each quick return: the instance, when it came back and how long it was gone.
+    internal event Action<string, DateTime, TimeSpan>? Returned;
     internal void Removed(string id, DateTime at) => removed[id] = at;
     internal void Woke(DateTime at) { wokeAt = at; removed.Clear(); }
     internal void Arrived(string id, DateTime at)
@@ -21,6 +23,7 @@ internal sealed class ReconnectTracker
         if (!removed.Remove(id, out var gone) || at - gone > QuickReturn || at >= wokeAt && at - wokeAt <= WakeSettle) return;
         if (!returns.TryGetValue(id, out var times)) returns[id] = times = [];
         times.Add(at);
+        Returned?.Invoke(id, at, at - gone);
     }
 
     // A hub that drops takes everything behind it along, as switching a KVM, changing monitor inputs or
