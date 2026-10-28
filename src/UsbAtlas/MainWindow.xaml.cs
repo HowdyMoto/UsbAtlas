@@ -523,8 +523,15 @@ public partial class MainWindow : Window
     }
     private void Section(string title)
     {
-        Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 9, 0, 8) });
-        Details.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary"), Margin = new Thickness(0, 0, 0, 7), Tag = "section" });
+        // A heading is a step larger and bolder than the rows, on a tinted band with more room above than below,
+        // so it leads its rows. The band reaches left of the rows so its text lines up with their labels, and stops
+        // at their right edge, clear of the scroll bar.
+        Details.Children.Add(new Border
+        {
+            Child = new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Brush("TextPrimary") },
+            Background = Brush("HeadingFill"), CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 4, 8, 5),
+            Margin = new Thickness(-8, 14, 0, 8), Tag = "section"
+        });
     }
     // Values stay on one line (full text in the tooltip) so every row keeps its height; missing values are muted.
     // Plain row names; where a technical term sits behind one, the label's tooltip names it.

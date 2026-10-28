@@ -824,7 +824,7 @@ public partial class MainWindow
                 var rows = Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is "field" or "section").ToList();
                 double origin = rows[0].TranslatePoint(new Point(), Details).Y;
                 rowsStart = origin - Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is string tag && tag.StartsWith("warning:", StringComparison.Ordinal)).Sum(e => e.ActualHeight + e.Margin.Top + e.Margin.Bottom);
-                return rows.Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)e).Text)}@{e.TranslatePoint(new Point(), Details).Y - origin:0}").ToList();
+                return rows.Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)((Border)e).Child).Text)}@{e.TranslatePoint(new Point(), Details).Y - origin:0}").ToList();
             }
             var expected = Layout("demo/root/1");
             double expectedStart = rowsStart;
