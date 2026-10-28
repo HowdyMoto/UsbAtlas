@@ -94,6 +94,11 @@ public sealed class UsbNode
     public string DriverInf { get; set; } = "";
     // Device Manager problem codes on the device or one of its functions (interfaces, HID collections).
     public List<DeviceProblem> DriverProblems { get; set; } = [];
+    // The other drivers in its stacks: each function's (interface, HID collection) and every filter driver
+    // on the device, its functions or their device classes. DriverStackRead says Windows was asked, so an
+    // empty list means none rather than not read.
+    public List<DriverInfo> StackDrivers { get; set; } = [];
+    public bool DriverStackRead { get; set; }
     // On Linux, what keeps the kernel from using the device: no driver bound, or not authorized.
     public string KernelProblem { get; set; } = "";
     // Descriptors as read, only when a scan is asked to keep them.
@@ -116,6 +121,23 @@ public sealed class UsbNode
     // the driver doesn't say; and whether its descriptors offer UAS. Null when they weren't read (Uas.cs).
     public string StorageProtocol { get; set; } = "";
     public bool? OffersUas { get; set; }
+    // The most power it runs on, in watts, when its own Power Delivery descriptor says (BOS PD Consumer Port
+    // capability). Null when it doesn't say, as most devices don't (PowerNeeds.cs).
+    public double? PdConsumerWatts { get; set; }
+    // Its battery, for a device that reports one through Windows Portable Devices, as phones and headsets sharing
+    // files over MTP do: the level, and Battery or External when it says what it runs on. Null or empty otherwise.
+    public int? BatteryPercent { get; set; }
+    public string BatterySource { get; set; } = "";
+    // The highest level read while it stayed connected this session, and when, so a falling battery shows (Battery.cs).
+    public int? BatteryHighPercent { get; set; }
+    public DateTime? BatteryHighAt { get; set; }
+    // A USB-C port's power as Linux reports it (/sys/class/typec and /sys/class/usb_power_delivery): what it advertises
+    // (default, 1.5A, 3.0A or usb_power_delivery), the supplies it offers under Power Delivery and the most of them in
+    // watts, and the most the device in it asks for. Empty on Windows, which doesn't give apps any of this.
+    public string TypeCPowerMode { get; set; } = "";
+    public List<string> PdOffers { get; set; } = [];
+    public double? PdOfferWatts { get; set; }
+    public double? PdPartnerWatts { get; set; }
     // Hubs between the computer and this node, not counting the root hub or the node itself (HubDepth).
     public int HubsAbove { get; set; }
     public bool SpeedLimited { get; set; }
@@ -178,6 +200,20 @@ public sealed class PortCompanion
     public string Id { get; set; } = "";
 }
 // A devnode Windows reports a problem on: Device Manager's "Code N" on its General tab.
+// A driver in a device's stacks. Role is "function", "upper filter", "lower filter", "class upper filter" or
+// "class lower filter"; Function names the devnode it is on. A function driver's version, date and INF come
+// from its driver package; a filter's maker and version from its driver file.
+public sealed class DriverInfo
+{
+    public string Role { get; set; } = "";
+    public string InstanceId { get; set; } = "";
+    public string Function { get; set; } = "";
+    public string Service { get; set; } = "";
+    public string Provider { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string Date { get; set; } = "";
+    public string Inf { get; set; } = "";
+}
 public sealed class DeviceProblem
 {
     public string InstanceId { get; set; } = "";

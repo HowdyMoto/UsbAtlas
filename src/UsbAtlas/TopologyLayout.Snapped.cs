@@ -17,7 +17,7 @@ internal static partial class TopologyLayout
     private const double StageGap = 32;
 
     private static Item MeasureSnapped(List<UsbNode> members, Func<UsbNode, List<UsbNode>> children,
-        Func<UsbNode, double> width, Func<UsbNode, double> height, Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups, Func<UsbNode, UsbNode?>? twin)
+        Func<UsbNode, double> width, Func<UsbNode, double> height, Func<UsbNode, UsbNode, double?> portOffset, Func<UsbNode, List<UsbNode>>? groups, int pack, Func<UsbNode, UsbNode?>? twin)
     {
         var ids = members.Select(n => n.Id).ToHashSet();
         double maxHeight = members.Max(height), x = 0;
@@ -25,7 +25,7 @@ internal static partial class TopologyLayout
         foreach (var member in members) { stageX.Add(x); x += width(member) + StageGap; }
         double block = x - StageGap;
         var kids = members.SelectMany((m, s) => children(m).Where(k => !ids.Contains(k.Id)).Select(k => (Stage: s, Node: k))).ToList();
-        var items = kids.Select(k => MeasureCore(k.Node, children, width, height, portOffset, groups, Gap, false, twin)).ToList();
+        var items = kids.Select(k => MeasureCore(k.Node, children, width, height, portOffset, groups, Gap, pack, twin)).ToList();
         var xs = new double[items.Count];
         double rowX = 0;
         for (int i = 0; i < items.Count; i++) { if (i > 0 && kids[i].Stage != kids[i - 1].Stage) rowX += GroupGap - Gap; xs[i] = rowX; rowX += items[i].Width + Gap; }

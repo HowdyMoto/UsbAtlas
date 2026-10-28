@@ -395,12 +395,16 @@ public partial class MainWindow
         }
     }
     // A hub's children never wrap: a graph wider than the view scrolls, or Fit all picks simpler cards.
+    // A hub's end devices may pack into two staggered rows instead (see TopologyLayout). In the vertical layout
+    // they always do, three or more: a card there is about four times as wide as it is tall, so a row of devices
+    // is what makes the graph too wide to read. In the horizontal layout only far cards pack, four or more.
+    private int PackFrom => !horizontalTree ? 3 : detail == CardDetail.Far ? 4 : 0;
     private List<TopologyLayout.Item> ArrangeLayouts(List<UsbNode> roots)
     {
         packedHubs.Clear();
         // Linked hub stages are arranged around their sockets, so a far view, which draws none, shows the real
         // hierarchy instead, as the horizontal layout does.
-        var layouts = roots.Select(r => TopologyLayout.Measure(r, Children, horizontalTree, WidthFor, HeightFor, PortOffset, DrawsSockets ? SnappedStages : null, SiblingGap, horizontalTree && detail == CardDetail.Far, n => mergedSides.GetValueOrDefault(n.Id))).ToList();
+        var layouts = roots.Select(r => TopologyLayout.Measure(r, Children, horizontalTree, WidthFor, HeightFor, PortOffset, DrawsSockets ? SnappedStages : null, SiblingGap, PackFrom, n => mergedSides.GetValueOrDefault(n.Id))).ToList();
         static IEnumerable<TopologyLayout.Item> Flatten(TopologyLayout.Item item) => item.Children.SelectMany(Flatten).Prepend(item);
         packedHubs.UnionWith(layouts.SelectMany(Flatten).Where(i => i.Packed).Select(i => i.Node.Id));
         return layouts;

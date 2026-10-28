@@ -103,6 +103,8 @@ internal sealed class Session
                 else if (p.PropertyType.IsGenericType && p.PropertyType.GetGenericTypeDefinition() == typeof(List<>)) p.SetValue(n, Activator.CreateInstance(p.PropertyType));
             n.Children.RemoveAll(c => c == null);
             n.DriverProblems.RemoveAll(p => p == null);
+            n.StackDrivers.RemoveAll(d => d == null);
+            foreach (var d in n.StackDrivers) { d.Role ??= ""; d.InstanceId ??= ""; d.Function ??= ""; d.Service ??= ""; d.Provider ??= ""; d.Version ??= ""; d.Date ??= ""; d.Inf ??= ""; }
             n.MoreCompanions.RemoveAll(c => c == null);
             foreach (var c in n.MoreCompanions) { c.HubSymbolicLink ??= ""; c.Id ??= ""; }
             if (n.Billboard is BillboardInfo b)

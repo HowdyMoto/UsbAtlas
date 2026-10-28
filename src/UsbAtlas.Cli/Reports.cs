@@ -126,6 +126,10 @@ internal static class Reports
             var children = (Topology.MergedRoot(n) ?? n).Children;
             var o = J.Obj(("path", s.PathOf(n)), ("name", Topology.ShortName(n)), ("kind", Topology.Label(n)), ("vidPid", J.S(VidPid(n))), ("revision", J.S(n.DeviceRevision)), ("figures", J.S(Figures(n))),
                 ("label", J.S(n.UserLabel)), ("portName", J.S(n.PortLabel)),
+                // Only drivers that make this device differ from the same device elsewhere: a maker's, one an app
+                // drives, or a filter another program added. Windows' own would be on nearly every line.
+                ("driver", J.S(n.DriverStackRead && Drivers.Summary(n) is var driver && driver != "Windows' own" ? driver : "")),
+                ("filters", J.S(Drivers.FilterSummary(n) is var filters && filters != Drivers.NoFilters ? filters : "")),
                 ("issues", J.Some(IssuesOf(s, n).Select(i => (JsonNode)$"{i.Severity.ToString().ToLowerInvariant()}: {i.Text}"))),
                 ("usb3HalfOf", HalfOf(s, n)));
             var shown = children.Where(c => ports || c.Kind != "Empty port").OrderBy(c => c.Port).ToList();
@@ -185,7 +189,9 @@ internal static class Reports
                 ("userConnectable", n.PortIsUserConnectable), ("usbC", n.PortConnectorIsTypeC), ("debugCapable", n.PortIsDebugCapable),
                 ("sharesSocketWith", n.CompanionId.Length > 0 && s.ById(n.CompanionId) is UsbNode c ? s.PathOf(c) : null),
                 ("alsoSharesSocketWith", J.Some(n.MoreCompanions.Where(m => m.Id.Length > 0 && s.ById(m.Id) != null).Select(m => (JsonNode)s.PathOf(s.ById(m.Id)!)))),
-                ("usbCFeatures", UsbC.Socket(s.Snapshot, n) is { Count: > 0 } features ? J.Obj([.. features.Select(f => (f.Feature, (JsonNode?)f.Text))]) : null));
+                ("usbCFeatures", UsbC.Socket(s.Snapshot, n) is { Count: > 0 } features ? J.Obj([.. features.Select(f => (f.Feature, (JsonNode?)f.Text))]) : null),
+                ("powerAvailable", PowerNeeds.Available(n)), ("powerCeiling", PowerNeeds.Ceiling(n) is (double most, var why) ? J.Obj(("atMostW", most), ("why", why)) : null),
+                ("typeCPower", n.TypeCPowerMode.Length > 0 ? J.Obj(("mode", n.TypeCPowerMode), ("offers", J.Some(n.PdOffers.Select(x => (JsonNode)x))), ("offersUpToW", J.N(n.PdOfferWatts, 2))) : null));
         if (n.PciId.Length > 0 || n.PcieTunneled == true)
             node["controller"] = J.Obj(("pciId", J.S(n.PciId)), ("vendor", J.S(Topology.PciVendor(n.PciId))), ("subsystem", J.S(n.PciSubsystem)), ("revision", J.S(n.PciRevision)), ("pciAddress", J.S(n.PciAddress)),
                 ("pcieLink", n.PcieGeneration is int g && n.PcieLanes is int l ? J.Obj(("generation", g), ("lanes", l), ("maxGeneration", n.PcieMaxGeneration), ("maxLanes", n.PcieMaxLanes), ("mbps", J.N(UsbBudgets.PcieMbps(g, l)))) : null),
@@ -198,7 +204,12 @@ internal static class Reports
             node["hubsAbove"] = J.Obj(("count", n.HubsAbove), ("limit", HubDepth.Max), ("chain", J.Some(HubDepth.Above(s.Chain(n)).Select(h => (JsonNode)$"{s.PathOf(h)} {Topology.ShortName(h)}"))));
         if (n.Kind is "Device" or "Hub" or "Unavailable")
             node["power"] = J.Obj(("figure", Topology.PowerFigure(n).Text), ("source", n.PowerSource), ("maxPowerMa", n.MaxPowerMa), ("selfPowerCapable", n.SelfPowerCapable), ("evidence", Topology.PowerEvidence(n)),
-                ("drawThroughPortMa", n.Kind == "Hub" ? UsbBudgets.Demand(n).Known : null), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))));
+                ("drawThroughPortMa", n.Kind == "Hub" ? UsbBudgets.Demand(n).Known : null), ("warnings", J.Some(n.PowerWarnings.Select(x => (JsonNode)x))),
+                ("charging", PowerNeeds.For(n) is PowerNeeds.Need need ? J.Obj(("needsUpToW", need.Watts), ("basis", need.Basis), ("source", need.Source),
+                    ("portGivesAtMostW", PowerNeeds.Ceiling(n)?.Watts), ("summary", PowerNeeds.Summary(n))) : null),
+                ("pdConsumerW", J.N(n.PdConsumerWatts, 2)), ("pdPartnerAsksW", J.N(n.PdPartnerWatts, 2)),
+                ("battery", n.BatteryPercent is int percent ? J.Obj(("percent", percent), ("source", J.S(n.BatterySource)), ("sessionHighPercent", n.BatteryHighPercent),
+                    ("sessionHighAt", n.BatteryHighAt?.ToString("yyyy-MM-dd HH:mm:ss")), ("draining", Battery.IsDraining(n) ? true : null), ("summary", Battery.Summary(n))) : null));
         if (n.Kind is "Device" or "Hub" or "Root hub" or "Controller")
             node["powerSaving"] = J.Obj(("setting", Topology.PowerSavingText(Topology.MergedRoot(n) ?? n, s.Snapshot)), ("plan", PowerSaving.PlanSummary(s.Snapshot)),
                 ("canWakeComputer", n.Kind is "Device" or "Hub" ? n.WakeSetting : null), ("wokeComputerAt", n.WokeComputerAt?.ToString("yyyy-MM-dd HH:mm")));
@@ -216,9 +227,14 @@ internal static class Reports
                 ("pairedWith", n.CompanionHubId.Length > 0 && s.ById(n.CompanionHubId) is UsbNode pair ? s.PathOf(pair) : null),
                 ("usb3SideMissing", n.Usb3SideMissing ? true : null), ("relationship", J.S(HubRelationships.Description(n, s.Snapshot))));
         }
-        if (n.DriverService.Length > 0 || n.DriverVersion.Length > 0 || n.DriverProblems.Count > 0)
-            node["driver"] = J.Obj(("service", J.S(n.DriverService)), ("version", J.S(n.DriverVersion)), ("date", J.S(n.DriverDate)), ("provider", J.S(n.DriverProvider)), ("inf", J.S(n.DriverInf)),
-                ("problems", J.Some(n.DriverProblems.Select(p => (JsonNode)J.Obj(("code", p.Code), ("meaning", p.Meaning), ("instanceId", p.InstanceId), ("name", J.S(p.Name)))))));
+        if (n.DriverService.Length > 0 || n.DriverVersion.Length > 0 || n.DriverProblems.Count > 0 || n.StackDrivers.Count > 0)
+            // What explains a problem leads: a problem code, a maker's driver and its age, filters other programs
+            // added. The device's own driver follows; on a composite device it is only Windows' usbccgp.
+            node["driver"] = J.Obj(("summary", J.S(Drivers.Summary(n))), ("filters", J.S(Drivers.FilterSummary(n))),
+                ("problems", J.Some(n.DriverProblems.Select(p => (JsonNode)J.Obj(("code", p.Code), ("meaning", p.Meaning), ("instanceId", p.InstanceId), ("name", J.S(p.Name)))))),
+                ("service", J.S(n.DriverService)), ("version", J.S(n.DriverVersion)), ("date", J.S(n.DriverDate)), ("provider", J.S(n.DriverProvider)), ("inf", J.S(n.DriverInf)),
+                ("stack", J.Some(n.StackDrivers.Select(d => (JsonNode)J.Obj(("role", d.Role), ("service", d.Service), ("provider", J.S(d.Provider)), ("version", J.S(d.Version)), ("date", J.S(d.Date)), ("inf", J.S(d.Inf)),
+                    ("instanceId", d.InstanceId), ("function", J.S(d.Function)))))));
         if (n.ContainerId.Length > 0 && !Containers.IsRoot(n.ContainerId))
         {
             var c = s.Snapshot.Containers.FirstOrDefault(x => x.Id.Equals(n.ContainerId, StringComparison.OrdinalIgnoreCase));

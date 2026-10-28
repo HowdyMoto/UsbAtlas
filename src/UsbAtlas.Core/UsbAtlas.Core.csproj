@@ -17,6 +17,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Assets\UsbIds\usb.ids" LogicalName="UsbAtlas.usb.ids" />
     <EmbeddedResource Include="Assets\KnownProblems\known-problems.tsv" LogicalName="UsbAtlas.known-problems.tsv" />
+    <EmbeddedResource Include="Assets\PowerNeeds\power-needs.tsv" LogicalName="UsbAtlas.power-needs.tsv" />
     <None Update="Assets\UsbIds\LICENSE.txt;Assets\UsbIds\NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

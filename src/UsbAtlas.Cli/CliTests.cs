@@ -210,6 +210,21 @@ internal static class CliTests
         Check(Diff.Empty(Diff.Compare(Revised(""), Revised("1.10"))), "A snapshot without revisions doesn't report every device as changed.");
         var revised = Revised("1.10");
         Check(Reports.Show(revised, revised.Resolve("H01/01"))["node"]!["revision"]!.ToString() == "1.10" && revised.Find("rev 1.10").Count == 1, "show and find carry the revision.");
+        // A maker's driver updated or a filter added is a change; an old snapshot without function drivers isn't.
+        static Session Drivered(Action<UsbNode> change) { var s = DemoData.Create(); change(s.Nodes.First(n => n.Name == "Audio interface")); return new(s, "demo"); }
+        var driverUpdate = Diff.Text(Diff.Compare(Drivered(_ => { }), Drivered(n => { n.StackDrivers[0].Version = "4.70.0"; n.StackDrivers.Add(new() { Role = "lower filter", Service = "vmusbfilter", Provider = "VMware, Inc." }); })));
+        Check(driverUpdate.Contains("driver Studio Audio · Mar 2019 · studiousb 4.65.5 + Windows' own → Studio Audio · Mar 2019 · studiousb 4.70.0 + Windows' own")
+            && driverUpdate.Contains("filters None from other programs → vmusbfilter (VMware, Inc.)"), $"A maker's driver updated and a filter added are reported: {driverUpdate}");
+        Check(Diff.Empty(Diff.Compare(Drivered(n => { n.StackDrivers.Clear(); n.DriverStackRead = false; }), Drivered(_ => { }))), "A snapshot without function drivers doesn't report every device's driver as changed.");
+        // tree names only drivers that set a device apart; find searches drivers, their makers and filters.
+        var demo = Demo();
+        string treeText = TextOut.Render(Reports.Tree(demo, false));
+        Check(treeText.Contains("driver Studio Audio · Mar 2019 · studiousb 4.65.5 + Windows' own") && treeText.Contains("filters camfx (FaceFX Software, on every device of its kind)")
+            && !treeText.Contains("Windows' own ·") && !treeText.Contains("driver Windows' own"), $"tree names a maker's driver and another program's filter, and not Windows' own: {treeText}");
+        Check(demo.Find("Studio Audio").Single().Name == "Audio interface" && demo.Find("filter driver").Single().Name == "Studio camera" && demo.Find("usbvideo").Single().Name == "Studio camera"
+            && demo.Find("Microsoft").Count == 0, "find searches drivers, their makers and filters, but not Windows' own maker.");
+        var shown = Reports.Show(demo, demo.Resolve("H01/02"))["node"]!["driver"]!.AsObject();
+        Check(shown.Select(p => p.Key).Take(2).SequenceEqual(["summary", "filters"]), "show leads its driver block with the summary and filters.");
         // A redacted baseline compared with a redacted scan: redaction must be stable and idempotent.
         var serialed = DemoData.Create(); serialed.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";
         var again = DemoData.Create(); again.Nodes.First(n => n.Name == "Studio desktop hub").Serial = "HUB0123456789";
@@ -274,6 +289,16 @@ internal static class CliTests
         Check(Descriptors.Decode([8, 0x10, 0x0F, 1, 0x45, 0x0C, 0, 0], 2, 0x0201)["dwAlternateModeVdo"]!.ToString() == "0x00000C45", "Billboard Ex decodes its VDO.");
         Check(Descriptors.Walk([0x09, 0x29, 0x04], 2, 0x0200)[0]["error"] != null && Descriptors.Decode([0x05, 0x29, 0x04, 0x00, 0x00], 2, 0x0200)["hex"] != null, "Truncated descriptors don't read past their bytes.");
         Check(Descriptors.ServiceMs(1, 1, 1) == 1 && Descriptors.ServiceMs(4, 1, 1) == 8 && Descriptors.ServiceMs(4, 2, 3) == 1, "Isochronous full-speed endpoints count 2^(bInterval-1) frames.");
+        // USB Power Delivery capabilities: the spec's 14-byte Power Delivery capability, a consumer that runs on up to
+        // 18 W between 5 and 9 V, and a provider offering 5 V 3 A and PPS 3.3–11 V 3 A.
+        var pd = Descriptors.Decode(Convert.FromHexString("0E100600" + "54400000" + "0000" + "0003" + "0002"), 3, 0x0320);
+        Check(pd["bDevCapabilityType"]!.ToString() == "0x06 Power Delivery" && pd["bmAttributes"]!.ToString().Contains("USB PD, consumer, USB Type-C Current, uses VBUS")
+            && pd["bcdPDVersion"]!.ToString() == "3.00" && pd["bmProviderPorts"] == null, "The spec's Power Delivery capability decodes its attributes and versions.");
+        var consumer = Descriptors.Decode(Convert.FromHexString("18100800" + "0200" + "6400" + "B400" + "0000" + "08070000" + "D0070000" + "FFFF0000"), 3, 0x0320);
+        Check(consumer["bDevCapabilityType"]!.ToString() == "0x08 PD Consumer Port" && consumer["bmCapabilities"]!.ToString() == "0x0002 (USB PD)" && consumer["wMaxVoltage"]!.ToString() == "180 (9 V)"
+            && consumer["dwMaxOperatingPower"]!.ToString() == "1800 (18 W)" && consumer["dwMaxPeakPowerTime"]!.ToString().Contains("unknown"), "A PD Consumer Port capability decodes at the spec's offsets.");
+        var provider = Descriptors.Decode(Convert.FromHexString("10100900" + "0600" + "02" + "00" + "2C910100" + "3C21DCC0"), 3, 0x0320);
+        Check(provider["powerDataObjects"]!.AsArray().Select(x => x!.ToString()).SequenceEqual(["0x0001912C: Fixed 5 V 3 A", "0xC0DC213C: PPS 3.3 V–11 V 3 A"]), "A PD Provider Port capability lists its power data objects.");
     }
 
     private static void DriverProblemTests()
@@ -290,6 +315,20 @@ internal static class CliTests
         var controller = new UsbNode { Kind = "Controller", Children = [root] };
         Check(Explanations.For(controller, Explanations.DriverProblem, [controller]).What.Contains("Code 43 on this host"), "A host explains its merged root hub's problem.");
         Check(Explanations.For(new UsbNode { Kind = "Device" }, Explanations.DriverProblem, []).What.Length > 0, "A node without problems still gets an explanation, not a crash.");
+        // A composite device's own driver only splits it into functions; their drivers, and filters other programs added, are what matter.
+        DriverInfo Fn(string service, string provider, string role = "function", string version = "", string date = "") => new() { Role = role, Service = service, Provider = provider, Version = version, Date = date };
+        var composite = new UsbNode { Kind = "Device", DriverService = "usbccgp", DriverProvider = "Microsoft", DriverStackRead = true, StackDrivers = [Fn("usbaudio2", "Microsoft"), Fn("HidUsb", "Microsoft"), Fn("ksthunk", "Microsoft Corporation", "class upper filter")] };
+        Check(Drivers.Summary(composite) == "Windows' own" && Drivers.FilterSummary(composite) == "None from other programs", "Windows' own drivers and filters are summarized, not listed.");
+        composite.StackDrivers.Add(Fn("studiousb", "Studio Audio", version: "4.65.5", date: "3-14-2019"));
+        composite.StackDrivers.Add(Fn("vmusbfilter", "VMware, Inc.", "lower filter"));
+        composite.StackDrivers.Add(Fn("camfx", "", "class upper filter"));
+        Check(Drivers.Summary(composite) == "Studio Audio · Mar 2019 · studiousb 4.65.5 + Windows' own", $"A maker's driver is named with its version and age: {Drivers.Summary(composite)}");
+        Check(Drivers.FilterSummary(composite) == "vmusbfilter (VMware, Inc.), camfx (maker unknown, on every device of its kind)", $"Filters from other programs are named: {Drivers.FilterSummary(composite)}");
+        var camera = new UsbNode { DriverService = "usbccgp", DriverProvider = "Microsoft", DriverStackRead = true, StackDrivers = [Fn("usbvideo", "Razer Inc", version: "6.2.1", date: "1-2-2017"), Fn("usbaudio", "Razer Inc", version: "6.2.2", date: "1-2-2017")] };
+        Check(Drivers.Summary(camera) == "Razer Inc · Jan 2017 · usbvideo 6.2.1, usbaudio 6.2.2", $"One package's drivers name their maker and date once: {Drivers.Summary(camera)}");
+        Check(Drivers.Summary(new UsbNode { DriverService = "WinUSB", DriverProvider = "Microsoft", DriverStackRead = true }).Contains("an app drives it directly"), "WinUSB means an app drives the device.");
+        Check(Drivers.FilterSummary(new UsbNode()) == "", "Filters not read aren't reported as none.");
+        Check(Drivers.Summary(new UsbNode { DriverService = "usbhid, snd-usb-audio" }) == "usbhid, snd-usb-audio", "Linux's bound drivers are named without a maker.");
         // Problems the scan can't place are reported for the whole scan.
         var devices = new Dictionary<string, UsbScanner.DevNode>(StringComparer.OrdinalIgnoreCase)
         {
@@ -448,6 +487,26 @@ internal static class CliTests
         Check(Watch.Text(Watch.AfterWaking(before, Demo(), DateTime.Now)).Contains("✓ after waking, all 11 devices and hubs are back at the link rates they had"), "A clean wake says so.");
         Check(Watch.Text(J.Obj(("time", "08:01:00.000"), ("event", "summary"), ("watchedSeconds", 60), ("rescans", 1), ("changes", 1), ("sleeps", 1), ("notBackAfterWaking", 1), ("slowerAfterWaking", 0), ("unstable", new JsonArray()),
             ("issues", J.Obj(("errors", 0), ("warnings", 0), ("notes", 0))))).Contains("slept once: 1 not back after waking, 0 back slower"), "The summary totals what sleeping cost.");
+        var wakeAt = new DateTime(2026, 1, 1, 8, 0, 0);
+        var pending = new Watch.WakeReturns();
+        var absent = DemoData.Create();
+        absent.Controllers[0].Children[0].Children.RemoveAll(n => n.Name is "Mechanical keyboard" or "Wireless mouse receiver");
+        var absentSession = new Session(absent, "demo");
+        pending.Track(before, absentSession, wakeAt);
+        Check(pending.Returned(absentSession, wakeAt.AddSeconds(8)).Count == 0 && pending.Missing().Count == 2, "Missing devices remain pending after the wake check.");
+        var partial = DemoData.Create();
+        partial.Controllers[0].Children[0].Children.RemoveAll(n => n.Name == "Wireless mouse receiver");
+        var late = pending.Returned(new Session(partial, "demo"), wakeAt.AddSeconds(66)).Single();
+        Check(late["node"]!["name"]!.ToString() == "Mechanical keyboard" && late["afterSeconds"]!.GetValue<double>() == 66
+            && Watch.Text(late).Contains("came back 66 s after waking: H01/03 Mechanical keyboard"), "Late returns report the device and elapsed wake time in JSON and text.");
+        Check(pending.Returned(new Session(partial, "demo"), wakeAt.AddSeconds(70)).Count == 0, "A late return is reported only once.");
+        pending.Track(before, new Session(partial, "demo"), wakeAt.AddMinutes(1));
+        Check(pending.Missing().Single()!["name"]!.ToString() == "Wireless mouse receiver", "A later sleep retains devices missing from earlier wakes.");
+        var summary = J.Obj(("event", "summary"), ("watchedSeconds", 70), ("rescans", 2), ("changes", 1),
+            ("stillMissingAfterWaking", pending.Missing()), ("unstable", new JsonArray()), ("issues", J.Obj(("errors", 0), ("warnings", 0), ("notes", 0))));
+        Check(Watch.Text(summary).Contains("still missing after waking: H01/04 Wireless mouse receiver"), "The summary names devices that never returned.");
+        Check(pending.Returned(before, wakeAt.AddSeconds(90)).Single()["afterSeconds"]!.GetValue<double>() == 90 && pending.Missing().Count == 0, "A later sleep does not reset the original wake time.");
+
         Check(Watch.Text(J.Obj(("time", "08:00:00.000"), ("event", "sleep"))).Contains("going to sleep") && Watch.Text(J.Obj(("time", "08:00:09.000"), ("event", "wake"), ("checkingIn", "8 s"))).Contains("checking what came back in 8 s"), "Sleep and wake are reported as they happen.");
     }
 
@@ -486,6 +545,12 @@ internal static class CliTests
         // A device's own events: the SSD came up on the USB 2 bus, and Windows retried setting it up.
         var slow = trace.Interpret(Event(173, 2, "SuperSpeed Device is Connected on the 2.0 Bus", ("fid_UsbDevice", Ssd)), false)!;
         Check(slow["path"]!.ToString() == "H01/01/01" && slow["what"]!.ToString().Contains("USB 2 bus") && slow["source"]!.ToString() == "USBHUB3 173", "A SuperSpeed device on the USB 2 bus is placed at the device.");
+        var enclosure = s.Resolve("NVMe SSD enclosure");
+        enclosure.LinkMbps = 480;
+        Check(Explanations.Speed(enclosure, s.Chain(enclosure)).Cause.Contains("empty storage bridge"), "The enclosure's speed explanation also names missing media.");
+        Check(slow["what"]!.ToString().Contains("empty storage bridge"), "An enclosure at USB 2 names missing media as a possible cause.");
+        var nonStorage = trace.Interpret(Event(173, 2, "SuperSpeed Device is Connected on the 2.0 Bus", ("fid_UsbDevice", Camera)), false)!;
+        Check(nonStorage["what"]!.ToString().Contains("Usually the cable or plug") && !nonStorage["what"]!.ToString().Contains("empty storage bridge"), "Non-storage devices retain the cable explanation.");
         trace.Interpret(Event(62, 2, "Retry Enumeration", ("fid_HubDevice", Hub), ("fid_PortNumber", 4UL)), false);
         trace.Interpret(Event(62, 2, "Retry Enumeration", ("fid_HubDevice", Hub), ("fid_PortNumber", 4UL)), false);
         var unknown = trace.Interpret(Event(999, 3, "Something New Went Wrong", ("fid_UsbDevice", 0x9999UL)), false)!;

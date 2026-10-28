@@ -45,7 +45,7 @@ public partial class MainWindow : Window
             if (verifyUi)
             {
                 pinnedModifiers = ModifierKeys.None;
-                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); VerifyPortTags(); VerifyPortTagSides(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyEverythingExplains(); VerifyFixFirst(); VerifyLegendWording(); VerifyRememberedDevices(); VerifyKnownProblems(); File.WriteAllText("ui-test.txt", "UI checks passed: remembered devices on other ports, known chip problems,what to fix first and the exported image, everything on the graph explains itself on hover or click, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, port name tags that span paired sockets, show in full on hover or selection, name both sides of a merged hub and read in full on an unplugged socket, host capabilities, selection reuse, refresh feedback and device-change rescans."); }
+                try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); VerifyPortTags(); VerifyPortTagSides(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyEverythingExplains(); VerifyFixFirst(); VerifyLegendWording(); VerifyRememberedDevices(); VerifyKnownProblems(); VerifyCharging(); File.WriteAllText("ui-test.txt", "UI checks passed: remembered devices on other ports, known chip problems, charging needs and falling batteries, what to fix first and the exported image, everything on the graph explains itself on hover or click, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, port name tags that span paired sockets, show in full on hover or selection, name both sides of a merged hub and read in full on an unplugged socket, host capabilities, selection reuse, refresh feedback, device-change rescans and wake notifications suppressing false unstable connections."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
             }
             if (render) await RenderPreview();
@@ -69,6 +69,7 @@ public partial class MainWindow : Window
             var next = demo ? DemoData.Create() : await Task.Run(() => new UsbScanner().Scan());
             deviceLabels.Apply(next);
             reconnects.Apply(next);
+            batteries.Apply(next, DateTime.Now);
             var before = snapshot.Controllers.Count > 0 && snapshot.IsDemo == next.IsDemo ? Occupants(snapshot) : null;
             var id = selected?.Id;
             bool changed = JsonSerializer.Serialize(snapshot.Controllers) != JsonSerializer.Serialize(next.Controllers) || !snapshot.Diagnostics.SequenceEqual(next.Diagnostics);
@@ -269,6 +270,10 @@ public partial class MainWindow : Window
             Field("Wakes computer", attached ? node.WakeSetting : Reported(""), "Device Manager's “Allow this device to wake the computer”: whether this device may wake the computer from sleep. Not supported means no driver for it offers the setting.");
             Field("Storage protocol", attached && Uas.Summary(node) is { Length: > 0 } protocol ? protocol : NotApplicable, "How Windows talks to a drive: UAS, the faster protocol fast enclosures support, or the older bulk-only protocol. Flash drives and card readers are bulk-only.");
             Field("Power at 5 V", attached && node.MaxPowerMa is int draw ? $"{draw * 0.005:0.##} W declared" : Reported(""), "Its power request at USB's nominal 5 volts, from its descriptor (MaxPower). A declared maximum, not a measurement.");
+            Field("Charging", node.Kind == "Device" ? PowerNeeds.Summary(node) is { Length: > 0 } charging ? charging : "Not listed" : node.Kind == "Unavailable" ? "Unknown" : NotApplicable,
+                "How much power it needs to charge at full speed, and the most this port can give. The need comes from a short bundled list of makers' figures, such as Meta's for Quest headsets, or the device's own Power Delivery descriptor; not being listed doesn't mean it needs little. Detection details gives the source.");
+            Field("Battery", attached && Battery.Summary(node) is { Length: > 0 } battery ? battery : Reported(""),
+                "Its battery level, for a device that reports it to Windows as phones and headsets do while they share files (MTP). With Auto-refresh on, or each refresh, USB Atlas watches it: a level that falls while it stays plugged in means it uses power faster than this port gives.");
             Field("Reserved at peak", attached && node.PeakReservedMbps is double peak ? $"Up to {UsbBudgets.Rate(peak)} when active" : Reported(""), "The most bus time it would hold when fully active, such as a camera while streaming, from its busiest alternate settings.");
             if (UsbBudgets.LinkUse(node) is (var use, var room, _))
             {
@@ -281,6 +286,7 @@ public partial class MainWindow : Window
                 Field("Link use", usage, LinkUseHelp);
             }
             else Field("Link use", attached ? "Not reported" : Reported(""), LinkUseHelp);
+            DriverFields(node);
             Section("Port");
             Field("Path", pathLabels.GetValueOrDefault(node.Id, NotApplicable), PathHelp);
             Field("Port number", node.Port.ToString("00"), "The number Windows gives this port on its hub. A USB 3 socket has two, one for its USB 2 half and one for its USB 3 half.");
@@ -293,7 +299,7 @@ public partial class MainWindow : Window
                 ? " Windows doesn't report whether a USB-C socket carries USB4 or Thunderbolt, DisplayPort, or what Power Delivery contract it has. Detection details says what is known." : ""));
             Field("Location", node.Location switch { "Unknown" => "Not reported", "External" => "Likely outside the computer", "Internal" => "Likely built in", "Host" => "In the computer", var other => other },
                 "Worked out from whether Windows says the port is one you can plug into, and what it's connected through. Windows doesn't report where hardware sits.");
-            Field("Power available", "Unknown · not measured", SupplyHelp);
+            Field("Power available", PowerNeeds.Available(node), SupplyHelp);
             Section("Hub");
             Field("Ports", hub ? node.PortCount.ToString() : NotApplicable, PortsHelp);
             Field("Its ports support", hub ? ProtocolSummary(node) : NotApplicable, "The USB versions this hub's ports carry, as Windows reports them.");
@@ -339,6 +345,7 @@ public partial class MainWindow : Window
             Field("Power saving", PowerSavingText(MergedRoot(node) ?? node), PowerSavingHelp);
             Field("Power plan", PowerSaving.PlanSummary(snapshot), "The power plan's USB selective suspend setting. While it's off, Windows suspends no USB device, whatever each device's own power-saving setting says.");
             Field("Power available", "Unknown · not measured", SupplyHelp);
+            DriverFields(node);
         }
         Section("Upstream path");
         // A merged root hub is part of its host, so the path reads H01 › 03.
@@ -383,7 +390,11 @@ public partial class MainWindow : Window
         if (node.NameSource.Contains("lookup", StringComparison.OrdinalIgnoreCase)) notes.Add("This device doesn't report its own product name, so its name comes from the public USB ID database. That usually names the maker of the chip inside, such as Realtek, rather than the brand of the hub, dock or monitor. Click the name or pencil in Properties to name it yourself.");
         else if (node.LookupVendor.Length > 0) notes.Add("USB ID database entries usually name the maker of the chip inside rather than the retail brand.");
         if (host) notes.Add("Port support summarizes reported logical-port capabilities, including empty ports. USB revision and a single negotiated upstream link do not apply to this host summary.");
-        if (node.Kind is "Controller" or "Root hub" or "Hub" or "Empty port") notes.Add("Supply capacity, USB-C charging limits and Power Delivery contracts are not queried. Device-declared draw is not the hub's available supply.");
+        if (node.Kind is "Controller" or "Root hub" or "Hub" or "Empty port") notes.Add(node.TypeCPowerMode.Length > 0
+            ? "This port's USB-C power is what Linux reports it offering, not a measurement or the contract it agreed with what's plugged in. Device-declared draw is not the hub's available supply."
+            : "Windows doesn't report supply capacity, USB-C charging limits or Power Delivery contracts; only a socket's shape bounds them. Device-declared draw is not the hub's available supply.");
+        notes.AddRange(PowerNeeds.Evidence(node));
+        if (Battery.Evidence(node) is { Length: > 0 } batteryNote) notes.Add(batteryNote);
         if (node.Kind == "Device") notes.Add(node.TypeEvidence);
         if (Interference.IsReceiver(node)) notes.Add("Taken to be a 2.4 GHz wireless receiver: " + (node.DeviceType == "Wireless" ? "it's a wireless controller, such as Bluetooth." : "its name says receiver, dongle or wireless.") + " USB 3 devices beside one can interfere with it.");
         if (KnownProblems.Evidence(node) is { Length: > 0 } known) notes.Add(known);
@@ -423,6 +434,27 @@ public partial class MainWindow : Window
         Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 20, 0, 16) });
         Text("Link rates are shared signaling limits. Reserved bandwidth, polling rates and requested power come from device descriptors, not live measurements. Power checks compare declared draw with what the USB specification guarantees a port; supply capacity itself is not measured.", 11, "TextMuted");
 
+    }
+    // The driver Windows loaded and whether Device Manager shows a problem, as on its General and Driver tabs.
+    // Every kind of selection gets the same rows, so flipping between ports keeps them in place.
+    private void DriverFields(UsbNode node)
+    {
+        bool has = node.Kind is "Device" or "Hub" or "Controller" or "Root hub";
+        string Value(string v) => !has ? node.Kind == "Unavailable" ? "Unknown" : NotApplicable : v.Length > 0 ? v : "Not reported";
+        // A host's card also stands for its merged root hub, whose problems its badge already shows.
+        var problems = node.DriverProblems.Count > 0 ? node.DriverProblems : node.Kind == "Controller" ? MergedRoot(node)?.DriverProblems ?? [] : [];
+        var worst = problems.OrderBy(p => p.Code is 22 or 29 ? 2 : p.Code is 14 or 47 ? 1 : 0).FirstOrDefault();
+        Section("Driver");
+        Field("Status", worst != null ? $"Code {worst.Code} · {worst.Meaning}" + (problems.Count > 1 ? $" · {problems.Count - 1} more" : "") : Value(has ? "No problem reported" : ""),
+            "What Device Manager's General tab says about it: a problem code and what it means, or none. A problem on one of a device's functions, such as its audio or a HID collection, counts as the device's. Detection details lists every one.");
+        Field("Driver", Value(Drivers.Summary(node)),
+            "Whether Windows' own drivers run it, the same as on any computer, or a maker's driver does, with its version and date. An old maker's driver is the first thing to update when a device misbehaves; "
+            + "removing one in Device Manager (Uninstall device, with “Attempt to remove the driver”) falls back to Windows' own. “An app drives it directly” means WinUSB or libusb, often installed by a vendor tool or Zadig: "
+            + "Windows doesn't treat it as a keyboard, audio or storage device, only that app can use it. Detection details lists every driver and function.");
+        Field("Filters", Value(Drivers.FilterSummary(node)),
+            "Filter drivers other programs put in its stack, such as virtual machine USB passthrough, antivirus, backup, encryption, webcam effects or input remapping. "
+            + "They see everything the device does, and a faulty or outdated one is a common cause of devices that drop out, fail to start or perform poorly. "
+            + "One on every device of its kind sits under all cameras, or all disks. Windows' own filters are listed in Detection details.");
     }
     private string PowerSavingText(UsbNode n) => Topology.PowerSavingText(n, snapshot);
     private List<UsbNode> FindPath(string id) => Topology.FindPath(snapshot, id);
@@ -491,8 +523,15 @@ public partial class MainWindow : Window
     }
     private void Section(string title)
     {
-        Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 9, 0, 8) });
-        Details.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimary"), Margin = new Thickness(0, 0, 0, 7), Tag = "section" });
+        // A heading is a step larger and bolder than the rows, on a tinted band with more room above than below,
+        // so it leads its rows. The band reaches left of the rows so its text lines up with their labels, and stops
+        // at their right edge, clear of the scroll bar.
+        Details.Children.Add(new Border
+        {
+            Child = new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Brush("TextPrimary") },
+            Background = Brush("HeadingFill"), CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 4, 8, 5),
+            Margin = new Thickness(-8, 14, 0, 8), Tag = "section"
+        });
     }
     // Values stay on one line (full text in the tooltip) so every row keeps its height; missing values are muted.
     // Plain row names; where a technical term sits behind one, the label's tooltip names it.
@@ -504,7 +543,7 @@ public partial class MainWindow : Window
         + "Cards show this as a meter only where it can fill: on hubs and on devices that stream. A keyboard's or mouse's slice can't grow and a drive's is nothing, so their cards leave it out and this row says which.";
     private const string SharedLinkHelp = "How much of the shared 12 Mb/s link's reservable time (10.8 Mb/s) the slower devices on every port hold. Low-speed devices count eight times their payload, since each byte takes eight times as long.";
     private const string ConnectorHelp = "The socket it's plugged into, as Windows reports it or as you set it in Socket type: USB-A, USB-C, or built in with no socket. The tongue's color is the fastest speed the socket is known to carry.";
-    private const string SupplyHelp = "How much power the port can supply. Windows doesn't report it, so USB Atlas can't tell.";
+    private const string SupplyHelp = "How much power the port can supply. Windows doesn't report it, but a socket bounds it: a USB-A port gives 5 V only, never more than about 15 W, while a USB-C port can give more under Power Delivery, which Windows doesn't show. On Linux, a USB-C port's Power Delivery offers are shown.";
     private void Field(string label, string value, string help)
     {
         bool missing = value is NotApplicable or "Not reported" || value.StartsWith("Unknown", StringComparison.Ordinal);

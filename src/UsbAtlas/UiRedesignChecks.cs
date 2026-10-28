@@ -89,7 +89,7 @@ public partial class MainWindow
             var hub = snapshot.Nodes.First(n => n.Id == "demo/root/1");
             Check(Issues(hub).Count > 0 && Issues(hub).All(i => i.Severity == Severity.Note), "The sample's desktop hub must have only notes.");
             SelectNode(hub); UpdateLayout();
-            var section = Details.Children.OfType<TextBlock>().First(t => Equals(t.Tag, "section") && t.Text == "Device identity & connection");
+            var section = Details.Children.OfType<Border>().First(b => Equals(b.Tag, "section") && b.Child is TextBlock { Text: "Device identity & connection" });
             double below = section.TranslatePoint(new Point(0, section.ActualHeight), DetailsScroll).Y;
             Check(below <= DetailsScroll.ViewportHeight, $"With only notes, the figures and Device identity & connection must show without scrolling; they end at {below:0} px of {DetailsScroll.ViewportHeight:0}.");
             var note = Issues(hub)[0].Text;

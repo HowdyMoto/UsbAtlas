@@ -154,6 +154,8 @@ internal static class SelfTests
         slowDrive.OffersUas = false;
         Check(!IssueRules.For(slowDrive).Any(i => i.Text == Uas.NotInUse) && Uas.Summary(slowDrive) == "Bulk-only", "A drive that offers only bulk-only, such as a flash drive, isn't flagged.");
         KnownProblemTests(Check);
+        PowerNeedsTests(Check);
+        BatteryTests(Check);
         // Five hubs in a row: the fifth is at the limit, and a sixth's device is refused. A paired hub's USB 2 side
         // leaves the note to its USB 3 side.
         var deep = new UsbNode { Id = "d/refused", Kind = "Unavailable", Status = "Hub nested too deeply", Port = 1 };
@@ -753,8 +755,17 @@ internal static class SelfTests
         {
             fs.Files[$"{D}/{hubInterface}/{port}/connect_type"] = connect;
             if (peer != null) fs.Links[$"{D}/{hubInterface}/{port}/peer"] = peer;
-            if (typeC) fs.Links[$"{D}/{hubInterface}/{port}/connector"] = "../../../../../../../port1-connector";
+            if (typeC) fs.Links[$"{D}/{hubInterface}/{port}/connector"] = "../../../../../../../../platform/USBC000:00/typec/port0";
         }
+        // That USB-C socket's Type-C port supplies power under Power Delivery up to 45 W; the device in it asks for up to 18 W.
+        fs.Files["class/typec/port0/power_role"] = "[source] sink";
+        fs.Files["class/typec/port0/power_operation_mode"] = "usb_power_delivery";
+        fs.Links["class/typec/port0/usb_power_delivery"] = "../../../usb_power_delivery/pd0";
+        fs.Links["class/typec/port0-partner/usb_power_delivery"] = "../../../../usb_power_delivery/pd1";
+        foreach (var (pdo, mv, ma) in new[] { ("1:fixed_supply", 5000, 3000), ("2:fixed_supply", 9000, 3000), ("3:fixed_supply", 15000, 3000) })
+            (fs.Files[$"class/usb_power_delivery/pd0/source-capabilities/{pdo}/voltage"], fs.Files[$"class/usb_power_delivery/pd0/source-capabilities/{pdo}/maximum_current"]) = ($"{mv}mV", $"{ma}mA");
+        foreach (var (pdo, mv, ma) in new[] { ("1:fixed_supply", 5000, 3000), ("2:fixed_supply", 9000, 2000) })
+            (fs.Files[$"class/usb_power_delivery/pd1/sink-capabilities/{pdo}/voltage"], fs.Files[$"class/usb_power_delivery/pd1/sink-capabilities/{pdo}/operational_current"]) = ($"{mv}mV", $"{ma}mA");
         // A HID keyboard's configuration: one interface, a HID descriptor and an interrupt IN endpoint every 10 ms.
         byte[] keyboard = [18, 1, 0x00, 0x02, 0, 0, 0, 8, 0x6D, 0x04, 0x1C, 0xC3, 0x04, 0x01, 1, 2, 0, 1,
             9, 2, 34, 0, 1, 1, 0, 0xA0, 50, 9, 4, 0, 0, 1, 3, 1, 1, 0, 9, 0x21, 0x11, 1, 0, 1, 0x22, 65, 0, 7, 5, 0x81, 3, 8, 0, 10];
@@ -870,6 +881,91 @@ internal static class SelfTests
         Check(IssueRules.For(jmicron).Contains((Severity.Note, Uas.NotInUse)) && !IssueRules.For(jmicron).Any(i => i.Text == KnownProblems.Label)
             && bulk.What.Contains("so Linux uses bulk-only with it too") && bulk.Affects.Contains("bulk-only may be the safer choice"),
             "A drive Linux avoids UAS with isn't warned about running bulk-only.");
+    }
+
+    // What a device needs to charge, from the bundled list, a Linux partner's sink capabilities or its own descriptor,
+    // against what its socket allows; a note only where the port surely can't give it.
+    private static void PowerNeedsTests(Action<bool, string> Check)
+    {
+        Check(PowerNeeds.Entries.Count >= 4 && PowerNeeds.Entries.All(e => e.Source.StartsWith("https://www.meta.com/", StringComparison.Ordinal) && e.Watts > 0)
+            && PowerNeeds.Entries.GroupBy(e => (e.VendorId, e.ProductId, e.Product)).All(g => g.Count() == 1), "Every listed device is listed once, with its maker's page.");
+        bool rejected = false;
+        try { PowerNeeds.Parse(new StringReader("2833\t*\tQuest 3\tlots\tMeta Quest 3\tMeta's figure\thttps://example\n")); } catch (FormatException) { rejected = true; }
+        Check(rejected && PowerNeeds.Parse(new StringReader("# comment\n\n1234\t5678\t*\t20\tThing\tits maker's figure\thttps://example\n")) is [{ ProductId: "5678", Product: "*", Watts: 20 }],
+            "Power needs parse, and a figure that isn't a number is refused.");
+
+        // A Quest 3 in Link mode on a USB-A port, as on real hardware: it needs 18 W, and a 5 V port can't give it.
+        UsbNode Quest(string connector) => new() { Id = "q/r/8", Kind = "Device", VendorId = "2833", ProductId = "5010", ReportedProduct = "Quest 3", Connector = connector, InstanceId = @"USB\VID_2833&PID_5010\2G0Y" };
+        var quest = Quest("USB-A");
+        var slow = Explanations.For(quest, PowerNeeds.SlowCharging, [quest]);
+        Check(PowerNeeds.SlowHere(quest) && IssueRules.For(quest).Contains((Severity.Note, PowerNeeds.SlowCharging)) && PowerNeeds.Summary(quest) == "Needs up to 18 W · port ≤15 W"
+            && PowerNeeds.Available(quest) == "5 V only · ≤15 W" && slow.What.StartsWith("Meta Quest 3 needs 18 W to charge at full speed") && slow.What.Contains("USB-A port, which gives 5 V only")
+            && slow.Affects.StartsWith("Only its battery") && PowerNeeds.Evidence(quest)[0].Contains("meta.com"), "A Quest 3 on a USB-A port charges slowly, as a note naming Meta's figure.");
+        // The same headset in file-sharing mode is matched by its product string, whatever its product ID.
+        Check(PowerNeeds.Listed(new UsbNode { Kind = "Device", VendorId = "2833", ProductId = "5011", ReportedProduct = "Quest 3" })?.Watts == 18
+            && PowerNeeds.Listed(new UsbNode { Kind = "Device", VendorId = "2833", ProductId = "5011", ReportedProduct = "Quest 3S" })?.Watts == 18
+            && PowerNeeds.Listed(new UsbNode { Kind = "Device", VendorId = "2833", ProductId = "5010", ReportedProduct = "Rift" }) == null
+            && PowerNeeds.For(new UsbNode { Kind = "Hub", VendorId = "2833", ReportedProduct = "Quest 3" }) == null, "Headsets match by vendor and product string; hubs need nothing.");
+        // On USB-C, Windows doesn't say what the port gives, so nothing is raised; a socket the user set wins.
+        var usbC = Quest("USB-C");
+        Check(!PowerNeeds.SlowHere(usbC) && PowerNeeds.Summary(usbC) == "Needs up to 18 W · port not reported" && PowerNeeds.Available(usbC) == "Not reported · USB-C"
+            && !PowerNeeds.SlowHere(new UsbNode { Kind = "Device", VendorId = "2833", ReportedProduct = "Quest 3", Connector = "USB-A", SocketConnectorSet = "USB-C" })
+            && PowerNeeds.Available(new UsbNode { Kind = "Empty port" }) == "Unknown · not measured", "A USB-C port on Windows isn't judged.");
+        // What Linux reports decides it: 3.0A at 5 V isn't enough, a 27 W Power Delivery offer is.
+        usbC.TypeCPowerMode = "3.0A";
+        Check(PowerNeeds.SlowHere(usbC) && PowerNeeds.Available(usbC) == "Up to 15 W · 5 V 3 A" && PowerNeeds.Ceiling(usbC)!.Value.Why.Contains("isn't using Power Delivery"), "A USB-C port at 3.0A gives 15 W, too little for 18.");
+        usbC.TypeCPowerMode = "usb_power_delivery"; usbC.PdOffers = ["5 V 3 A", "9 V 3 A"]; usbC.PdOfferWatts = 27;
+        Check(!PowerNeeds.SlowHere(usbC) && PowerNeeds.Summary(usbC) == "Needs up to 18 W · port up to 27 W" && PowerNeeds.Available(usbC) == "Up to 27 W · Power Delivery", "A port offering 27 W is enough.");
+        // A Quest 2 needs 10 W, which a 5 V port may give, so it isn't flagged there.
+        Check(!PowerNeeds.SlowHere(new UsbNode { Kind = "Device", VendorId = "2833", ReportedProduct = "Quest 2", Connector = "USB-A" }), "A need a 5 V port can meet isn't flagged.");
+        // An unlisted device that says what it runs on, in its descriptor or its sink capabilities.
+        var declared = new UsbNode { Kind = "Device", VendorId = "1234", ProductId = "0001", Connector = "USB-A", PdConsumerWatts = 20 };
+        Check(PowerNeeds.SlowHere(declared) && PowerNeeds.For(declared)!.Basis.StartsWith("Its own descriptor says it runs on up to 20 W"), "A device's own PD descriptor gives its need.");
+        declared.PdPartnerWatts = 25;
+        Check(PowerNeeds.For(declared)!.Watts == 25 && PowerNeeds.For(declared)!.Source.Contains("sink capabilities"), "What it asks for under Power Delivery comes before its descriptor.");
+
+        // The PD Consumer Port capability in a BOS: 18 W steady at the spec's offset 12; a BOS without one says nothing.
+        byte[] consumer = Convert.FromHexString("050F1D0001" + "18100800" + "0200" + "6400" + "B400" + "0000" + "08070000" + "D0070000" + "FFFF0000");
+        Check(PdDescriptors.ConsumerWatts(consumer) == 18 && PdDescriptors.ConsumerWatts(Convert.FromHexString("050F160002" + "0710021E210000" + "0A1003000F0001000000")) == null
+            && PdDescriptors.ConsumerWatts([5, 15, 40, 0, 1, 24, 16, 8]) == null, "A consumer's power comes from its BOS, and a short or missing capability gives none.");
+        Check(PdDescriptors.SourcePdo((180u << 10) | 300) is ("Fixed 9 V 3 A", var fixedWatts) && Math.Abs(fixedWatts - 27) < 0.001 && PdDescriptors.SourcePdo(0xC0DC213C).Text == "PPS 3.3 V–11 V 3 A"
+            && PdDescriptors.SourcePdo((1u << 30) | (420u << 20) | (100u << 10) | 240).Text == "Battery 5 V–21 V 60 W", "Source PDOs decode by type.");
+
+        // Linux: the laptop's USB-C port 2 offers Power Delivery up to 45 W, and the hub in it asks for up to 18 W.
+        var s = new LinuxUsbScanner(LinuxLaptop()).Scan();
+        var paths = Topology.PathLabels(s);
+        var hub = s.Nodes.First(n => paths[n.Id] == "H01/02");
+        Check(hub.TypeCPowerMode == "usb_power_delivery" && hub.PdOffers.SequenceEqual(["5 V 3 A", "9 V 3 A", "15 V 3 A"]) && hub.PdOfferWatts == 45 && hub.PdPartnerWatts == 18
+            && PowerNeeds.Available(hub) == "Up to 45 W · Power Delivery" && UsbC.Socket(s, hub).First(f => f.Feature == "Power Delivery").Text.StartsWith("Offers up to 45 W: 5 V 3 A, 9 V 3 A, 15 V 3 A")
+            && s.Nodes.First(n => paths[n.Id] == "H01/01").TypeCPowerMode == "", "Linux reads a USB-C port's Power Delivery offers and what the device in it asks for.");
+    }
+
+    // A battery seen falling while plugged in is a warning; a fall of one point, or a device that left and came back, isn't.
+    private static void BatteryTests(Action<bool, string> Check)
+    {
+        var tracker = new BatteryTracker(); var t0 = new DateTime(2026, 10, 19, 20, 0, 0);
+        UsbNode Headset(int percent) => new() { Id = "b/r/8", Kind = "Device", VendorId = "2833", ProductId = "5011", ReportedProduct = "Quest 3", Connector = "USB-A", InstanceId = @"USB\VID_2833&PID_5011\2G0Y", BatteryPercent = percent };
+        UsbNode Scan(int? percent, DateTime at)
+        {
+            var n = Headset(percent ?? 0); if (percent == null) n.BatteryPercent = null;
+            tracker.Apply(new Snapshot { Controllers = [new() { Id = "b", Kind = "Controller", Children = [n] }] }, at);
+            return n;
+        }
+        var first = Scan(80, t0);
+        Check(!Battery.IsDraining(first) && Battery.Summary(first) == "80%" && IssueRules.For(first).Contains((Severity.Note, PowerNeeds.SlowCharging)), "A first reading isn't a trend.");
+        Check(!Battery.IsDraining(Scan(79, t0.AddMinutes(1))), "A one-point fall isn't counted.");
+        Check(!Battery.IsDraining(Scan(null, t0.AddMinutes(2))), "A scan that couldn't read the battery isn't a fall.");
+        var falling = Scan(78, t0.AddMinutes(3));
+        Check(Battery.IsDraining(falling), "A two-point fall since the highest reading, past a scan that couldn't read it, is draining.");
+        var drain = Explanations.For(falling, Battery.Draining, [falling]);
+        Check(IssueRules.For(falling).Contains((Severity.Warning, Battery.Draining)) && !IssueRules.For(falling).Any(i => i.Text == PowerNeeds.SlowCharging)
+            && Battery.Summary(falling) == $"78% · down from 80% since {t0:t}" && drain.What.StartsWith("Its battery has fallen from 80% to 78%") && drain.Cause.Contains("USB-A port")
+            && Battery.Evidence(falling).Contains("Windows Portable Devices"), "A falling battery is a warning that names the port's limit, and replaces the note.");
+        Check(!Battery.IsDraining(Scan(81, t0.AddMinutes(4))) && Battery.IsDraining(Scan(79, t0.AddMinutes(5))), "Charging raises the mark it's measured from.");
+        tracker.Apply(new Snapshot { Controllers = [new() { Id = "b", Kind = "Controller" }] }, t0.AddMinutes(6));
+        Check(!Battery.IsDraining(Scan(70, t0.AddMinutes(7))), "A device that left and came back starts afresh.");
+        var demo = Headset(50); tracker.Apply(new Snapshot { IsDemo = true, Controllers = [new() { Id = "b", Kind = "Controller", Children = [demo] }] }, t0);
+        Check(demo.BatteryHighPercent == null && Battery.Summary(new UsbNode { Kind = "Device", BatteryPercent = 64, BatterySource = "External" }) == "64% · on external power", "The sample topology isn't tracked, and a device on external power says so.");
     }
 
     private static void ContainerTests(Action<bool, string> Check)
