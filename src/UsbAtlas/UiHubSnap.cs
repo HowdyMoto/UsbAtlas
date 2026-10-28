@@ -71,10 +71,10 @@ public partial class MainWindow
             bool enabled = !linked;
             foreach (var side in CardSides(node))
                 if (!deviceLabels.TrySetSnap(side, snapshot, enabled, out var message)) { StatusText.Text = message; return; }
-            // Stages are drawn only in the vertical layout, so linking one makes it the remembered layout; they
-            // show at full size, framed on this hub, since a far view draws the real hierarchy instead.
+            // Stages are drawn only in the vertical layout, so linking or unlinking one shows it there, at full size
+            // and framed on this hub, since a far view draws the real hierarchy instead. Only the layout buttons
+            // change the layout the app opens with, so one snap doesn't leave every later start in vertical.
             horizontalTree = false; ShowLayoutChoice();
-            if (enabled) SaveLayout(false);
             focusedBranch = null; FocusBranchButton.Content = "Focus branch";
             foreach (var ancestor in FindPath(node.Id)) folded.Remove(ancestor.Id);
             FitClick(this, new RoutedEventArgs()); ShowDetails(); FrameSelectionPath();

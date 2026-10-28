@@ -458,9 +458,15 @@ public partial class MainWindow
             double Span(Rect r) => horizontalTree ? r.Height : r.Width;
             var order = kids.Select(Along).ToList();
             Check(order.Zip(order.Skip(1)).All(p => p.First < p.Second), $"Children of {node.Id} are out of socket order.");
-            if (!packedHubs.Contains(node.Id)) { Check(kids.All(r => Near(Flow(r), Flow(kids[0]))), $"Children of {node.Id} wrapped onto another row."); continue; }
-            Check(horizontalTree && detail == CardDetail.Far, $"Children of {node.Id} are packed outside far cards in the horizontal layout.");
-            Check(kids.Select((r, i) => Near(Flow(r), Flow(kids[i % 2]))).All(same => same) && Flow(kids[1]) > Flow(kids[0]) + kids[0].Width,
+            if (!packedHubs.Contains(node.Id))
+            {
+                Check(kids.All(r => Near(Flow(r), Flow(kids[0]))), $"Children of {node.Id} wrapped onto another row.");
+                Check(!TopologyLayout.CanPack(node, Children, PackFrom), $"The {Children(node).Count} end devices of {node.Id} must pack into two rows.");
+                continue;
+            }
+            Check(!horizontalTree || detail == CardDetail.Far, $"Children of {node.Id} are packed outside far cards in the horizontal layout.");
+            Check(Children(node).Count >= PackFrom, $"Children of {node.Id} are packed in a group smaller than {PackFrom}.");
+            Check(kids.Select((r, i) => Near(Flow(r), Flow(kids[i % 2]))).All(same => same) && Flow(kids[1]) > Flow(kids[0]) + (horizontalTree ? kids[0].Width : kids[0].Height),
                 $"Packed children of {node.Id} must alternate between exactly two rows.");
             for (int i = 1; i < kids.Count; i += 2)
             {

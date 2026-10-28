@@ -7,7 +7,7 @@ public partial class MainWindow
 {
     // USB trees are shallow and wide: at most seven tiers, any number of ports per hub. Laid out from the
     // left, siblings stack as rows of horizontal text and position means one thing everywhere, so
-    // horizontal is the default; a layout chosen from the Layout menu is remembered.
+    // horizontal is the default; only a layout chosen with the layout buttons is remembered.
     private static string LayoutPath => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UsbAtlas", "layout.txt");
     private static bool SavedLayoutIsHorizontal()
     {
@@ -77,12 +77,34 @@ public partial class MainWindow
         FrameSelectionPath();
     }
     // The app opens on the whole topology, at the most detailed level that fits; it never hides branches
-    // on its own.
+    // on its own. When even far cards would have to shrink below OpeningScale to fit, names would be too small to
+    // read, so it opens on them at the readable scale instead, starting from the first host, and the rest is a
+    // scroll away. Fitting whole a little under the readable scale beats a scroll bar for the last few cards.
+    // Fit all still fits everything when asked.
+    private const double OpeningScale = 0.7;
     private void OpenInitialView()
     {
         if (focusedBranch != null) { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; }
         OverviewClick(this, new RoutedEventArgs());
+        if (FitScale() >= OpeningScale || OpeningHost() is not { } host) return;
+        var (point, card) = host;
+        SetZoom(ReadableScale); GraphScroll.UpdateLayout();
+        double scale = GraphScale.ScaleX;
+        // The host sits at the start of the flow, centered across it as far as the graph allows.
+        if (horizontalTree)
+        {
+            GraphScroll.ScrollToHorizontalOffset(0);
+            GraphScroll.ScrollToVerticalOffset(Math.Max(0, (point.Y + card.Height / 2) * scale - GraphScroll.ViewportHeight / 2));
+        }
+        else
+        {
+            GraphScroll.ScrollToVerticalOffset(0);
+            GraphScroll.ScrollToHorizontalOffset(Math.Max(0, (point.X + card.Width / 2) * scale - GraphScroll.ViewportWidth / 2));
+        }
+        GraphScroll.UpdateLayout();
     }
+    private (Point Point, Border Card)? OpeningHost() =>
+        snapshot.Controllers.Where(c => cards.ContainsKey(c.Id)).Select(c => ((Point, Border)?)(cards[c.Id].Point, cards[c.Id].Card)).FirstOrDefault();
     private void FrameSelectionPath()
     {
         if (selected == null || GraphScroll.ViewportWidth < 1) return;

@@ -24,7 +24,18 @@ public partial class MainWindow
         {
             FitClick(this, new RoutedEventArgs()); OpenInitialView(); UpdateLayout();
             Check(focusedBranch == null && cards.Values.Count(c => Hardware((UsbNode)c.Card.Tag)) == snapshot.Nodes.Count(Hardware), $"{name} must open with every hub and device on the canvas.");
-            Check(Graph.Width * GraphScale.ScaleX <= GraphScroll.ViewportWidth + 1 && Graph.Height * GraphScale.ScaleY <= GraphScroll.ViewportHeight + 1, $"{name} must open fitted whole.");
+            // Names are never too small to read on opening: a topology that fits only below the readable scale, even
+            // at far cards, opens on far cards at that scale with its first host in view.
+            Check(GraphScale.ScaleX >= OpeningScale - 0.001, $"{name} opened at {GraphScale.ScaleX:P0}, below the readable {OpeningScale:P0}.");
+            bool fitted = Graph.Width * GraphScale.ScaleX <= GraphScroll.ViewportWidth + 1 && Graph.Height * GraphScale.ScaleY <= GraphScroll.ViewportHeight + 1;
+            if (!fitted)
+            {
+                var (point, card) = OpeningHost()!.Value;
+                var hostCenter = Graph.TranslatePoint(new Point(point.X + card.Width / 2, point.Y + card.Height / 2), GraphScroll);
+                Check(detail == CardDetail.Far && FitScale() < OpeningScale && Math.Abs(GraphScale.ScaleX - ReadableScale) < 0.001
+                    && new Rect(0, 0, GraphScroll.ViewportWidth, GraphScroll.ViewportHeight).Contains(hostCenter),
+                    $"{name} must open fitted whole, or on far cards at {ReadableScale:P0} from its first host when they don't fit at {OpeningScale:P0}.");
+            }
             // The level is the most detailed whose whole graph fits at a readable scale: the next richer one doesn't.
             var chosen = detail;
             if (chosen != CardDetail.Full)
@@ -32,7 +43,7 @@ public partial class MainWindow
                 detail = chosen - 1; Draw(); double richer = FitScale(); detail = chosen; Draw(); UpdateLayout();
                 Check(richer < ReadableScale, $"{name} opened at {chosen} cards though {chosen - 1} cards fit at {richer:P0}.");
             }
-            report.Add($"{name} · {(horizontalTree ? "horizontal" : "vertical")} · {ActualWidth:0}×{ActualHeight:0} window: {detail} cards at {GraphScale.ScaleX:P0}, names {NameSize():0.#} px");
+            report.Add($"{name} · {(horizontalTree ? "horizontal" : "vertical")} · {ActualWidth:0}×{ActualHeight:0} window: {detail} cards at {GraphScale.ScaleX:P0}, names {NameSize():0.#} px, {(fitted ? "whole" : "from the first host")}");
         }
         try
         {
@@ -43,6 +54,12 @@ public partial class MainWindow
                 Open("The sample");
                 if (horizontal && fullSize) Check(NameSize() >= 11, $"The sample must open with readable names; they are {NameSize():0.#} px.");
                 if (horizontal) CaptureUi("overview-preview.png");
+                else
+                {
+                    // The travel hub's three devices stack into two staggered rows at every level.
+                    Check(packedHubs.Contains("demo/root/5"), $"The vertical layout must pack the travel hub's three devices at {detail} cards.");
+                    CaptureUi("overview-vertical-preview.png");
+                }
             }
             horizontalTree = true;
             // About 40 devices behind five seven-port hubs.
