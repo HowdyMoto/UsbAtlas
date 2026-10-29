@@ -189,11 +189,16 @@ internal static class NodeVisuals
     internal static string WireInk(UsbNode n) => SlowLink(n) && Explanations.SpeedSeverity(n) == Severity.Warning ? "Warning" : "Wire";
     internal static DoubleCollection? WireDashes(UsbNode n) => SlowLink(n) ? WireDashes() : null;
     internal static DoubleCollection WireDashes() => [2.5, 1.5];
-    // The missing USB 3 side's stub: finer dashes than a slow link's, so the two read apart.
+    // Dashes mean something is slower than it could be. The missing USB 3 side's stub has finer dashes than a
+    // slow link's and ends in an open ring, an unplugged end, so the two differ by more than dash length.
     internal static DoubleCollection StubDashes() => [1.5, 1];
-    // A link nothing uses now: round dots, distinct from a slow link's dashes, and drawn so whether or not it's lit.
-    internal static DoubleCollection IdleDots() => [0, 2.4];
-    internal static void Dot(System.Windows.Shapes.Shape line) { line.StrokeDashArray = IdleDots(); line.StrokeDashCap = PenLineCap.Round; line.StrokeStartLineCap = line.StrokeEndLineCap = PenLineCap.Round; }
+    internal const double StubEndSize = 7;
+    internal static System.Windows.Shapes.Ellipse StubEnd(string ink) => new()
+    {
+        Width = StubEndSize, Height = StubEndSize, Stroke = Ink(ink), StrokeThickness = 1.5, Fill = Ink("CanvasSurface")
+    };
+    // A link nothing uses now is a faint solid line: a state, not a fault, so it takes no pattern.
+    internal const string IdleInk = "WireIdle";
 
     // A port is drawn as its socket: a USB-A shell with its tongue along the top, a USB-C pill with its
     // tongue centered, or a plain slot for a built-in port with no socket. The tongue carries USB's color
@@ -277,7 +282,7 @@ internal static class NodeVisuals
     }
 
     // The legend beneath the graph: each kind of socket, drawn small with the canvas's own templates.
-    internal const string SocketLegendHelp = "Shape is the connector: USB-A is a rectangle with its tongue along the top, USB-C a pill with its tongue in the middle, and a built-in port with no socket a plain slot. Tongue color is speed: black USB 2, blue USB 3 at 5 Gb/s or faster, red once a device has linked at 10 Gb/s or faster or you have set the socket's speed, since Windows doesn't report a port's top rate. A socket split at a seam is one physical socket that Windows reports as two logical ports, USB 2 and USB 3. A filled socket is in use. A connection's width is its negotiated link rate, widest at 10 Gb/s and faster; a dashed connection runs slower than its device supports, amber when that holds something back. A short dashed line on an empty socket half marks a hub's USB 3 side that didn't connect there, amber or gray by the same rule. The color of a card's icon and name says what the device does; hubs, hosts and ports stay gray. Point at anything on the graph to see what it means.";
+    internal const string SocketLegendHelp = "Shape is the connector: USB-A is a rectangle with its tongue along the top, USB-C a pill with its tongue in the middle, and a built-in port with no socket a plain slot. Tongue color is speed: black USB 2, blue USB 3 at 5 Gb/s or faster, red once a device has linked at 10 Gb/s or faster or you have set the socket's speed, since Windows doesn't report a port's top rate. A socket split at a seam is one physical socket that Windows reports as two logical ports, USB 2 and USB 3. A filled socket is in use. A connection's width is its negotiated link rate, widest at 10 Gb/s and faster; a dashed connection runs slower than its device supports, amber when that holds something back. A short dashed line ending in an open ring, on an empty socket half, marks a hub's USB 3 side that didn't connect there, amber or gray by the same rule. A faint solid line is a link nothing uses now, which is fine. The color of a card's icon and name says what the device does; hubs, hosts and ports stay gray. Point at anything on the graph to see what it means.";
     internal const string LegendGroupTag = "legend-group", CableLegendTag = "legend-cable";
     // A split socket's halves are drawn as the graph draws them: stacked in the horizontal layout, side by side in the vertical one.
     internal static IEnumerable<FrameworkElement> SocketLegend(bool down = false)
@@ -317,11 +322,14 @@ internal static class NodeVisuals
             entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             return entry;
         }
-        FrameworkElement Idle(string label, string help)
+        // The missing USB 3 side's stub, ring and all, as the graph draws it.
+        FrameworkElement Stub(string label, string help)
         {
             var entry = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent, ToolTip = help };
-            var dots = new System.Windows.Shapes.Line { X1 = 1.5, X2 = 20, Y1 = 7, Y2 = 7, Width = 22, Height = 14, Margin = new Thickness(0, 0, 4, 0), Stroke = Ink("Wire"), StrokeThickness = WireWidth(new UsbNode { LinkMbps = 5000 }), VerticalAlignment = VerticalAlignment.Center };
-            Dot(dots); entry.Children.Add(dots);
+            var swatch = new Canvas { Width = 20, Height = 14, Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center };
+            swatch.Children.Add(new System.Windows.Shapes.Line { X1 = 0, X2 = 20 - StubEndSize / 2, Y1 = 7, Y2 = 7, Stroke = Ink("Warning"), StrokeThickness = WireWidth(new UsbNode { LinkMbps = 5000 }), StrokeDashArray = StubDashes() });
+            var end = StubEnd("Warning"); Canvas.SetLeft(end, 20 - StubEndSize); Canvas.SetTop(end, 7 - StubEndSize / 2); swatch.Children.Add(end);
+            entry.Children.Add(swatch);
             entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             return entry;
         }
@@ -350,15 +358,18 @@ internal static class NodeVisuals
             Entry("USB-C", "A pill with its tongue in the middle is a USB-C socket. Its color is speed, as for USB-A.", Glyph("USB-C", "≥5 Gb/s")),
             Entry("USB 2 + USB 3 halves", "One physical socket that Windows reports as two logical ports, its USB 2 and USB 3 halves, split at a seam. A USB 3 socket has contacts for both: a USB 2 device uses one half, a USB 3 device the other, and a USB 3 hub both. The PC numbers its two halves separately, such as 03 and 07; a hub chip gives both halves the same number.", Glyph("USB-A", "≥5 Gb/s", SocketPart.First), Glyph("USB-A", "≥5 Gb/s", SocketPart.Second)),
             Entry("Built-in", "A plain slot is a built-in connection with no socket to plug into, or a port whose connector Windows doesn't report.", Glyph("Internal", "USB 2.0")));
-        // A USB 3 hub's own marks: its cable's two links, a link nothing uses, and chips wired together in one unit.
-        yield return Group("USB 3 hub",
-            Cable("One cable, two links", "Two lines side by side are one cable to a USB 3 hub. A USB 3 hub is two hubs in one box, a USB 3 hub and a USB 2 hub, and its cable carries a link to each, so Windows sees two connections on the two halves of one socket. The thicker line is the USB 3 link. Each device plugged into the hub uses the link that matches its speed; selecting a device lights the one it uses. Inside a hub unit, the two lines are wiring between its chips, not a cable."),
-            Idle("Idle link", "Dotted: nothing uses this link now. A USB 3 hub's USB 3 link is idle when everything plugged into it is USB 2 or slower."),
-            Unit("Hub unit", "A band behind hub chips that are wired together inside one unit: Windows reports the port joining them as built in, with nothing to plug into. A 7- or 10-port hub is often made of several 4-port chips like this. The links between them are wiring, not cables."));
+        // Solid lines are states, nothing to fix: what a link runs at, a USB 3 hub's cable and a link nothing uses.
+        // Patterns are faults, grouped on their own so a dashed line never reads like an idle one.
         yield return Group("Link",
             Link("Rate", "Wire", null, "Width is the negotiated link rate: 12 Mb/s, 480 Mb/s, 5 Gb/s and 10 Gb/s or faster.", WireWidth(new UsbNode { LinkMbps = 12 }), WireWidth(new UsbNode { LinkMbps = 480 }), WireWidth(new UsbNode { LinkMbps = 5000 }), WireWidth(new UsbNode { LinkMbps = 10000 })),
-            Link("Slower than device", "Warning", WireDashes(), "Dashed: the link runs slower than the device supports. Amber when that slows something plugged in now; gray when nothing is slowed yet.", 2),
-            Link("USB 3 link not connected", "Warning", StubDashes(), "A short dashed line on an empty socket half: a USB 3 hub's USB 3 link should connect there but didn't, so the hub runs at USB 2. Amber when that slows something plugged in now; gray when nothing is slowed yet.", WireWidth(new UsbNode { LinkMbps = 5000 })));
+            Link("Idle, nothing on it", IdleInk, null, "Faint: nothing uses this link now, which is fine. A USB 3 hub's USB 3 link is idle when everything plugged into it is USB 2 or slower, and its USB 2 link when everything is USB 3.", WireWidth(new UsbNode { LinkMbps = 5000 })));
+        // A USB 3 hub's own marks: its cable's two links and chips wired together in one unit.
+        yield return Group("USB 3 hub",
+            Cable("One cable, two links", "Two lines side by side are one cable to a USB 3 hub. A USB 3 hub is two hubs in one box, a USB 3 hub and a USB 2 hub, and its cable carries a link to each, so Windows sees two connections on the two halves of one socket. The thicker line is the USB 3 link. Each device plugged into the hub uses the link that matches its speed; selecting a device lights the one it uses, and a link nothing uses stays faint. Inside a hub unit, the two lines are wiring between its chips, not a cable."),
+            Unit("Hub unit", "A band behind hub chips that are wired together inside one unit: Windows reports the port joining them as built in, with nothing to plug into. A 7- or 10-port hub is often made of several 4-port chips like this. The links between them are wiring, not cables."));
+        yield return Group("Slower than it could be",
+            Link("Slower than device", "Warning", WireDashes(), "Dashed: the link runs slower than the device supports. Amber when that slows something plugged in now; gray when nothing is slowed yet, as for a device whose speed costs it nothing.", 2),
+            Stub("USB 3 link not connected", "A short dashed line ending in an open ring, on an empty socket half: a USB 3 hub's USB 3 link should connect there but didn't, so the hub runs at USB 2. Amber when that slows something plugged in now; gray when nothing is slowed yet."));
         // Each hue with what it stands for, as a dot in the ink a card's icon and name wear.
         FrameworkElement Hue(string category, string label, string help)
         {

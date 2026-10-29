@@ -142,6 +142,14 @@ public partial class MainWindow
             Check(legendText.Contains("USB 3 link not connected") && new[] { "Input", "Gaming", "Audio", "Video", "Storage", "Connectivity" }.All(legendText.Contains),
                 "The legend must name the missing USB 3 side's stub and what each card color means.");
             Check(VisualDescendants(SocketLegend).OfType<StackPanel>().Where(p => p.ToolTip != null).Count() >= 10, "Each link and color entry in the legend must explain itself.");
+            // Faults are grouped apart from states, and only faults are drawn with a pattern.
+            var groups = VisualDescendants(SocketLegend).OfType<StackPanel>().Where(p => Equals(p.Tag, NodeVisuals.LegendGroupTag)).ToList();
+            static string Name(StackPanel g) => g.Children.OfType<TextBlock>().First().Text;
+            static bool Patterned(StackPanel g) => VisualDescendants(g).OfType<System.Windows.Shapes.Shape>().Any(s => s.StrokeDashArray is { Count: > 0 });
+            var faults = groups.SingleOrDefault(g => Name(g) == "Slower than it could be");
+            Check(faults != null && VisualDescendants(faults).OfType<TextBlock>().Select(t => t.Text).Intersect(["Slower than device", "USB 3 link not connected"]).Count() == 2
+                && groups.Where(g => g != faults).All(g => !Patterned(g)) && VisualDescendants(groups.Single(g => Name(g) == "Link")).OfType<TextBlock>().Any(t => t.Text.StartsWith("Idle")),
+                "The legend must group the faults apart from the states, with only the faults patterned, and show an idle link as a state.");
         }
         finally
         {

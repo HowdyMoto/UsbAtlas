@@ -71,6 +71,10 @@ public partial class MainWindow
             var stub = Graph.Children.OfType<System.Windows.Shapes.Line>().SingleOrDefault(l => Equals(l.Tag, MissingUsb3Tag));
             Check(stub != null && (new Point(stub.X1, stub.Y1) - portAnchors["demo/root/7"]).Length < 0.01 && stub.Stroke == Brush(NodeVisuals.WireInk(monitor)) && stub.StrokeDashArray.Count > 0
                 && new Vector(stub.X2 - stub.X1, stub.Y2 - stub.Y1).Length < TopologyLayout.Stub, "A hub whose USB 3 side didn't connect must show a short dashed stub on the empty USB 3 half of its socket, in its connection's ink.");
+            // It ends in an open ring, so it differs from a slow link by more than its dashes.
+            var end = Graph.Children.OfType<System.Windows.Shapes.Ellipse>().SingleOrDefault(e => e.Uid == MissingUsb3EndUid);
+            Check(end != null && Math.Abs(Canvas.GetLeft(end) + end.Width / 2 - stub!.X2) < 0.01 && Math.Abs(Canvas.GetTop(end) + end.Height / 2 - stub.Y2) < 0.01 && end.Stroke == stub.Stroke && end.Fill == Brush("CanvasSurface"),
+                "A missing USB 3 side's stub must end in an open ring in its ink.");
             var text = ExplanationText("Running at USB 2");
             Check(text.Contains("connected at USB 2 (480 Mb/s)") && text.Contains("Does it affect you?") && text.Contains("Not right now") && text.Contains("USB-C Prioritization") && text.Contains("charging cables"),
                 "The explanation must say what is happening, that nothing is affected, and the likely USB-C causes.");
@@ -412,10 +416,10 @@ public partial class MainWindow
         {
             var node = (UsbNode)wire.Tag;
             Check(node.Id == id && wire.StrokeThickness == NodeVisuals.WireWidth(node), $"Connection {id} must be as wide as its link rate.");
-            // A link nothing uses is dotted instead, round dots that read apart from a slow link's dashes.
-            Check(idleLinks.Contains(id) ? wire.StrokeDashCap == PenLineCap.Round && wire.StrokeDashArray.SequenceEqual(NodeVisuals.IdleDots())
-                : (wire.StrokeDashArray is { Count: > 0 }) == NodeVisuals.SlowLink(node), $"Connection {id} must be dashed exactly when its link is slower than its device supports, and dotted when nothing uses it.");
-            Check(wire.Stroke == Brush(chain.Contains(id) ? "Accent" : InkFor(node)), $"Connection {id} has the wrong ink.");
+            // Patterns are faults only: a link nothing uses is solid and faint, and never lit, since nothing on the selection uses it.
+            Check((wire.StrokeDashArray is { Count: > 0 }) == NodeVisuals.SlowLink(node) && (!idleLinks.Contains(id) || wire.StrokeDashArray is not { Count: > 0 }),
+                $"Connection {id} must be dashed exactly when its link is slower than its device supports, and solid when nothing uses it.");
+            Check(wire.Stroke == Brush(idleLinks.Contains(id) ? NodeVisuals.IdleInk : chain.Contains(id) ? "Accent" : InkFor(node)), $"Connection {id} has the wrong ink: faint when idle, accent on the selected path.");
         }
         var boxes = cards.ToDictionary(c => c.Key, c => new Rect(c.Value.Point, new Size(c.Value.Card.Width, c.Value.Card.Height)));
         var all = boxes.ToList();
