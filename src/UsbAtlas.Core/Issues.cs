@@ -24,7 +24,7 @@ internal static class IssueRules
         // undocking does, so it's a note; a device dropping on its own is much more likely a fault.
         if (n.QuickReconnects > 0) issues.Add((n.Kind == "Hub" ? Severity.Note : Severity.Warning, "Unstable connection"));
         if (UsbBudgets.UplinkSeverity(n) is Severity uplink) issues.Add((uplink, "Limited by PCIe link"));
-        if (UsbBudgets.EndpointsRunningHigh(n)) issues.Add((Severity.Note, "Many endpoints in use"));
+        if (UsbBudgets.EndpointsRunningHigh(n)) issues.Add((Severity.Note, UsbBudgets.EndpointsHigh));
         // A USB-C alternate mode that failed loses what it carries, such as the picture; one never asked for may be intended.
         if (Billboard.FailedModes(n).Count > 0) issues.Add((Severity.Warning, Billboard.Failed));
         else if (Billboard.NoneEntered(n)) issues.Add((Severity.Note, Billboard.NotEntered));

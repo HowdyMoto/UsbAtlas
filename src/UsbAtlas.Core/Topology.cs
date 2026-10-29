@@ -78,6 +78,8 @@ internal static class Topology
         "Hub" when n.Location == "Internal" => "Built-in hub",
         "Hub" when n.Location == "External" => "Plug-in hub",
         "Hub" => "Hub", "Empty port" => "Empty port", "Unavailable" => "USB port",
+        // A Billboard reports which USB-C display modes a monitor or dock entered; the class name means nothing to most people.
+        _ when n.DeviceType == "Billboard" => "USB-C display status",
         _ => n.DeviceType
     };
 

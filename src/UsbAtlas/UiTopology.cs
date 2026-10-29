@@ -98,16 +98,16 @@ public partial class MainWindow
                 : ShowsMeter(above) ? " It's a part of that hub's meter; pointing at the part rings this card." : "";
         return UsbBudgets.ReservationNote(n) + (where.Length > 0 ? " " + where : "");
     }
-    private static (double Now, double Peak, double Capacity, string Label)? MeterFor(UsbNode n)
+    // The label leads with whether it's OK, the same verdict as the link's badges, then shares of the time the
+    // link can set aside, so every meter reads on the same scale; the rates are in the tooltip. A merged hub's
+    // meter names which of its links it is.
+    private static (double Now, double Peak, double Capacity, (string Word, Severity? Severity) Verdict, string Detail)? MeterFor(UsbNode n, string link = "link")
     {
         if (!ShowsMeter(n) || UsbBudgets.LinkUse(n) is not (var now, var capacity, _)) return null;
         double peak = Math.Max(now, UsbBudgets.PeakThroughLink(n).Mbps);
-        // Shares of what the link can reserve, so every meter reads on the same scale; the rates are in the tooltip.
         static string Percent(double share) => share is > 0 and < 0.005 ? "<1%" : $"{share * 100:0}%";
-        string label = peak > now + 0.01
-            ? $"{Percent(now / capacity)} reserved · up to {Percent(peak / capacity)} {(n.Kind == "Hub" ? "at peak" : "streaming")}"
-            : $"{Percent(now / capacity)} of link reserved";
-        return (now, peak, capacity, label);
+        string detail = $"{Percent(now / capacity)} of {link} time" + (peak > now + 0.01 ? $", {Percent(peak / capacity)} {(n.Kind == "Hub" ? "at peak" : "streaming")}" : "");
+        return (now, peak, capacity, UsbBudgets.LinkVerdict(n), detail);
     }
     // A hub's meter has a part for the hub and one for each device or hub on its ports, in socket order;
     // together they are what its link holds. A device's meter is all its own.
@@ -148,7 +148,16 @@ public partial class MainWindow
         else if (n.ReservedMbps is double reserved)
             lines.Add($"Reserved: {UsbBudgets.Rate(reserved)} of bus time held by open interrupt and isochronous pipes" + (n.PeakReservedMbps > reserved ? $", up to {UsbBudgets.Rate(n.PeakReservedMbps.Value)} when fully active" : "") + ". Bulk transfers, such as storage, reserve nothing and share what is left.");
         if (ShowsMeter(n) && UsbBudgets.LinkUse(n) is (var used, var capacity, _))
-            lines.Add($"Meter: reservations fill {UsbBudgets.Share(used, capacity)}, the most this link reserves for timed transfers; the lighter part runs to {UsbBudgets.Rate(Math.Max(used, UsbBudgets.PeakThroughLink(n).Mbps))} if everything on it streams at once. It shows bus time set aside, not traffic measured.");
+        {
+            string meaning = UsbBudgets.LinkVerdict(n).Word switch
+            {
+                "Nearly full" => "Nearly full: 80% or more is set aside now, so a new camera or audio device here may be refused.",
+                "Could run out" => "Could run out: if everything on it streams at once, it needs more than the link can set aside.",
+                "Likely fine" => "Likely fine: what's reported fits, even at peak, but some devices on it didn't say what they reserve.",
+                _ => "Fine: everything on it fits, even if it all streams at once."
+            };
+            lines.Add($"Meter: {meaning} Audio, video and input devices set aside time on a link so they're never kept waiting; here they hold {UsbBudgets.Share(used, capacity)}, the most this link sets aside for them, and the lighter part runs to {UsbBudgets.Rate(Math.Max(used, UsbBudgets.PeakThroughLink(n).Mbps))} if everything on it streams at once. It shows time set aside, not traffic measured.");
+        }
         else if (n.Kind is "Device" or "Hub") lines.Add("No meter: " + NoMeterReason(n));
         if (UsbBudgets.SharedTtUse(n) is (var ttNow, var ttPeak, _, > 0 and var ports))
             lines.Add($"Shared TT: full- and low-speed devices on {ports} port(s) share one 12 Mb/s bus behind this hub and hold {UsbBudgets.Share(ttNow, UsbBudgets.FullSpeedReservableMbps)} of what it can reserve" + (ttPeak > ttNow + 0.01 ? $", up to {UsbBudgets.Rate(ttPeak)} at peak." : "."));
@@ -632,10 +641,9 @@ public partial class MainWindow
         }
         // A merged USB 3 hub has a meter for one link, the one its devices use, and says which.
         var metered = Metered(node);
-        if (MeterShown(node) && MeterFor(metered) is var (_, _, capacity, label))
+        if (MeterShown(node) && MeterFor(metered, merged ? (metered.IsUsb2Companion ? "USB 2" : "USB 3") + " link" : "link") is var (_, _, capacity, verdict, detail))
         {
-            if (merged) label = $"{(metered.IsUsb2Companion ? "USB 2" : "USB 3")} link: {label}";
-            var meter = NodeVisuals.Meter(MeterParts(metered), capacity, label, out var segments);
+            var meter = NodeVisuals.Meter(MeterParts(metered), capacity, verdict, detail, out var segments);
             meter.Margin = new Thickness(0, 4, 0, 0); meter.ToolTip = MetricHelp(metered);
             foreach (var (part, segment) in segments)
             {
