@@ -154,6 +154,13 @@ internal static class UsbBudgets
     // flags a link whose known peaks would not fit at once; a link already nearly full warns as that instead.
     internal static bool CouldExceedWhenStreaming(UsbNode n) =>
         !LinkNearlyFull(n) && LinkUse(n) is (_, var capacity, _) && PeakThroughLink(n).Mbps > capacity;
+    // Whether a link's reservations are OK, in a word, from the same tests as its warnings so a meter and
+    // its badges never disagree. The severity is the badge's; a link that fits has none. Devices that didn't
+    // report count as nothing, so a link with some of those is only likely fine.
+    internal static (string Word, Severity? Severity) LinkVerdict(UsbNode n) =>
+        LinkNearlyFull(n) ? ("Nearly full", Severity.Note)
+        : CouldExceedWhenStreaming(n) ? ("Could run out", Severity.Warning)
+        : (LinkUse(n) is (_, _, > 0) ? "Likely fine" : "Fine", null);
 
     // Full- and low-speed devices behind a high-speed hub don't use its 480 Mb/s directly: a transaction
     // translator (TT) runs their periodic transfers on a 12 Mb/s bus, which reserves at most 90% of each
@@ -277,6 +284,8 @@ internal static class UsbBudgets
     }
     // Two thirds of the 96 some controllers allow: early enough to point at the controller before it runs out.
     internal const int ManyEndpoints = 64;
+    // Named for what it means to someone plugging in; the explanation and Properties say endpoints.
+    internal const string EndpointsHigh = "Controller running out of room";
     internal static bool EndpointsRunningHigh(UsbNode n) => n.Kind == "Controller" && ControllerLoad(n).Endpoints >= ManyEndpoints;
 
     // A PCIe link after line encoding: 8b/10b up to 5 GT/s, 128b/130b up to 32 GT/s, and FLIT at 64 GT/s.

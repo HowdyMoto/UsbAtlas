@@ -14,7 +14,8 @@ public sealed class DeviceContainer
 
 internal static class Containers
 {
-    internal const string SharedId = "Container ID shared";
+    // The badge says what's true, not the evidence: "Container ID shared" read as proof the hardware is one unit.
+    internal const string SharedId = "Grouped with unrelated hardware";
     // The computer itself: everything built in that Windows doesn't put in a container of its own.
     private const string RootContainer = "{00000000-0000-0000-ffff-ffffffffffff}";
 

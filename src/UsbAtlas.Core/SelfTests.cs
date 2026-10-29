@@ -45,6 +45,7 @@ internal static class SelfTests
         Check(HubRelationships.ReducedSpeed(billboard) && Explanations.SpeedSeverity(billboard) == Severity.Note
             && Explanations.Speed(billboard, [new() { Kind = "Root hub" }, new UsbNode { Id = "hs", Kind = "Hub", LinkMbps = 480 }, billboard]).Affects.StartsWith("No: a Billboard device"),
             "A Billboard at 12 Mb/s is a note: its speed costs nothing.");
+        Check(Topology.Label(billboard) == "USB-C display status" && Topology.Label(new UsbNode { Kind = "Device", DeviceType = "Audio" }) == "Audio", "A Billboard is labelled for what it reports, not its class name.");
         // A dock behind another hub whose Billboard reports DisplayPort entered: its USB 3 side has no lanes left.
         var dockBillboard = new UsbNode { Id = "d/1/4/2", Kind = "Device", Name = "GsCooLink USB BillBoard", DeviceType = "Billboard", Billboard = new() { Modes = [new() { Svid = "FF01", Name = "DisplayPort", State = "Entered" }] } };
         var dock = new UsbNode { Id = "d/1", Kind = "Hub", Name = "GenesysLogic USB2.1 Hub", LinkMbps = 480, UsbVersion = "USB 2.10", SpeedLimited = true, Usb3SideMissing = true, Connector = "USB-A",
@@ -211,10 +212,10 @@ internal static class SelfTests
         var crowded = new UsbNode { Kind = "Controller", Children = [new UsbNode { Kind = "Root hub", Children = [Busy(30), Busy(30), new UsbNode { Kind = "Device" }] }] };
         Check(UsbBudgets.ControllerLoad(crowded) == (3, 63, 1) && !UsbBudgets.EndpointsRunningHigh(crowded), "Endpoints are counted per device: control plus open pipes; unread devices are counted as unreported.");
         crowded.Children[0].Children.Add(Busy(0));
-        Check(IssueRules.For(crowded).Contains((Severity.Note, "Many endpoints in use")) && Explanations.For(crowded, "Many endpoints in use", [crowded]).Affects.StartsWith("Not right now"),
-            "A controller with many endpoints open is a note while everything works.");
+        Check(IssueRules.For(crowded).Contains((Severity.Note, UsbBudgets.EndpointsHigh)) && Explanations.For(crowded, UsbBudgets.EndpointsHigh, [crowded]) is { Affects: var calm, What: var endpoints } && calm.StartsWith("Not right now") && endpoints.Contains("endpoints open"),
+            "A controller with many endpoints open is a note while everything works, and its explanation names endpoints.");
         crowded.Children[0].Children[0].DriverProblems.Add(new DeviceProblem { Code = 10 });
-        Check(Explanations.For(crowded, "Many endpoints in use", [crowded]).Affects.StartsWith("Maybe: Interface isn't working"), "A failing device on a crowded controller points to the endpoints.");
+        Check(Explanations.For(crowded, UsbBudgets.EndpointsHigh, [crowded]).Affects.StartsWith("Maybe: Interface isn't working"), "A failing device on a crowded controller points to the endpoints.");
         var connecting = new UsbNode { Kind = "Unavailable", Status = "Enumerating" };
         Check(IssueRules.For(connecting).SequenceEqual([(Severity.Note, "Still connecting")]) && Explanations.For(connecting, "Still connecting", [connecting]).What.Contains("still setting it up"),
             "A port still being set up is a calm note, not a port error.");
@@ -601,7 +602,13 @@ internal static class SelfTests
         Check(UsbBudgets.CouldExceedWhenStreaming(cameras) && !UsbBudgets.LinkNearlyFull(cameras), "Two idle webcams that need 395 Mb/s at peak overflow a USB 2 hub's 384 Mb/s.");
         Check(!UsbBudgets.CouldExceedWhenStreaming(new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [Kiyo()] }), "One webcam's peak fits a USB 2 hub.");
         Check(!UsbBudgets.CouldExceedWhenStreaming(crowded) && !UsbBudgets.CouldExceedWhenStreaming(cameras.Children[0]), "A link already nearly full warns only as nearly full; a device that fits its own link is fine.");
-        Check(!UsbBudgets.CouldExceedWhenStreaming(new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [new UsbNode { Kind = "Device" }, Kiyo()] }), "Devices without reservation data add nothing to the peak.");
+        var unreported = new UsbNode { Kind = "Hub", LinkMbps = 480, ReservedMbps = 0.0001, Children = [new UsbNode { Kind = "Device" }, Kiyo()] };
+        Check(!UsbBudgets.CouldExceedWhenStreaming(unreported), "Devices without reservation data add nothing to the peak.");
+        // A meter's verdict and the link's badges come from the same tests, so they can't disagree.
+        Check(UsbBudgets.LinkVerdict(crowded) == ("Nearly full", Severity.Note) && IssueRules.For(crowded).Contains((Severity.Note, "Link nearly full"))
+            && UsbBudgets.LinkVerdict(cameras) == ("Could run out", Severity.Warning) && IssueRules.For(cameras).Contains((Severity.Warning, "Could exceed when streaming"))
+            && UsbBudgets.LinkVerdict(studio) == ("Fine", null) && UsbBudgets.LinkVerdict(unreported) == ("Likely fine", null),
+            "A meter's verdict matches the link's warning, and a link with unreported devices is only likely fine.");
         // What a reservation can do decides whether a device's own link is worth watching: a keyboard's fixed
         // slice and a drive's nothing never fill it, a camera's or microphone's can. Each says so in plain words.
         UsbNode Demo(string id) => demo.Nodes.Single(n => n.Id == id);

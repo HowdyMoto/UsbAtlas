@@ -140,7 +140,9 @@ internal static class NodeVisuals
     internal const string MeterTag = "link-meter", MeterLabelTag = "meter-label", MeterBarTag = "meter-bar";
     internal const double MeterPeakOpacity = 0.35;
     internal sealed record MeterPart(UsbNode Node, double Now, double Peak);
-    internal static Grid Meter(IReadOnlyList<MeterPart> parts, double capacity, string label, out List<(UsbNode Node, Border Segment)> segments)
+    // The verdict leads the label in its badge's ink, so a meter that needs attention matches its warning;
+    // a link that fits stays in the label's own ink.
+    internal static Grid Meter(IReadOnlyList<MeterPart> parts, double capacity, (string Word, Severity? Severity) verdict, string detail, out List<(UsbNode Node, Border Segment)> segments)
     {
         // A part holding anything now shows at least a sliver; peaks past what the link can reserve run to
         // the end of the track.
@@ -167,9 +169,12 @@ internal static class NodeVisuals
         segments = drawn;
         var text = new TextBlock
         {
-            Text = label, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Ink("TextSecondary"), Height = 12, LineHeight = 12,
+            FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Ink("TextSecondary"), Height = 12, LineHeight = 12,
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Top, TextTrimming = TextTrimming.CharacterEllipsis, Tag = MeterLabelTag
         };
+        var word = new System.Windows.Documents.Run(verdict.Word);
+        if (verdict.Severity is Severity s) word.Foreground = Ink(StatusColor(s));
+        text.Inlines.Add(word); text.Inlines.Add(new System.Windows.Documents.Run(" · " + detail));
         return new Grid { Height = 18, Tag = MeterTag, Children = { text, bars } };
     }
 

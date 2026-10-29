@@ -53,7 +53,7 @@ internal static class Explanations
                 steps.Add("For fast drives, use a port on another controller: another host card here.");
                 return new(what, affects, "", steps);
             }
-            case "Many endpoints in use":
+            case UsbBudgets.EndpointsHigh:
             {
                 var failing = n.Walk().Where(d => d.Kind is "Device" or "Hub" && d.DriverProblems.Count > 0).ToList();
                 return new($"Devices on this controller have {UsbBudgets.ControllerLoad(n).Endpoints} endpoints open: the channels it keeps for each device, one for control plus one for each pipe. Controllers hold only so many, and Windows doesn't say how many; some common ones top out at 96.",

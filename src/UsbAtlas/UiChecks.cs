@@ -690,10 +690,19 @@ public partial class MainWindow
                     }, $"Card {id}'s figures must say what it reserves, why that can't fill its link, and whose link it shares: \"{help}\".");
                 }
                 if (meters.Count == 0) continue;
-                var (now, peak, capacity, label) = MeterFor(node)!.Value;
+                var (now, peak, capacity, verdict, detail) = MeterFor(node)!.Value;
                 var text = meters[0].Children.OfType<TextBlock>().Single(t => Equals(t.Tag, NodeVisuals.MeterLabelTag));
                 var bars = meters[0].Children.OfType<Grid>().Single(g => Equals(g.Tag, NodeVisuals.MeterBarTag));
-                Check(text.Text == label && !label.Contains("b/s") && label.Contains('%'), $"Card {id}'s meter label must give shares, not rates: \"{text.Text}\".");
+                string label = verdict.Word + " · " + detail, labelText = string.Concat(text.Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text));
+                Check(labelText == label && !label.Contains("b/s") && label.Contains('%') && detail.Contains("of link time"), $"Card {id}'s meter label must give shares of link time, not rates: \"{labelText}\".");
+                // Whether it's OK reads without hovering: the verdict leads, in its warning's ink, and the label isn't cut short.
+                var lead = (System.Windows.Documents.Run)text.Inlines.FirstInline;
+                Check(lead.Text == verdict.Word && (verdict.Severity is Severity s ? lead.Foreground == Brush(NodeVisuals.StatusColor(s)) : lead.ReadLocalValue(System.Windows.Documents.TextElement.ForegroundProperty) == DependencyProperty.UnsetValue)
+                    && IssueRules.For(node).Where(i => i.Text is "Link nearly full" or "Could exceed when streaming").Select(i => (Severity?)i.Severity).DefaultIfEmpty(null).Single() == verdict.Severity,
+                    $"Card {id}'s meter must lead with a verdict matching its link warning: \"{labelText}\".");
+                var probe = new TextBlock { Text = label, FontSize = text.FontSize, FontWeight = text.FontWeight, FontFamily = text.FontFamily };
+                probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                Check(probe.DesiredSize.Width <= text.ActualWidth + 0.5, $"Card {id}'s meter label must fit without trimming: \"{label}\" needs {probe.DesiredSize.Width:0} of {text.ActualWidth:0}.");
                 Rect Bounds(FrameworkElement e) => e.TransformToAncestor(meters[0]).TransformBounds(new Rect(0, 0, e.ActualWidth, e.ActualHeight));
                 Check(!Bounds(text).IntersectsWith(Bounds(bars)) && Bounds(text).Bottom <= Bounds(bars).Top, $"Card {id}'s meter label must sit above its bar, never on it.");
                 var parts = MeterParts(node);
