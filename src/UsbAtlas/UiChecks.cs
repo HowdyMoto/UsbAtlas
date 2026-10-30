@@ -832,24 +832,28 @@ public partial class MainWindow
             snapshot.Nodes.First(n => n.Id == "demo/root/4").Kind = "Unavailable";
             Draw();
             // Explanations lead Properties and push the rows down by exactly their own height; nothing else may.
+            // Layout rounding snaps each row to whole pixels from wherever the rows start, so two selections whose rows
+            // start at different fractions of a pixel can place a row up to (not including) 2 px apart.
             double rowsStart = 0;
+            static bool Same(List<string> a, List<string> b) => a.Count == b.Count && a.Zip(b).All(p =>
+                p.First.Split('@')[0] == p.Second.Split('@')[0] && Math.Abs(double.Parse(p.First.Split('@')[1]) - double.Parse(p.Second.Split('@')[1])) < 2);
             List<string> Layout(string id)
             {
                 SelectNode(snapshot.Nodes.First(n => n.Id == id)); UpdateLayout();
                 var rows = Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is "field" or "section").ToList();
                 double origin = rows[0].TranslatePoint(new Point(), Details).Y;
                 rowsStart = origin - Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is string tag && tag.StartsWith("warning:", StringComparison.Ordinal)).Sum(e => e.ActualHeight + e.Margin.Top + e.Margin.Bottom);
-                return rows.Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)((Border)e).Child).Text)}@{e.TranslatePoint(new Point(), Details).Y - origin:0}").ToList();
+                return rows.Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)((Border)e).Child).Text)}@{e.TranslatePoint(new Point(), Details).Y - origin:0.##}").ToList();
             }
             var expected = Layout("demo/root/1");
             double expectedStart = rowsStart;
             foreach (var id in new[] { "demo/root/1/1", "demo/root/1/3", "demo/root/4" })
             {
                 var actual = Layout(id);
-                Check(actual.SequenceEqual(expected), $"Inspector rows for {id} differ from a hub's: {string.Join(", ", actual.Except(expected).Concat(expected.Except(actual)).Take(4))}.");
+                Check(Same(actual, expected), $"Inspector rows for {id} differ from a hub's: {string.Join(", ", actual.Except(expected).Concat(expected.Except(actual)).Take(4))}.");
                 Check(Math.Abs(rowsStart - expectedStart) < 1, $"Inspector rows for {id} start {rowsStart - expectedStart:0.#} px away from a hub's, beyond what its explanations take.");
             }
-            Check(Layout("demo").SequenceEqual(Layout("demo/root")), "Controller and root hub inspector rows differ.");
+            Check(Same(Layout("demo"), Layout("demo/root")), "Controller and root hub inspector rows differ.");
         }
         finally { snapshot = savedSnapshot; selected = savedSelection; Draw(); ShowDetails(); }
     }
