@@ -48,7 +48,7 @@ public partial class MainWindow
             ghost.BeginAnimation(OpacityProperty, fade);
         }
         // A delayed animation leaves its property at the base value until it begins, so connections start hidden.
-        foreach (var line in wires.Values.Cast<System.Windows.Shapes.Shape>().Concat(Graph.Children.OfType<System.Windows.Shapes.Line>().Where(l => Equals(l.Tag, MissingUsb3Tag))))
+        foreach (var line in wires.Values.Cast<System.Windows.Shapes.Shape>().Concat(Graph.Children.OfType<System.Windows.Shapes.Shape>().Where(l => Equals(l.Tag, MissingUsb3Tag) || l.Uid == MissingUsb3EndUid)))
         {
             line.Opacity = 0;
             line.BeginAnimation(OpacityProperty, Run(0, 1, WireFadeTime, MoveTime));

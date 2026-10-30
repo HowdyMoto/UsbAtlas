@@ -29,7 +29,9 @@ internal static class Theme
         ("Primary", "#253448", "#3E597B"), ("PrimaryHover", "#3D516B", "#4D6B92"),
         ("Focus", "#2E8A90", "#7FDDE4"), ("BorderHover", "#93A5B7", "#7B91AD"),
         ("Subtle", "#FAFBFC", "#242B34"), ("Wire", "#B8C0C5", "#596575"),
-        ("WireDot", "#929FA8", "#8B9AAF"), ("Success", "#4E7B65", "#92C5A7"),
+        // A link nothing uses is a faint solid line, a step between the canvas and a working wire, so it reads
+        // as a state rather than a fault; patterns are kept for faults.
+        ("WireIdle", "#C9CED2", "#3A4452"), ("Success", "#4E7B65", "#92C5A7"),
         // Device categories are icon and label inks spread across the cool half of the wheel, so they never
         // resemble Warning or Error. Cards are all NeutralFill, so every ink keeps at least 4.5:1 contrast on
         // it. Hubs, hosts, ports and devices of unknown function are Neutral.

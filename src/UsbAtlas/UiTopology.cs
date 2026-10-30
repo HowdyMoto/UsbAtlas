@@ -538,10 +538,19 @@ public partial class MainWindow
             Graph.Children.Add(stub);
             var hub = child.Node;
             var hit = new System.Windows.Shapes.Line { X1 = stub.X1, Y1 = stub.Y1, X2 = stub.X2, Y2 = stub.Y2, Stroke = Brushes.Transparent, StrokeThickness = HitWidth, Tag = hub, Uid = MissingUsb3HitUid, Cursor = Cursors.Hand,
-                ToolTip = $"{NodeVisuals.ShortName(hub)}'s USB 3 side isn't connected.\n\n{Explanations.MissingUsb3Half(hub, FindPath(hub.Id)).What}\n\nThe short dashed line marks the missing connection: {(NodeVisuals.WireInk(hub) == "Warning" ? "amber because it slows something plugged in now" : "gray because nothing plugged in is slowed by it yet")}. Click for what to do." };
+                ToolTip = $"{NodeVisuals.ShortName(hub)}'s USB 3 side isn't connected.\n\n{Explanations.MissingUsb3Half(hub, FindPath(hub.Id)).What}\n\nThe short dashed line ending in an open ring marks the missing connection: {(NodeVisuals.WireInk(hub) == "Warning" ? "amber because it slows something plugged in now" : "gray because nothing plugged in is slowed by it yet")}. Click for what to do." };
             System.Windows.Automation.AutomationProperties.SetName(hit, $"{hub.DisplayName}'s USB 3 side isn't connected");
-            ExplainOnHover(hit, hub.Id);
-            hit.MouseLeftButtonDown += (_, e) => { OpenExplanation(hub, Explanations.SpeedLabel(hub)); e.Handled = true; };
+            // The stub ends in an open ring, an unplugged end, so it can't pass for a slow link's dashes; it
+            // explains itself as the stub does.
+            var end = NodeVisuals.StubEnd(NodeVisuals.WireInk(hub));
+            end.Tag = hub; end.Uid = MissingUsb3EndUid; end.ToolTip = hit.ToolTip; end.Cursor = Cursors.Hand;
+            Canvas.SetLeft(end, stub.X2 - NodeVisuals.StubEndSize / 2); Canvas.SetTop(end, stub.Y2 - NodeVisuals.StubEndSize / 2);
+            Graph.Children.Add(end);
+            foreach (var mark in new UIElement[] { hit, end })
+            {
+                ExplainOnHover((FrameworkElement)mark, hub.Id);
+                mark.MouseLeftButtonDown += (_, e) => { OpenExplanation(hub, Explanations.SpeedLabel(hub)); e.Handled = true; };
+            }
             Graph.Children.Add(hit);
         }
     }
@@ -549,7 +558,7 @@ public partial class MainWindow
     // Thin marks are hard to point at, so each has an invisible, wider twin that carries its explanation.
     // The twin is tagged with its node, so pressing on it selects instead of panning.
     private const double HitWidth = 10, WireHoverGrowth = 1.5;
-    private const string MissingUsb3HitUid = "missing-usb3-hit", WireHitUid = "wire-hit";
+    private const string MissingUsb3HitUid = "missing-usb3-hit", MissingUsb3EndUid = "missing-usb3-end", WireHitUid = "wire-hit";
     private readonly Dictionary<string, System.Windows.Shapes.Path> wireHits = [];
     private void ExplainOnHover(FrameworkElement hit, string ringId)
     {
@@ -563,7 +572,9 @@ public partial class MainWindow
     private readonly Dictionary<string, string> cables = [];
     private readonly HashSet<string> idleLinks = [], internalLinks = [];
     // Wiring between hub chips inside one unit wears the unit's muted ink, so it doesn't read as another cable; a slow link's amber still shows.
-    private string InkFor(UsbNode n) => internalLinks.Contains(n.Id) && NodeVisuals.WireInk(n) == "Wire" ? "UnitEdge" : NodeVisuals.WireInk(n);
+    private string InkFor(UsbNode n) => idleLinks.Contains(n.Id) ? NodeVisuals.IdleInk : internalLinks.Contains(n.Id) && NodeVisuals.WireInk(n) == "Wire" ? "UnitEdge" : NodeVisuals.WireInk(n);
+    // A link nothing uses carries nothing to the selection, so it stays faint rather than lighting up.
+    private string LitInk(UsbNode n, HashSet<string> chain) => chain.Contains(n.Id) && !idleLinks.Contains(n.Id) ? "Accent" : InkFor(n);
     private const double CableGap = 5;
     // One connection per child, or two for a merged hub: one cable when its links leave the two halves of one
     // split socket, or two that meet the two halves of its card's entry edge in the order of their ports when
@@ -606,12 +617,11 @@ public partial class MainWindow
         if (merged)
             foreach (var side in new[] { node, usb2Side! })
             {
-                bool idle = !HasDevicesBelow(side);
+                bool idle = !HasDevicesBelow(side) && !NodeVisuals.SlowLink(side);
                 // Docked, so a row that still doesn't fit is shortened with an ellipsis rather than cut off.
                 var row = new DockPanel { Height = LinkRowHeight, Tag = LinkRowTag, Background = Brushes.Transparent, ToolTip = CableHelp(node, usb2Side!) };
                 var swatch = new Canvas { Width = 18, Height = 10, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
-                var stroke = new System.Windows.Shapes.Line { X1 = 1.5, X2 = 16.5, Y1 = 5, Y2 = 5, Stroke = Brush(NodeVisuals.WireInk(side)), StrokeThickness = NodeVisuals.WireWidth(side), StrokeDashArray = NodeVisuals.WireDashes(side) };
-                if (idle) NodeVisuals.Dot(stroke);
+                var stroke = new System.Windows.Shapes.Line { X1 = 1.5, X2 = 16.5, Y1 = 5, Y2 = 5, Stroke = Brush(idle ? NodeVisuals.IdleInk : NodeVisuals.WireInk(side)), StrokeThickness = NodeVisuals.WireWidth(side), StrokeDashArray = NodeVisuals.WireDashes(side) };
                 swatch.Children.Add(stroke);
                 DockPanel.SetDock(swatch, Dock.Left); row.Children.Add(swatch);
                 // What the link carries, idle or how many devices, is the row's point, so it's bold.
@@ -676,9 +686,10 @@ public partial class MainWindow
             if (BuiltIn(node)) { internalLinks.Add(node.Id); internalLinks.Add(usb2.Id); }
             DrawWire(usb2, OffsetRoute(route, -CableGap / 2), CableHelp(node, usb2));
             DrawWire(node, OffsetRoute(route, CableGap / 2), CableHelp(node, usb2));
-            // A link nothing uses now is dotted, lit or not, so an idle USB 3 link reads as idle without hovering.
+            // A link nothing uses now is faint, lit or not, so an idle USB 3 link reads as idle, not as a fault,
+            // without hovering. A slow link keeps its dashes, since those are a fault.
             foreach (var side in new[] { node, usb2 })
-                if (!HasDevicesBelow(side)) { idleLinks.Add(side.Id); NodeVisuals.Dot(wires[side.Id]); }
+                if (!HasDevicesBelow(side) && !NodeVisuals.SlowLink(side)) { idleLinks.Add(side.Id); wires[side.Id].Stroke = Brush(InkFor(side)); }
             return;
         }
         DrawWire(node, route, null);
@@ -775,9 +786,9 @@ public partial class MainWindow
     {
         string uses = (HasDevicesBelow(usb3), HasDevicesBelow(usb2)) switch
         {
-            (false, false) => "Nothing is plugged into it yet, so both lines are dotted.",
-            (false, true) => "Everything plugged in here uses the USB 2 link, so the USB 3 line is dotted: nothing uses it now.",
-            (true, false) => "Everything plugged in here uses the USB 3 link, so the USB 2 line is dotted: nothing uses it now.",
+            (false, false) => "Nothing is plugged into it yet, so both lines are faint. That's fine.",
+            (false, true) => "Everything plugged in here uses the USB 2 link, so the USB 3 line is faint: nothing uses it now, which is fine.",
+            (true, false) => "Everything plugged in here uses the USB 3 link, so the USB 2 line is faint: nothing uses it now, which is fine.",
             _ => "Some of what's plugged in here uses the USB 3 link and some the USB 2 link."
         };
         string what = BuiltIn(usb3)
@@ -910,7 +921,7 @@ public partial class MainWindow
             item.Card.Effect = chosen ? new System.Windows.Media.Effects.DropShadowEffect { Color = ((SolidColorBrush)Brush("Accent")).Color, BlurRadius = 14, ShadowDepth = 0, Opacity = 0.75 } : null;
         }
         // The selected path recolors its connections; their widths and dashes keep saying what each link is.
-        foreach (var (id, wire) in wires) { wire.Stroke = Brush(chain.Contains(id) ? "Accent" : InkFor((UsbNode)wire.Tag)); }
+        foreach (var (id, wire) in wires) { wire.Stroke = Brush(LitInk((UsbNode)wire.Tag, chain)); }
         // An occupied socket's cavity fills in the color of its wire, as a plug would, accent on the selected
         // path; an empty one stays hollow, so occupancy reads even on folded hubs. Tongues keep their color.
         foreach (var (id, slot) in connectedPorts)
