@@ -72,7 +72,7 @@ public partial class MainWindow
     }
 
     // Severity sets how much of an explanation leads Properties: a note is one line, so the figures and the
-    // first section stay in view; a warning says whether it affects you and keeps what to do a click away,
+    // connection stay in view; a warning says whether it affects you and keeps what to do a click away,
     // open across selections once opened; an error is shown whole.
     private void VerifySeverityExplanations()
     {
@@ -89,9 +89,9 @@ public partial class MainWindow
             var hub = snapshot.Nodes.First(n => n.Id == "demo/root/1");
             Check(Issues(hub).Count > 0 && Issues(hub).All(i => i.Severity == Severity.Note), "The sample's desktop hub must have only notes.");
             SelectNode(hub); UpdateLayout();
-            var section = Details.Children.OfType<Border>().First(b => Equals(b.Tag, "section") && b.Child is TextBlock { Text: "Device identity & connection" });
+            var section = Details.Children.OfType<Grid>().First(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == "Link use");
             double below = section.TranslatePoint(new Point(0, section.ActualHeight), DetailsScroll).Y;
-            Check(below <= DetailsScroll.ViewportHeight, $"With only notes, the figures and Device identity & connection must show without scrolling; they end at {below:0} px of {DetailsScroll.ViewportHeight:0}.");
+            Check(below <= DetailsScroll.ViewportHeight, $"With only notes, the connection's figures and Link use must show without scrolling; they end at {below:0} px of {DetailsScroll.ViewportHeight:0}.");
             var note = Issues(hub)[0].Text;
             Check(More(note).Visibility == Visibility.Collapsed && Toggle(note) != null, "A note must start as one line with a way to open it.");
             Click(Toggle(note)!);
