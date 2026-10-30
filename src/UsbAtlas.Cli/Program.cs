@@ -45,18 +45,19 @@ internal static class Program
                                  warning events only, --usb-only for USB events only.
           watch                  Report devices connecting, disconnecting and changing as it happens, and
                                  devices that drop and come back. When the computer sleeps and wakes, it
-                                 reports what didn't come back or came back slower. --for 60s (default; 0
-                                 runs until Ctrl+C), --verbose for every Windows notification, --out FILE
-                                 to also append each event to FILE as a line of JSON, --trace to add the
-                                 USB hub driver's own events (see trace). A device that reports its battery,
+                                 reports what didn't come back or came back slower. Runs until Ctrl+C, or
+                                 --for 30s. Each event is also logged as a line of JSON to a new file in
+                                 %LOCALAPPDATA%\UsbAtlas\logs, or appended to --out FILE; --no-log for none.
+                                 --verbose for every Windows notification, --trace to add the USB hub
+                                 driver's own events (see trace). A device that reports its battery,
                                  as phones and headsets sharing files do, is rescanned every minute, and a
                                  battery that falls while plugged in is flagged.
           trace                  Record what Windows' USB hub driver reports, placed on the topology:
                                  connections, port and warm resets, USB 3 link failures, overcurrent,
                                  enumeration retries and failures, rejected descriptors, SuperSpeed
                                  devices on the USB 2 bus, U1/U2 refused, USB-C alternate modes. Then a
-                                 count per port. --for 30s (default; 0 runs until Ctrl+C), --verbose for
-                                 every step and its fields, --out FILE as in watch. Needs administrator
+                                 count per port. Runs until Ctrl+C, or --for 30s; --verbose for every
+                                 step and its fields; logged as in watch. Needs administrator
                                  rights or membership in the Performance Log Users group.
           scan                   The full snapshot as JSON. --out FILE saves it; --raw includes descriptors.
           diff <before> [<after>]  What changed between two saved snapshots, or between one and now.
@@ -93,7 +94,7 @@ internal static class Program
           atlascli issues
           atlascli show H01/02 --json
           atlascli scan --out before.json   (change something)   atlascli diff before.json
-          atlascli watch --for 30s
+          atlascli watch   (Ctrl+C to stop; it says where the log is)
           atlascli map --out board.json   (on another unit)   atlascli check board.json
           claude mcp add usb-atlas -- "C:\path\to\atlascli.exe" mcp
         """;
@@ -203,20 +204,41 @@ internal static class Program
                 }
                 case "watch" or "trace":
                 {
-                    // --out keeps every event as a line of JSON, whatever the console shows. Hub driver events
-                    // arrive on a thread of their own, so lines are written one at a time.
-                    using var log = o.Get("out") is string logFile ? OpenLog(logFile) : null;
+                    // The log keeps every event as a line of JSON, whatever the console shows: in --out FILE, or
+                    // else in the logs folder unless --no-log. Hub driver events arrive on a thread of their own,
+                    // so lines are written one at a time. --out is opened now, so a bad path fails before
+                    // watching; the default log only once there is an event, so a run that fails leaves no file.
+                    if (o.Has("out") && o.Has("no-log")) throw new CliException("--out names the log and --no-log turns it off; give one.");
+                    string? logFile = o.Get("out") ?? (o.Has("no-log") ? null : DefaultLog(o.Command, DateTime.Now));
+                    var log = o.Get("out") is string chosen ? OpenLog(chosen) : null;
+                    var status = o.Json ? error : output;
                     var gate = new object();
+                    bool started = false;
                     void Emit(JsonObject e)
                     {
                         lock (gate)
                         {
+                            if (!started && logFile != null)
+                            {
+                                try
+                                {
+                                    if (log == null) { Directory.CreateDirectory(Path.GetDirectoryName(logFile)!); log = OpenLog(logFile); }
+                                    status.WriteLine($"Logging to {logFile}");
+                                }
+                                catch (Exception ex) when (ex is CliException or IOException or UnauthorizedAccessException) { status.WriteLine($"Not logging: {ex.Message}"); logFile = null; }
+                            }
+                            started = true;
                             output.Write(o.Json ? Json.Write(e, false) + Environment.NewLine : UsbTrace.Text(e)); output.Flush();
                             log?.WriteLine(Json.Write(e, false)); log?.Flush();
                         }
                     }
-                    var duration = o.Duration("for", TimeSpan.FromSeconds(o.Command == "trace" ? 30 : 60));
-                    Emit(o.Command == "trace" ? UsbTrace.Run(o, duration, o.Has("verbose"), Emit, cancel) : Watch.Run(o, duration, o.Has("verbose"), o.Has("redact"), Emit, cancel));
+                    try
+                    {
+                        var duration = o.Duration("for", TimeSpan.Zero);
+                        Emit(o.Command == "trace" ? UsbTrace.Run(o, duration, o.Has("verbose"), Emit, cancel) : Watch.Run(o, duration, o.Has("verbose"), o.Has("redact"), Emit, cancel));
+                        if (logFile != null) status.WriteLine($"Saved the log to {logFile}");
+                    }
+                    finally { lock (gate) log?.Dispose(); }
                     return 0;
                 }
                 case "self-test":
@@ -244,6 +266,9 @@ internal static class Program
         try { File.WriteAllText(file, text); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new CliException($"Can't write {file}: {ex.Message}"); }
     }
+    // %LOCALAPPDATA%\UsbAtlas\logs on Windows, beside the app's own files; ~/.local/share/UsbAtlas/logs on Linux.
+    internal static string DefaultLog(string command, DateTime now) =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UsbAtlas", "logs", $"{command}-{now:yyyyMMdd-HHmmss}.jsonl");
     private static StreamWriter OpenLog(string file)
     {
         try { return new StreamWriter(file, true, new UTF8Encoding(false)); }

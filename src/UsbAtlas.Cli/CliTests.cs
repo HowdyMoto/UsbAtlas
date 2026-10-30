@@ -817,7 +817,11 @@ ew"),
         var (code, output, _) = Run("scan", "--demo");
         Check(code == 0 && JsonNode.Parse(output)!["controllers"]!.AsArray().Count == 1, "scan writes the snapshot as JSON.");
         Check(Run("raw", "--demo", "H01/01").Out.Contains("no descriptors"), "raw explains when a snapshot has no descriptors.");
-        Check(Run("watch", "--demo").Code == 3, "watch refuses sample data.");
+        var refused = Run("watch", "--demo");
+        Check(refused.Code == 3 && !refused.Out.Contains("Logging to") && !refused.Err.Contains("Logging to"), "watch refuses sample data, before starting a log.");
+        Check(Run("watch", "--out", "x.jsonl", "--no-log").Code == 3, "--out and --no-log together are refused.");
+        string log = Program.DefaultLog("watch", new DateTime(2026, 10, 29, 14, 30, 5));
+        Check(Path.GetFileName(log) == "watch-20261029-143005.jsonl" && Path.GetFileName(Path.GetDirectoryName(log)) == "logs", "watch logs to a new timestamped file in the logs folder.");
         Check(Run("budget", "--demo", "--json").Out.TrimStart().StartsWith('{') && Run("show", "--demo", "H01/05", "--format", "json").Out.TrimStart().StartsWith('{'), "--json and --format json write JSON.");
     }
 }
