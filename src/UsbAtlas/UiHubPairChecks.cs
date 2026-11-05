@@ -178,6 +178,15 @@ public partial class MainWindow
                 Check(EdgePorts(outer3).Count == 20 && Graph.Children.OfType<FrameworkElement>().Count(e => Equals(e.Tag, "unit-divider")) == 2,
                     "The ten sockets keep both logical halves and chip-group dividers.");
                 Check(EdgePorts(outer3).All(p => portAnchors.ContainsKey(p.Id)), "Every unit port must keep its own anchor.");
+                var diagram = VisualDescendants(cards[outer3.Id].Card).OfType<System.Windows.Controls.Canvas>().Single(c => Equals(c.Tag, UnitChainTag));
+                var chipControls = diagram.Children.OfType<System.Windows.Controls.Button>().Where(b => Equals(b.Tag, UnitChipTag)).ToList();
+                Check(chipControls.Count == 3 && diagram.Children.OfType<System.Windows.Shapes.Path>().Count() == 2,
+                    "The single unit card must draw all three internal chips and their actual connections.");
+                Check(Graph.Children.OfType<FrameworkElement>().Count(e => Equals(e.Tag, "unit-chip-group")) == 3,
+                    "Each socket group must carry the number of its chip.");
+                chipControls[2].RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                Check(selected == last3, "The internal diagram must select the actual chip, without selecting a different unit.");
+
             }
             SelectNode(last2); UpdateLayout();
             Check(selected == last2 && GraphBounds(last2) == GraphBounds(outer3) && cards[outer3.Id].Card.Effect != null,
@@ -204,6 +213,22 @@ public partial class MainWindow
             "Searching behind the last chip must preserve the whole unit and its socket identities.");
         Search.Clear(); searchTimer.Stop(); Draw(); SelectNode(outer3); ShowDetails(); UpdateLayout();
         CaptureUi("hub-unit-card-preview.png");
+        // Two chips may attach to the first in parallel; never imply a serial chain for that layout.
+        var free2 = outer2.Children.Single(c => c.Port == 3); var free3 = outer3.Children.Single(c => c.Port == 3);
+        inner2.Children.Remove(last2); inner3.Children.Remove(last3);
+        outer2.Children.Remove(free2); outer3.Children.Remove(free3);
+        last2.Port = last3.Port = 3; outer2.Children.Add(last2); outer3.Children.Add(last3);
+        HubRelationships.Analyze(snapshot); Draw(); UpdateLayout();
+        var branched = VisualDescendants(cards[outer3.Id].Card).OfType<System.Windows.Controls.Canvas>().Single(c => Equals(c.Tag, UnitChainTag));
+        var siblings = branched.Children.OfType<System.Windows.Controls.Button>().Where(b => b.Uid == inner3.Id || b.Uid == last3.Id).ToList();
+        Check(siblings.Count == 2 && Math.Abs(System.Windows.Controls.Canvas.GetLeft(siblings[0]) - System.Windows.Controls.Canvas.GetLeft(siblings[1])) < .01
+            && Math.Abs(System.Windows.Controls.Canvas.GetTop(siblings[0]) - System.Windows.Controls.Canvas.GetTop(siblings[1])) > 20,
+            "Chips with the same upstream chip must appear as branches, not as a serial chain.");
+        CaptureUi("hub-unit-branch-preview.png");
+        outer2.Children.Remove(last2); outer3.Children.Remove(last3);
+        outer2.Children.Add(free2); outer3.Children.Add(free3);
+        last2.Port = last3.Port = 4; inner2.Children.Add(last2); inner3.Children.Add(last3);
+        HubRelationships.Analyze(snapshot);
         // An internal USB 2 chip with a missing USB 3 side still belongs to the physical unit.
         inner3.Children.Remove(last3);
         inner3.Children.Add(new UsbNode { Id = last3.Id, Port = 4, Kind = "Empty port", Connector = "Internal", PortIsUserConnectable = false });

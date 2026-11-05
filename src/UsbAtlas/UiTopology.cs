@@ -314,11 +314,11 @@ public partial class MainWindow
         if (detail == CardDetail.Far) return horizontalTree ? Math.Max(FarHeight, Children(n).Count * 10 + 2) : FarHeight;
         if (detail == CardDetail.Compact)
         {
-            double compact = 2 + 8 + TitleRowHeight(n) + 8 + (n.Kind is "Controller" or "Root hub" ? 20 : CardFigures(n).Parts.Count > 0 ? 17 : 0);
+            double compact = UnitChainHeight(n) + 2 + 8 + TitleRowHeight(n) + 8 + (n.Kind is "Controller" or "Root hub" ? 20 : CardFigures(n).Parts.Count > 0 ? 17 : 0);
             int sockets = EdgePorts(n).Count;
             return sockets == 0 ? compact : horizontalTree ? Math.Max(compact, sockets * SocketStep + 12) : compact + StripDepth(n);
         }
-        double height = 2 + 8 + TitleRowHeight(n) + 8;
+        double height = UnitChainHeight(n) + 2 + 8 + TitleRowHeight(n) + 8;
         if (n.UserLabel.Length > 0) height += 16;
         if (HubRelationships.CardLabel(n).Length > 0 || unitGroups.ContainsKey(n.Id)) height += 19;
         if (mergedSides.ContainsKey(n.Id)) height += 2 * LinkRowHeight;
@@ -449,6 +449,12 @@ public partial class MainWindow
             var glyph = NodeVisuals.StatusGlyph(worst.Max(i => i.Severity)); glyph.Margin = new Thickness(6, lines > 1 ? 2 : 0, 0, 0); glyph.VerticalAlignment = align;
             glyph.ToolTip = string.Join(" · ", worst.Select(i => i.Text)); DockPanel.SetDock(glyph, Dock.Right); title.Children.Add(glyph);
         }
+        if (far && unitGroups.TryGetValue(node.Id, out var farChips))
+        {
+            var count = new TextBlock { Text = $"↳ {farChips.Count} chips", FontSize = 10, Margin = new Thickness(5, 0, 0, 0),
+                Foreground = Brush("TextSecondary"), VerticalAlignment = VerticalAlignment.Center, ToolTip = "Chained hub chips inside this one enclosure. Zoom in to see their connections." };
+            DockPanel.SetDock(count, Dock.Right); title.Children.Add(count);
+        }
         var name = new TextBlock { Text = UnitName(node), FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = lines > 1 ? TextWrapping.Wrap : TextWrapping.NoWrap, LineHeight = TitleLine, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, MaxHeight = lines * TitleLine, VerticalAlignment = align, ToolTip = node.DisplayName + (CanNameDevice(node) ? "\nDouble-click to rename" : "") };
         // Double-clicking the name renames; double-clicking elsewhere on the card still folds its branch.
         name.MouseLeftButtonDown += (_, e) => { if (e.ClickCount == 2 && CanNameDevice(node)) { EditDeviceName(node, name); e.Handled = true; } };
@@ -459,6 +465,7 @@ public partial class MainWindow
         if (detail == CardDetail.Full) AddCardRows(node, panel, figures, host);
         else if (detail == CardDetail.Compact)
         {
+            AddUnitChain(node, panel);
             if (host) panel.Children.Add(new TextBlock { Text = pathLabels[node.Id] + " · " + ProtocolSummary(node), FontSize = 12, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0) });
             else if (figures.Parts.Count > 0)
             {
@@ -520,6 +527,7 @@ public partial class MainWindow
         // A named empty socket has no card to carry its name, so its tag sits in the socket strip.
         AddSocketTags(node, edgePorts, bounds);
         AddUnitDividers(node, edgePorts, bounds);
+        AddUnitPortLabels(node, edgePorts, bounds);
         var children = layout.Children;
         var entries = Entries(children, left, top);
         var routes = TopologyLayout.Route(bounds, entries.Select(e => e.Anchor).ToList(), entries.Select(e => e.Card).ToList(), horizontalTree);
@@ -617,6 +625,7 @@ public partial class MainWindow
         if (relationship.Length > 0)
             panel.Children.Add(new TextBlock { Text = relationship, FontSize = 12, Foreground = Brush("TextSecondary"), Height = 19, TextTrimming = TextTrimming.CharacterEllipsis, Tag = merged ? PairLabelTag : null,
                 ToolTip = merged ? CableHelp(node, usb2Side!) : HubRelationships.Description(node, snapshot) });
+        AddUnitChain(node, panel);
         if (merged)
             foreach (var side in new[] { node, usb2Side! })
             {
