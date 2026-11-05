@@ -148,5 +148,72 @@ public partial class MainWindow
         var snap = Details.Children.OfType<System.Windows.Controls.Button>().Single(b => Equals(b.Tag, "snap-upstream-hub"));
         Check((string)snap.Content == "Unlink from upstream hub", "A merged stage linked on its USB 2 side must offer to unlink.");
         CaptureUi("nested-paired-hubs-preview.png");
+        // Firmware-confirmed internal ports turn three paired chips into one ten-port product.
+        var last2 = Hub(inner2.Id + "/4", 4, false); var last3 = Hub(inner3.Id + "/4", 4, true);
+        inner2.Children.RemoveAll(n => n.Port == 4); inner3.Children.RemoveAll(n => n.Port == 4);
+        inner2.Children.Add(last2); inner3.Children.Add(last3);
+        for (int p = 1; p <= 4; p++)
+        {
+            var low = new UsbNode { Id = $"{last2.Id}/{p}", Kind = "Empty port", Name = $"Available port {p}", Port = p };
+            var high = new UsbNode { Id = $"{last3.Id}/{p}", Kind = p == 4 ? "Device" : "Empty port", Name = p == 4 ? "Last chip SSD" : $"Available port {p}", Port = p, LinkMbps = p == 4 ? 5000 : null, DeviceType = "Storage" };
+            low.CompanionId = high.Id; high.CompanionId = low.Id;
+            last2.Children.Add(low); last3.Children.Add(high);
+        }
+        foreach (var n in new[] { inner2, inner3, last2, last3 }) { n.Connector = "Internal"; n.PortIsUserConnectable = false; }
+        outer3.UserLabel = "Desk ten-port hub";
+        HubRelationships.Analyze(snapshot);
+        foreach (bool horizontal in new[] { true, false })
+        foreach (var level in Enum.GetValues<CardDetail>())
+        {
+            horizontalTree = horizontal; detail = level; Draw(); UpdateLayout();
+            Check(unitGroups[outer3.Id].Count == 3 && cards.ContainsKey(outer3.Id)
+                && new[] { outer2, inner2, inner3, last2, last3 }.All(n => !cards.ContainsKey(n.Id)),
+                "A three-chip unit must be exactly one card in every direction and detail level.");
+            Check(UnitSocketCount(outer3) == 10 && Children(outer3).Count == 3, "A unit must expose ten sockets and all three attached devices without internal links.");
+            Check(new[] { inner2, inner3, last2, last3 }.All(n => !wires.ContainsKey(n.Id)), "No internal chip link may be drawn as an external cable.");
+            Check(wires.ContainsKey(outer2.Id) && wires.ContainsKey(outer3.Id), "The unit keeps its two upstream cable links.");
+            VerifyWireRouting();
+            if (DrawsSockets)
+            {
+                Check(EdgePorts(outer3).Count == 20 && Graph.Children.OfType<FrameworkElement>().Count(e => Equals(e.Tag, "unit-divider")) == 2,
+                    "The ten sockets keep both logical halves and chip-group dividers.");
+                Check(EdgePorts(outer3).All(p => portAnchors.ContainsKey(p.Id)), "Every unit port must keep its own anchor.");
+            }
+            SelectNode(last2); UpdateLayout();
+            Check(selected == last2 && GraphBounds(last2) == GraphBounds(outer3) && cards[outer3.Id].Card.Effect != null,
+                "Selecting an internal chip from the tree must keep its identity and highlight the unit.");
+        }
+        horizontalTree = true; detail = CardDetail.Full; selected = outer3; Draw(); ShowDetails(); UpdateLayout();
+        var unitDetails = Details.Children.OfType<System.Windows.Controls.Expander>().Single(e => Equals(e.Tag, "unit-details"));
+        var chipButton = ((System.Windows.Controls.StackPanel)unitDetails.Content).Children.OfType<System.Windows.Controls.Button>().Single(b => b.Tag == last2);
+        chipButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+        Check(selected == last2, "Properties must select each chip's link independently.");
+        folded.Add(outer3.Id); Draw(); ShowOnCanvas(last3.Children.Last());
+        Check(!folded.Contains(outer3.Id) && cards.ContainsKey(last3.Children.Last().Id), "Revealing a device must unfold the owning unit.");
+        inner3.QuickReconnects = 3; Draw(); UpdateLayout();
+        Check(UnitWarnings(outer3).Any(w => w.Node == inner3 && w.Chip == 2 && w.Text == "Unstable connection"),
+            "A fault on an internal chip must identify that chip.");
+        var warningButton = VisualDescendants(cards[outer3.Id].Card).OfType<System.Windows.Controls.Button>().Single(b => Equals(b.Tag, "warning-action"));
+        warningButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+        Check(selected == inner3, "An internal-chip fault badge must open that chip's explanation.");
+        CheckCanvasExplains("combined hub unit");
+        CaptureUi("hub-unit-warning-preview.png");
+        inner3.QuickReconnects = 0;
+        Search.Text = "Last chip SSD"; searchTimer.Stop(); Draw(); UpdateLayout();
+        Check(unitGroups[outer3.Id].Count == 3 && UnitSocketCount(outer3) == 10 && cards.ContainsKey(last3.Children.Last().Id),
+            "Searching behind the last chip must preserve the whole unit and its socket identities.");
+        Search.Clear(); searchTimer.Stop(); Draw(); SelectNode(outer3); ShowDetails(); UpdateLayout();
+        CaptureUi("hub-unit-card-preview.png");
+        // An internal USB 2 chip with a missing USB 3 side still belongs to the physical unit.
+        inner3.Children.Remove(last3);
+        inner3.Children.Add(new UsbNode { Id = last3.Id, Port = 4, Kind = "Empty port", Connector = "Internal", PortIsUserConnectable = false });
+        HubRelationships.Analyze(snapshot);
+        last2.Usb3SideMissing = true; last2.SpeedLimited = true;
+        Draw(); UpdateLayout();
+        Check(unitGroups[outer3.Id].Count == 3 && UnitWarnings(outer3).Any(w => w.Node == last2 && w.Chip == 3),
+            "A missing USB 3 side must remain a fault of chip 3 on the unit card.");
+        Check(!EdgePorts(outer3).Any(p => p.Id == last3.Id || p.Id == last2.Id), "An internal chip attachment must not become a user-facing socket when its USB 3 side disappears.");
+        VerifyWireRouting();
+
     }
 }
