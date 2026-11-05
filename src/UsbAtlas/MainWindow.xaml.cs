@@ -44,6 +44,7 @@ public partial class MainWindow : Window
             await Refresh();
             if (verifyUi)
             {
+                VerifyDeviceRestart();
                 pinnedModifiers = ModifierKeys.None;
                 try { focusedBranch = null; FocusBranchButton.Content = "Focus branch"; detail = CardDetail.Full; overviewView = false; Draw(); VerifySmallWindow(); VerifySearchInput(); VerifyWarningExplanation(); VerifySpeedExplanation(); VerifyUi(); VerifyDeviceTree(); VerifyCompactUi(); VerifyIdentityUi(); VerifyInspectorConsistency(); VerifySeverityExplanations(); VerifyPowerUi(); VerifyCanvasNaming(); VerifyPortTags(); VerifyPortTagSides(); await VerifyRefreshUi(); await VerifyTreeCanvasSync(); await VerifyDeviceWatch(); await VerifyObjectConstancy(); VerifyRedesignedUi(); VerifyHubSnapping(); VerifyPairedHubs(); VerifyCardTitles(); VerifySemanticZoom(); VerifyEverythingExplains(); VerifyFixFirst(); VerifyActivityFeed(); VerifyLegendWording(); VerifyRememberedDevices(); VerifyKnownProblems(); VerifyCharging(); File.WriteAllText("ui-test.txt", "UI checks passed: remembered devices on other ports, known chip problems, charging needs and falling batteries, what to fix first and the exported image, the activity feed, everything on the graph explains itself on hover or click, device tree selection/filtering/collapse, tree and canvas selection sync, planar wire routing, layout, filtering, folding, focus, fit, variable-height cards, merged host cards, sockets, search navigation, issues, power and stability issues, link, polling and power figures, power saving, bandwidth meters, inspector and its consistent layout, explanations sized by severity, semantic zoom and opening on the whole topology, paired hubs drawn as one card, two-line card titles, the tree folding for a narrow window, a wrapping legend, animated topology changes, saved labels, port name tags that span paired sockets, show in full on hover or selection, name both sides of a merged hub and read in full on an unplugged socket, host capabilities, selection reuse, refresh feedback, device-change rescans and wake notifications suppressing false unstable connections."); }
                 catch (Exception ex) { File.WriteAllText("ui-test.txt", ex.ToString()); Application.Current.Shutdown(1); return; }
@@ -157,7 +158,8 @@ public partial class MainWindow : Window
         SelectNode(node);
         if (InspectorPanel.Visibility != Visibility.Visible) InspectorClick(this, new RoutedEventArgs());
         UpdateLayout();
-        Details.Children.OfType<FrameworkElement>().FirstOrDefault(x => Equals(x.Tag, "warning:" + issue))?.BringIntoView();
+        var shownIssue = MergedEnumerationFailure(node) && issue == "Windows reports a problem" ? "Port error" : issue;
+        Details.Children.OfType<FrameworkElement>().FirstOrDefault(x => Equals(x.Tag, "warning:" + shownIssue))?.BringIntoView();
     }
     private void CopyDetailsClick(object sender, RoutedEventArgs e)
     {
@@ -181,11 +183,11 @@ public partial class MainWindow : Window
         if (!cards.ContainsKey(DrawnAs(node).Id) && !portSlots.ContainsKey(node.Id)) Text("Selection is hidden by a collapsed branch or filter.", 11, "TextMuted");
         bool host = node.Kind is "Controller" or "Root hub", attached = node.Kind is "Device" or "Hub", hub = node.Kind == "Hub";
 
-        // A fixed-height heading, role line and status row keep the rows in place, except that an issue's
-        // explanation, which leads, pushes them down by its own height.
-        var heading = new DockPanel { Height = 48, Margin = new Thickness(0, 0, 0, 4) };
+        // Identity and location lead; diagnosis, recovery and a compact connection follow.
+        // Full technical fields remain available in a disclosure below the overview.
+        var heading = new DockPanel { MinHeight = 36, Margin = new Thickness(0, 0, 0, 4) };
         var symbol = NodeVisuals.Icon(node, 26); symbol.Margin = new Thickness(0, 0, 8, 0); DockPanel.SetDock(symbol, Dock.Left); heading.Children.Add(symbol);
-        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, LineHeight = 24, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, MaxHeight = 48, VerticalAlignment = VerticalAlignment.Center, ToolTip = node.DisplayName };
+        var name = new TextBlock { Text = NodeVisuals.ShortName(node), FontSize = 20, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, LineHeight = 26, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Center };
         if (node.Kind is not ("Empty port" or "Unavailable"))
         {
             var nameRow = new DockPanel();
@@ -205,11 +207,13 @@ public partial class MainWindow : Window
         Details.Children.Add(inlineLabelHost);
         Details.Children.Add(new TextBlock { Text = (HubRelationships.CardLabel(node).Length > 0 ? HubRelationships.CardLabel(node) : NodeVisuals.Label(node)) + " · " + node.Status + (node.UserLabel.Length > 0 ? " · detected as " + node.Name : ""), FontSize = 12, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = node.UserLabel.Length > 0 ? "Detected name: " + node.Name : null });
         var status = new WrapPanel { MinHeight = 22, Margin = new Thickness(0, 5, 0, 6) };
-        foreach (var (severity, text) in Issues(node)) { var badge = WarningBadge(node, severity, text); badge.Margin = new Thickness(0, 0, 4, 0);  status.Children.Add(badge); }
-        if (status.Children.Count == 0) status.Children.Add(new TextBlock { Text = "No issues", FontSize = 12, Foreground = Brush("TextMuted"), VerticalAlignment = VerticalAlignment.Center });
-        Details.Children.Add(status);
-        var issues = Issues(node);
+        var displayIssues = InspectorIssues(node);
+        status.Children.Add(new TextBlock { Text = displayIssues.Any(i => i.Severity != Severity.Note) ? "Needs attention" : displayIssues.Count > 0 ? "Connected · notes below" : node.Kind == "Empty port" ? "Available port" : "No issues reported", FontSize = 13, Foreground = Brush("TextSecondary") });
+        if (!displayIssues.Any(i => i.Severity != Severity.Note)) Details.Children.Add(status);
+        AddLocationSummary(node);
+        var issues = displayIssues;
         foreach (var (severity, issue) in issues) AddExplanation(node, severity, issue, issues.Count > 1);
+        AddDeviceRestart(node);
         if (HubRelationships.MissingUsb3HubFor(node, snapshot) is UsbNode lostHub)
         {
             string title = $"USB 3 side of {NodeVisuals.ShortName(lostHub)} not connected";
@@ -223,22 +227,28 @@ public partial class MainWindow : Window
 
 
         var chain = FindPath(node.Id).Where(n => n.Id == node.Id || !mergedHosts.ContainsKey(n.Id)).ToList();
-        AddBreadcrumb(node);
+        AddConnectionOverview(node);
+        AddPreviousOccupant(node);
+        int propertiesStart = Details.Children.Count;
         if (!host) { AddUpstream(node); AddConnection(node); AddDeviceProperties(node); AddSocketDetails(node); }
         else AddHostProperties(node);
         AddDownstream(node);
+        FoldInspectorContent(propertiesStart, "All properties & settings", "properties");
         AddLabelEditor(node);
         var relationship = HubRelationships.Description(node, snapshot);
         if (relationship.Length > 0)
         {
-            Text("How this hub is connected", 14, "TextPrimary");
+            int start = Details.Children.Count;
             Text(relationship, 13, "TextSecondary");
+            FoldInspectorContent(start, "How this hub is connected", "hub-relationship");
         }
         if (node.OtherEntries.Count > 0)
         {
+            int start = Details.Children.Count;
             Text("Other entries for this device", 14, "TextPrimary");
             foreach (var other in node.OtherEntries) Text(Remembered.Line(other), 13, "TextSecondary");
             Text("Windows keeps one for each port a device without a serial number has been plugged into, each with its own settings and COM number. To remove old ones: Device Manager › View › Show hidden devices, then uninstall the grayed-out entries.", 12, "TextMuted");
+            FoldInspectorContent(start, "Remembered on other ports", "remembered");
         }
         var evidence = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
         var notes = new List<string> { node.LocationEvidence };
@@ -292,12 +302,11 @@ public partial class MainWindow : Window
         notes.AddRange(node.Notes);
         foreach (var note in notes) evidence.Children.Add(new TextBlock { Text = note, FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 0, 0, 10) });
         Details.Children.Add(new Expander { Header = "Detection details", Content = evidence, Foreground = Brush("TextSecondary"), Margin = new Thickness(0, 16, 0, 0), FontSize = 12 });
-        Details.Children.Add(new Border { Height = 1, Background = Brush("Divider"), Margin = new Thickness(0, 20, 0, 16) });
-        Text("Link rates are shared signaling limits. Reserved bandwidth, polling rates and requested power come from device descriptors, not live measurements. Power checks compare declared draw with what the USB specification guarantees a port; supply capacity itself is not measured.", 11, "TextMuted");
+        evidence.Children.Add(new TextBlock { Text = "Link rates are shared signaling limits. Reserved bandwidth, polling rates and requested power come from descriptors, not live measurements. Supply capacity is not measured.", FontSize = 13, TextWrapping = TextWrapping.Wrap });
 
     }
     // The driver Windows loaded and whether Device Manager shows a problem, as on its General and Driver tabs.
-    // Every kind of selection gets the same rows, so flipping between ports keeps them in place.
+    // The full reference keeps all fields, even when a value is unavailable.
     private void DriverFields(UsbNode node)
     {
         bool has = node.Kind is "Device" or "Hub" or "Controller" or "Root hub";
@@ -324,30 +333,33 @@ public partial class MainWindow : Window
     // from port to port keeps the rows below them in place.
     private readonly HashSet<string> openExplanations = [];
     private const string ExplanationMoreTag = "explanation-more", ExplanationToggleTag = "explanation-toggle";
-    // What an issue means, in a panel under the status badges: what is happening, whether it affects
-    // anything now, and what to do. Severity sets how much shows before the rows: a note affects nothing
-    // now, so it is one line until opened; a warning says what is happening and whether it affects you,
-    // with what to do a click away; an error is shown whole. With several issues each panel names its own.
+    // Lead with one outcome and next action. Independent secondary findings stay compact;
+    // all source explanations and remedies remain available on expansion.
     private const string ShowLostHubTag = "show-lost-hub";
     // An explanation that isn't one of the node's issues, such as what an empty socket half is for, is given.
     private void AddExplanation(UsbNode node, Severity severity, string issue, bool named, Explanations.Explanation? given = null)
     {
         var e = given ?? Explain(node, issue);
-        bool open = severity == Severity.Error || openExplanations.Contains(issue);
+        bool open = openExplanations.Contains(issue) || (MergedEnumerationFailure(node) && issue == "Port error" && openExplanations.Contains("Windows reports a problem"));
+        bool primary = InspectorIssues(node).FirstOrDefault().Text == issue && severity != Severity.Note;
+        bool merged = issue == "Port error" && MergedEnumerationFailure(node);
         var body = new StackPanel();
         var more = new StackPanel { Tag = ExplanationMoreTag };
         TextBlock Line(string text, string color = "TextPrimary", bool heading = false) => new()
         {
-            Text = text, FontSize = heading ? 12 : 13, FontWeight = heading ? FontWeights.SemiBold : FontWeights.Normal, Foreground = Brush(color),
+            Text = text, FontSize = heading ? 15 : 14, FontWeight = heading ? FontWeights.SemiBold : FontWeights.Normal, Foreground = Brush(color),
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, heading ? 4 : 0, 0, heading ? 2 : 6)
         };
-        if (named) body.Children.Add(Line(issue, heading: true));
+        var outcome = NodeVisuals.StatusBadge(severity, merged ? "Windows cannot identify this device" : issue);
+        foreach (var label in InspectorElements(outcome).OfType<TextBlock>()) label.FontSize = 15;
+        outcome.Margin = new Thickness(0, 0, 0, 6);
+        body.Children.Add(outcome);
         var what = Line(e.What);
-        bool hasMore = e.Affects.Length > 0 || e.Cause.Length > 0 || e.Steps is { Count: > 0 };
-        if (severity == Severity.Note && !open && hasMore) { what.TextWrapping = TextWrapping.NoWrap; what.TextTrimming = TextTrimming.CharacterEllipsis; what.ToolTip = e.What; }
-        body.Children.Add(what);
-        var affects = severity == Severity.Note ? more : body;
-        if (e.Affects.Length > 0) { affects.Children.Add(Line("Does it affect you?", "TextSecondary", true)); affects.Children.Add(Line(e.Affects)); }
+        if (primary) body.Children.Add(Line(merged ? "Unavailable · Code\u00a043" : e.What));
+        more.Children.Add(what);
+        if (e.Affects.Length > 0) more.Children.Add(Line(e.Affects));
+        if (merged) more.Children.Add(Line(Explain(node, "Windows reports a problem").What));
+        if (primary && !CanRestart(node) && e.Steps is { Count: > 0 }) body.Children.Add(Line("Next: " + e.Steps[0], "TextSecondary"));
         if (e.Cause.Length > 0 || e.Steps is { Count: > 0 })
         {
             more.Children.Add(Line(e.Steps is { Count: > 0 } ? "What to do" : "Why", "TextSecondary", true));
@@ -363,9 +375,9 @@ public partial class MainWindow : Window
         // The rest stays in the panel while closed, so it is still read aloud once opened.
         more.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         body.Children.Add(more);
-        if (severity != Severity.Error && more.Children.Count > 0)
+        if (more.Children.Count > 0)
         {
-            string label = open ? "Show less" : severity == Severity.Note ? "Details" : e.Steps is { Count: > 0 } ? "What to do" : "Why";
+            string label = open ? "Hide details" : primary ? "Details & recovery options" : "Details & options";
             var toggle = new Button
             {
                 Content = new TextBlock { Text = label + (open ? " ▴" : " ▾"), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brush("Accent") },
@@ -394,7 +406,7 @@ public partial class MainWindow : Window
             Margin = new Thickness(-8, 14, 0, 8), Tag = "section"
         });
     }
-    // Values stay on one line (full text in the tooltip) so every row keeps its height; missing values are muted.
+    // Reference values wrap instead of requiring a hover to read them; missing values are muted.
     // Plain row names; where a technical term sits behind one, the label's tooltip names it.
     private const string PathHelp = "The host, then each port number on the way here. Windows numbers the USB 2 and USB 3 halves of a USB 3 socket as separate logical ports.";
     private const string PortsHelp = "Logical ports Windows reports. On the computer, a USB 3 socket counts as two, one USB 2 and one USB 3; a USB 3 hub instead appears as two hubs, each with one port per socket.";
@@ -408,7 +420,7 @@ public partial class MainWindow : Window
     private void Field(string label, string value, string help)
     {
         bool missing = value is NotApplicable or "Not reported" || value.StartsWith("Unknown", StringComparison.Ordinal);
-        Field(label, new TextBlock { Text = value, FontSize = 13, Foreground = Brush(missing ? "TextMuted" : "TextPrimary"), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value }, help);
+        Field(label, new TextBlock { Text = value, FontSize = 14, Foreground = Brush(missing ? "TextMuted" : "TextPrimary"), TextWrapping = TextWrapping.Wrap }, help);
     }
     private void Field(string label, FrameworkElement value, string help)
     {

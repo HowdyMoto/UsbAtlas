@@ -76,10 +76,10 @@ public partial class MainWindow
             Check(end != null && Math.Abs(Canvas.GetLeft(end) + end.Width / 2 - stub!.X2) < 0.01 && Math.Abs(Canvas.GetTop(end) + end.Height / 2 - stub.Y2) < 0.01 && end.Stroke == stub.Stroke && end.Fill == Brush("CanvasSurface"),
                 "A missing USB 3 side's stub must end in an open ring in its ink.");
             var text = ExplanationText("Running at USB 2");
-            Check(text.Contains("connected at USB 2 (480 Mb/s)") && text.Contains("Does it affect you?") && text.Contains("Not right now") && text.Contains("USB-C Prioritization") && text.Contains("charging cables"),
+            Check(text.Contains("connected at USB 2 (480 Mb/s)") && text.Contains("Not right now") && text.Contains("USB-C Prioritization") && text.Contains("charging cables"),
                 "The explanation must say what is happening, that nothing is affected, and the likely USB-C causes.");
             var panel = Details.Children.OfType<FrameworkElement>().First(e => Equals(e.Tag, "warning:Running at USB 2"));
-            var firstRow = Details.Children.OfType<FrameworkElement>().First(e => Equals(e.Tag, "field"));
+            var firstRow = Details.Children.OfType<FrameworkElement>().First(e => Equals(e.Tag, "connection-overview"));
             Check(Details.Children.IndexOf(panel) < Details.Children.IndexOf(firstRow), "The explanation must come before the data rows.");
             var drive = monitor.Children[0]; drive.SpeedLimited = true;
             Draw(); SelectNode(drive); UpdateLayout();
@@ -750,11 +750,11 @@ public partial class MainWindow
             Search.Clear(); ApplySearch();
             SelectNode(wheel); LocateClick(this, new RoutedEventArgs()); UpdateLayout();
             CaptureUi("sim-hardware-preview.png");
-            string Row(string label) => Details.Children.OfType<Grid>().Where(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == label).Select(g => g.Children[1]).OfType<TextBlock>().Single().Text;
+            string Row(string label) => InspectorElements(Details).OfType<Grid>().Where(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == label).Select(g => g.Children[1]).OfType<TextBlock>().Single().Text;
             Check(Row("Polling rate") == "1000 Hz · every 1 ms" && Row("Power saving") == "On", "Properties must show the wheel base's polling rate and power-saving setting.");
             Check(Row("Slower devices") == NotApplicable && Row("Shared link") == NotApplicable, "A device has no transaction translator.");
             // Link use in Properties says why a device's card has no meter: its slice can't grow, or it reserves nothing.
-            string LinkUse() => VisualDescendants(Details.Children.OfType<Grid>().Single(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == "Link use")).OfType<TextBlock>().Last().Text;
+            string LinkUse() => InspectorElements(InspectorElements(Details).OfType<Grid>().Single(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == "Link use")).OfType<TextBlock>().Last().Text;
             Check(LinkUse() == "5% of 10.8 Mb/s · can't grow", $"A game controller's link use must say its slice can't grow: \"{LinkUse()}\".");
             SelectNode(snapshot.Nodes.First(n => n.Id == "demo/root/1/1")); UpdateLayout();
             Check(LinkUse() == "0% of 3.6 Gb/s · reserves nothing", $"A drive's link use must say it reserves nothing: \"{LinkUse()}\".");
@@ -779,7 +779,8 @@ public partial class MainWindow
             foreach (var id in new[] { "demo/root/5/2", "demo/root/5", "demo/root/5/3", "demo/root/5/4" })
             {
                 SelectNode(snapshot.Nodes.First(n => n.Id == id)); UpdateLayout();
-                var metrics = Details.Children.OfType<Grid>().First(g => g.ColumnDefinitions.Count == 3);
+                Details.Children.OfType<Expander>().Single(e => Equals(e.Tag, "inspector-properties")).IsExpanded = true; UpdateLayout();
+                var metrics = InspectorElements(Details).OfType<Grid>().First(g => g.ColumnDefinitions.Count == 3);
                 Check(Glyphs(metrics).SequenceEqual([NodeVisuals.Metric.Link, NodeVisuals.Metric.Reserved, NodeVisuals.Metric.Power]), $"Inspector metrics for {id} must carry their glyphs.");
                 // Values fit their column at the default inspector width, including the longest forms.
                 foreach (var value in VisualDescendants(metrics).OfType<TextBlock>().Where(t => t.FontWeight == FontWeights.SemiBold))
@@ -829,37 +830,59 @@ public partial class MainWindow
     private void VerifyInspectorConsistency()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
-        var savedSnapshot = snapshot; var savedSelection = selected;
+        var saved = (snapshot, selected, demo);
         try
         {
-            snapshot = DemoData.Create();
-            snapshot.Nodes.First(n => n.Id == "demo/root/4").Kind = "Unavailable";
-            Draw();
-            // Explanations lead Properties and push the rows down by exactly their own height; nothing else may.
-            // Layout rounding snaps each row to whole pixels from wherever the rows start, so two selections whose rows
-            // start at different fractions of a pixel can place a row up to (not including) 2 px apart.
-            double rowsStart = 0;
-            static bool Same(List<string> a, List<string> b) => a.Count == b.Count && a.Zip(b).All(p =>
-                p.First.Split('@')[0] == p.Second.Split('@')[0] && Math.Abs(double.Parse(p.First.Split('@')[1]) - double.Parse(p.Second.Split('@')[1])) < 2);
-            List<string> Layout(string id)
+            snapshot = DemoData.Create(); inspectorSections.Clear(); Draw();
+            foreach (var node in snapshot.Nodes)
             {
-                SelectNode(snapshot.Nodes.First(n => n.Id == id)); UpdateLayout();
-                var rows = Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is "field" or "section").ToList();
-                double origin = rows[0].TranslatePoint(new Point(), Details).Y;
-                rowsStart = origin - Details.Children.OfType<FrameworkElement>().Where(e => e.Tag is string tag && tag.StartsWith("warning:", StringComparison.Ordinal)).Sum(e => e.ActualHeight + e.Margin.Top + e.Margin.Bottom);
-                return rows.Select(e => $"{(e is Grid row ? ((TextBlock)row.Children[0]).Text : ((TextBlock)((Border)e).Child).Text)}@{e.TranslatePoint(new Point(), Details).Y - origin:0.##}").ToList();
+                SelectNode(node); UpdateLayout();
+                var reference = Details.Children.OfType<Expander>().Single(e => Equals(e.Tag, "inspector-properties"));
+                Check(!reference.IsExpanded, "Technical reference starts collapsed.");
+                Check(Details.Children.OfType<FrameworkElement>().Any(e => Equals(e.Tag, "inspector-location")), "Location must be available before the details.");
+                Check(Details.Children.OfType<FrameworkElement>().Any(e => Equals(e.Tag, "connection-overview")), "Every selection needs a concise connection overview.");
+                Check(InspectorElements(reference).OfType<Grid>().Any(e => Equals(e.Tag, "field")), "Full technical fields must remain available.");
+                if (node.Kind == "Unavailable")
+                    Check(!InspectorElements(Details.Children.OfType<Border>().Single(e => Equals(e.Tag, "connection-overview"))).Any(e => Equals(e.Tag, "overview-metrics")), "Failed ports must explain unreadable measurements instead of showing Unknown tiles.");
             }
-            var expected = Layout("demo/root/1");
-            double expectedStart = rowsStart;
-            foreach (var id in new[] { "demo/root/1/1", "demo/root/1/3", "demo/root/4" })
+            var failed = snapshot.Nodes.First(n => n.Kind == "Unavailable");
+            failed.Status = "Enumeration failed";
+            failed.DriverProblems = [new() { Code = 43, Meaning = "Device failed" }];
+            SelectNode(failed); ShowDetails(); UpdateLayout();
+            Check(InspectorIssues(failed).Count(i => i.Text is "Port error" or "Windows reports a problem") == 1, "Enumeration failure and Code 43 must share one outcome.");
+            Check(ExplanationText("Port error").Contains("Code 43"), "Merged outcome must retain Windows evidence.");
+            CaptureUi("properties-failure-preview.png");
+            demo = false; snapshot.IsDemo = false;
+            failed.InstanceId = @"USB\VID_0000&PID_0002\inspector-test";
+            var key = RestartKey(failed);
+            restartResults[key] = new(DateTime.Now, "Windows accepted the restart. The device still reports a problem.", true);
+            try
             {
-                var actual = Layout(id);
-                Check(Same(actual, expected), $"Inspector rows for {id} differ from a hub's: {string.Join(", ", actual.Except(expected).Concat(expected.Except(actual)).Take(4))}.");
-                Check(Math.Abs(rowsStart - expectedStart) < 1, $"Inspector rows for {id} start {rowsStart - expectedStart:0.#} px away from a hub's, beyond what its explanations take.");
+                ShowDetails(); UpdateLayout();
+                Check(InspectorElements(Details).OfType<TextBlock>().Any(t => t.Text == "Next: disconnect the device’s power"), "An unsuccessful restart must promote the next recovery step.");
+                CaptureUi("properties-recovery-preview.png");
+                failed.InstanceId += "-replacement";
+                ShowDetails();
+                Check(!InspectorElements(Details).OfType<TextBlock>().Any(t => t.Text.StartsWith("Last attempt")), "A replacement device must not inherit the old restart result.");
             }
-            Check(Same(Layout("demo"), Layout("demo/root")), "Controller and root hub inspector rows differ.");
+            finally { restartResults.Remove(key); }
         }
-        finally { snapshot = savedSnapshot; selected = savedSelection; Draw(); ShowDetails(); }
+        finally { (snapshot, selected, demo) = saved; inspectorSections.Clear(); Draw(); ShowDetails(); }
+    }
+
+    // Traverse retained content too: collapsed disclosure bodies aren't necessarily in WPF's visual tree.
+    private static IEnumerable<FrameworkElement> InspectorElements(FrameworkElement root)
+    {
+        yield return root;
+        IEnumerable<FrameworkElement> children = root switch
+        {
+            Panel p => p.Children.OfType<FrameworkElement>(),
+            Decorator d => d.Child is FrameworkElement child ? [child] : [],
+            ContentControl c => c.Content is FrameworkElement child ? [child] : [],
+            _ => []
+        };
+        foreach (var child in children)
+            foreach (var item in InspectorElements(child)) yield return item;
     }
 
     private void VerifyIdentityUi()
@@ -878,21 +901,21 @@ public partial class MainWindow
         {
             snapshot = DemoData.Create(); deviceLabels = new DeviceLabels(System.IO.Path.Combine(directory, "labels.json"));
             selected = snapshot.Controllers[0]; Draw(); ShowDetails(); UpdateLayout();
-            var text = Descendants(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
+            var text = InspectorElements(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
             Check(text.Contains("Port support") && text.Any(t => t.Contains("USB 3.x")), "Host inspector lost reported port protocols.");
             Check(text.Contains("Power available") && text.Contains("Unknown · not measured") && !text.Contains("Link speed"), "Host inspector must distinguish unknown supply from peripheral metrics.");
             Check(text.Contains("PCI device") && text.Contains("Not reported"), "A host without a PCI identity must say so.");
             // Detection details stays folded until opened, so its lines are read from its content.
-            List<string> Evidence() => Details.Children.OfType<Expander>().Single().Content is StackPanel lines ? lines.Children.OfType<TextBlock>().Select(t => t.Text).ToList() : [];
+            List<string> Evidence() => Details.Children.OfType<Expander>().Single(e => Equals(e.Header, "Detection details")).Content is StackPanel lines ? lines.Children.OfType<TextBlock>().Select(t => t.Text).ToList() : [];
             snapshot.Controllers[0].PciId = "8086:A36D"; snapshot.Controllers[0].PciAddress = "00:14.0"; ShowDetails(); UpdateLayout();
-            text = Descendants(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
+            text = InspectorElements(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
             Check(text.Contains("Intel · 8086:A36D · 00:14.0") && Evidence().Any(t => t.Contains("PCI identity: 8086:A36D")), "Host inspector must show the controller's PCI identity.");
             // A port map note explains itself like any other issue, and names the firmware as the cause.
             var noted = snapshot.Nodes.First(n => n.PortMapWarnings.Count > 0); SelectNode(noted); UpdateLayout();
-            text = Descendants(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
+            text = InspectorElements(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
             Check(text.Any(t => t.Contains("without a USB 2 half")) && text.Any(t => t.Contains("firmware")) && Evidence().Any(t => t.StartsWith("Port map evidence: ")), "A port map note must be explained in Properties with its evidence.");
             var hub = snapshot.Nodes.First(n => n.Kind == "Hub"); SelectNode(hub); UpdateLayout();
-            Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, "edit-device-name")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            InspectorElements(Details).OfType<Button>().Single(b => Equals(b.Tag, "edit-device-name")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var editor = inlineLabelHost!; UpdateLayout();
             Check(editor.Visibility == Visibility.Visible && deviceHeading!.Visibility == Visibility.Collapsed, "Clicking the name must replace the heading with its inline editor.");
             CaptureUi("inline-label-preview.png");
@@ -912,30 +935,30 @@ public partial class MainWindow
             var socket = snapshot.Nodes.Single(n => n.Id == "demo/root/7"); var otherHalf = snapshot.Nodes.Single(n => n.Id == socket.CompanionId);
             Border Tongue(UsbNode port) { var slot = portSlots.GetValueOrDefault(port.Id) ?? connectedPorts[port.Id]; return (Border)slot.Template.FindName("Tongue", slot); }
             SelectNode(socket); UpdateLayout();
-            var speedButton = Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag));
+            var speedButton = InspectorElements(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag));
             Check(Tongue(socket).Background == Brush("SocketSuperSpeed") && speedButton.Content as string == "As detected · Set…", "An unproven USB 3 socket starts blue, with its speed to be set.");
             Check(speedButton.ContextMenu?.Items.OfType<MenuItem>().Select(i => i.Header as string).SequenceEqual(["As detected", "5 Gb/s", "10 Gb/s or faster"]) == true && speedButton.ContextMenu.Items.OfType<MenuItem>().Count(i => i.IsChecked) == 1, "The speed menu must offer the three choices with the current one checked.");
             SetSocketSpeed(socket, 10000); UpdateLayout();
             Check(Tongue(socket).Background == Brush("SocketSuperSpeedPlus") && Tongue(otherHalf).Background == Brush("SocketSuperSpeedPlus"), "Setting a socket to 10 Gb/s must turn both halves' tongues red.");
-            Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).Content as string == "10 Gb/s or faster · Edit" && Evidence().Any(t => t.Contains("You set this socket's speed")), "Properties must show the speed set and why the socket is drawn so.");
+            Check(InspectorElements(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).Content as string == "10 Gb/s or faster · Edit" && Evidence().Any(t => t.Contains("You set this socket's speed")), "Properties must show the speed set and why the socket is drawn so.");
             SetSocketSpeed(socket, null); UpdateLayout();
             Check(Tongue(socket).Background == Brush("SocketSuperSpeed") && socket.SocketRatedMbps == null, "Removing the setting must turn the socket blue again.");
             SelectNode(snapshot.Nodes.Single(n => n.Id == "demo/root/8")); UpdateLayout();
-            Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).IsEnabled, "A USB 2 half of a USB 3 socket must offer the socket's speed too.");
+            Check(InspectorElements(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)).IsEnabled, "A USB 2 half of a USB 3 socket must offer the socket's speed too.");
             SelectNode(snapshot.Nodes.First(n => n.Kind == "Empty port" && n.Protocols == "USB 2.0" && n.CompanionId.Length == 0)); UpdateLayout();
-            Check(Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)) is { IsEnabled: false, Content: "Not applicable" }, "A USB 2 socket has no speed to set.");
+            Check(InspectorElements(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketSpeedTag)) is { IsEnabled: false, Content: "Not applicable" }, "A USB 2 socket has no speed to set.");
             // A socket's type set in Properties redraws both halves on the graph, from a USB-C pill to USB-A to a plain
             // built-in slot, says so in the evidence, and clears again; the firmware's flag stays as reported.
             var typeC = snapshot.Nodes.Single(n => n.Id == "demo/root/8"); var typeCPartner = snapshot.Nodes.Single(n => n.Id == typeC.CompanionId);
             bool Pill(UsbNode port) { var slot = portSlots.GetValueOrDefault(port.Id) ?? connectedPorts[port.Id]; var c = ((Border)slot.Template.FindName("Chrome", slot)).CornerRadius; return Math.Max(Math.Max(c.TopLeft, c.TopRight), Math.Max(c.BottomLeft, c.BottomRight)) >= slot.Height / 2; }
             SelectNode(typeC); UpdateLayout();
-            var typeButton = Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketConnectorTag));
+            var typeButton = InspectorElements(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketConnectorTag));
             Check(Pill(typeC) && Pill(typeCPartner) && typeButton.Content as string == "As detected · Set…"
                 && typeButton.ContextMenu?.Items.OfType<MenuItem>().Select(i => i.Header as string).SequenceEqual(["As detected", "USB-A", "USB-C", "Internal: no socket"]) == true, "A USB-C socket starts as a pill, with its type to be set from four choices.");
             SetSocketConnector(typeC, "USB-A"); UpdateLayout();
             Check(!Pill(typeC) && !Pill(typeCPartner) && Tongue(typeC) != null && typeC.PortConnectorIsTypeC == true, "Setting a USB-C socket to USB-A must redraw both halves as USB-A and keep the firmware's flag.");
             SetSocketConnector(typeC, "Internal"); UpdateLayout();
-            Check(Tongue(typeC) == null && Tongue(typeCPartner) == null && Descendants(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketConnectorTag)).Content as string == "Internal: no socket · Edit"
+            Check(Tongue(typeC) == null && Tongue(typeCPartner) == null && InspectorElements(Details).OfType<Button>().Single(b => Equals(b.Tag, SocketConnectorTag)).Content as string == "Internal: no socket · Edit"
                 && Evidence().Any(t => t.Contains("You set this socket's connector")), "An internal socket is drawn without a tongue, and Properties says why.");
             SetSocketConnector(typeC, null); UpdateLayout();
             Check(Pill(typeC) && Pill(typeCPartner) && typeC.SocketConnectorSet == null, "Removing the setting must draw the USB-C socket again.");

@@ -11,7 +11,7 @@ A native Windows USB topology explorer built with WPF and .NET 10. No third-part
 
 ## Getting started
 
-1. [Download](#download) the ZIP, extract it, and open `UsbAtlas.exe`. It only reads; nothing is installed or changed.
+1. [Download](#download) the ZIP, extract it, and open `UsbAtlas.exe`. Scanning only reads; nothing is installed.
 2. Read **Fix first** above the map: the few problems that matter most, worst first, each with the one thing most likely to fix it. Click one to see it on the map and what else to try. When it isn't there, nothing needs fixing.
 3. Plug in, move or swap whatever it points at. The map rescans by itself, and Fix first updates.
 4. To ask for help, **Export… › Image** saves the whole map with what to fix first, ready to post; **Copy image** puts it on the clipboard. Cards carry no serial numbers.
@@ -76,7 +76,7 @@ Launch `artifacts\publish\UsbAtlas\release\UsbAtlas.exe`. For a machine without 
 
 ## Command line and AI agents
 
-`atlascli.exe` ships beside `UsbAtlas.exe` and gives the same scan, issues and explanations as text or JSON, for scripts, for support, and for AI agents doing diagnostics. It's a single file with the .NET runtime inside, so it can be copied anywhere, such as a folder on your PATH, without the app. Like the app, it only reads; it needs no administrator rights and makes no network requests.
+`atlascli.exe` ships beside `UsbAtlas.exe` and gives the same scan, issues and explanations as text or JSON, for scripts, for support, and for AI agents doing diagnostics. It's a single file with the .NET runtime inside, so it can be copied anywhere, such as a folder on your PATH, without the app. The CLI only reads; it needs no administrator rights and makes no network requests.
 
 | Command | What it gives |
 | --- | --- |
@@ -356,7 +356,11 @@ A Billboard device still says why an alternate mode failed (above). A USB-C powe
 
 Detection details names the ports involved. Only the host's own ports are checked: Windows pairs a plug-in hub's ports from the hub's two sides, and such hubs often can't describe their sockets. Built-in ports that pair with nothing, such as a webcam's, are normal. A port that can serve as the host's debug port, as most USB 3 host ports can, is listed in Detection details and by `show`.
 
-Snapshots and exports may contain serial numbers. Scans are local; the application makes no network requests and does not reset, disable, or reconfigure devices, and it reads power settings without changing them.
+Snapshots and exports may contain serial numbers. Scans are local and read-only; the application makes no network requests and reads power settings without changing them.
+
+**Try device restart:** Properties offers **Try device restart…** for live USB devices and failed ports that can be matched to a unique present Windows device. It confirms the interruption, rechecks the target, and asks Windows for administrator approval to run `pnputil /restart-device` for that exact instance. Only the command is elevated. Hubs, host controllers, empty ports, demo and render mode are excluded. The app rescans afterward and distinguishes Windows accepting the command from the device being detected without a reported problem. Canceling administrator approval makes no change; a required reboot is reported and never automatic. This briefly interrupts all functions of the selected device and does not guarantee that power is removed. A stuck adapter may still need a full power disconnect. No drivers are removed or installed.
+
+**Properties at a glance:** The panel starts with identity, location, a concise outcome and recovery actions. Enumeration failure with Code 43 is one summary, with both findings retained in its details. A compact connection path shows the host and upstream hub, marking omitted hops on longer paths. Link and declared-current figures appear only when known; failed ports explain why measurements are unavailable. **All properties & settings** retains the full technical record and editors; **Detection details** retains the evidence. Restart results stay with the same port and Windows device instance for the current app session, with power-reset guidance after a verified unsuccessful restart. Healthy devices keep restart under **Device actions**. A historical device on the same port is labeled as previously seen, never assumed to identify the current failed device.
 
 ## Verification commands
 

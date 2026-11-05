@@ -5,6 +5,23 @@ internal static class SelfTests
     public static void Run()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+        var failedPort = new UsbNode { Kind = "Unavailable", Port = 13 };
+        var failedScan = new Snapshot { Controllers = [new() { InstanceId = @"USB\ROOT_HUB30\test", Children = [failedPort] }] };
+        var presentFailed = new Dictionary<string, UsbScanner.DevNode>
+        {
+            [@"USB\VID_0000&PID_0002\failed"] = new(@"usb\root_hub30\TEST", "", [], Address: 13),
+            [@"USB\VID_0000&PID_0002\other-hub"] = new(@"USB\ROOT_HUB30\other", "", [], Address: 13),
+            [@"USB\VID_0000&PID_0002\other-port"] = new(@"USB\ROOT_HUB30\test", "", [], Address: 12)
+        };
+        UsbScanner.MatchFailedPorts(failedScan, presentFailed);
+        Check(failedPort.InstanceId == @"USB\VID_0000&PID_0002\failed", "Failed port must match the exact parent hub and address, ignoring case.");
+        failedPort.InstanceId = "";
+        presentFailed[@"USB\VID_0000&PID_0002\ambiguous"] = new(@"USB\ROOT_HUB30\test", "", [], Address: 13);
+        UsbScanner.MatchFailedPorts(failedScan, presentFailed);
+        Check(failedPort.InstanceId == "", "Ambiguous failed ports must not acquire a restart target.");
+        presentFailed.Clear();
+        UsbScanner.MatchFailedPorts(failedScan, presentFailed);
+        Check(failedPort.InstanceId == "", "Missing devnodes must not acquire a restart target.");
         Check(UsbScanner.DecodePower(250, 0x0200) == 500, "USB 2 power units must be 2 mA.");
         Check(UsbScanner.DecodePower(112, 0x0300) == 896, "USB 3 power units must be 8 mA.");
         Check(UsbScanner.Bcd(0x0104) == "1.04" && UsbScanner.Bcd(0x0210) == "2.10" && UsbScanner.Bcd(0x1A0F) == "1A.0F", "Versions and revisions read as binary-coded decimal.");

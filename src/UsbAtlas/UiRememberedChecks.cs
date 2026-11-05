@@ -15,7 +15,7 @@ public partial class MainWindow
             (wheel.VendorId, wheel.ProductId, wheel.InstanceId) = ("346E", "0004", @"USB\VID_346E&PID_0004\6&1&0&9");
             snapshot.Remembered = [new() { InstanceId = @"USB\VID_346E&PID_0004\6&1&0&2", Name = "Wheel base", VendorId = "346E", ProductId = "0004", LocationInfo = "Port_#0002.Hub_#0001", LastConnected = new DateTime(2026, 9, 1, 12, 0, 0) }];
             Remembered.Analyze(snapshot); UpdateIssues(); SelectNode(wheel); ShowDetails(); UpdateLayout();
-            var texts = Details.Children.OfType<TextBlock>().Select(t => t.Text).ToList();
+            var texts = InspectorElements(Details).OfType<TextBlock>().Select(t => t.Text).ToList();
             Check(Issue(wheel).Contains(Remembered.OtherPorts) && texts.Contains("Other entries for this device") && texts.Any(t => t.StartsWith("Port_#0002.Hub_#0001 (on a hub not connected now) · last connected")),
                 "A game controller remembered on other ports lists them in Properties and carries the note.");
             CaptureUi("remembered-preview.png");

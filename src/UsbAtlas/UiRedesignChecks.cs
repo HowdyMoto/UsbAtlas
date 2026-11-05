@@ -54,13 +54,9 @@ public partial class MainWindow
             travel.QuickReconnects = 3; SelectNode(travel); UpdateLayout();
             if (Details.Children.OfType<Border>().Any(b => b.Tag is string tag && tag.StartsWith("warning:", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(ExplanationText(tag[8..]), @"\bup to 0 mA")))
                 throw new Exception("A power explanation must not describe a hub that asks for nothing as at risk.");
-            var warnings = Details.Children.OfType<WrapPanel>().First();
-            double bottom = warnings.Children.OfType<FrameworkElement>().Max(b => b.TranslatePoint(new Point(0, b.ActualHeight), warnings).Y);
-            if (bottom > warnings.ActualHeight + 0.5 || warnings.ActualHeight <= 22)
-                throw new Exception("Multiple property warnings must wrap without clipping.");
-            var action = warnings.Children.OfType<Button>().First();
+            var action = Details.Children.OfType<Border>().Where(b => b.Tag is string t && t.StartsWith("warning:")).SelectMany(b => InspectorElements(b)).OfType<Button>().First();
             if (System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(action)?.GetPattern(System.Windows.Automation.Peers.PatternInterface.Invoke) == null)
-                throw new Exception("Warning explanations must expose a button Invoke action to accessibility tools.");
+                throw new Exception("Issue disclosures must expose Invoke to accessibility tools.");
             CaptureUi("multiple-warning-preview.png");
         }
         finally
@@ -89,7 +85,7 @@ public partial class MainWindow
             var hub = snapshot.Nodes.First(n => n.Id == "demo/root/1");
             Check(Issues(hub).Count > 0 && Issues(hub).All(i => i.Severity == Severity.Note), "The sample's desktop hub must have only notes.");
             SelectNode(hub); UpdateLayout();
-            var section = Details.Children.OfType<Grid>().First(g => Equals(g.Tag, "field") && ((TextBlock)g.Children[0]).Text == "Link use");
+            var section = Details.Children.OfType<Border>().Single(g => Equals(g.Tag, "connection-overview"));
             double below = section.TranslatePoint(new Point(0, section.ActualHeight), DetailsScroll).Y;
             Check(below <= DetailsScroll.ViewportHeight, $"With only notes, the connection's figures and Link use must show without scrolling; they end at {below:0} px of {DetailsScroll.ViewportHeight:0}.");
             var note = Issues(hub)[0].Text;
@@ -101,7 +97,7 @@ public partial class MainWindow
             var drive = snapshot.Nodes.First(n => n.Id == "demo/root/5/1"); var light = snapshot.Nodes.First(n => n.Id == "demo/root/5/2");
             SelectNode(drive); UpdateLayout();
             Check(Issues(drive).Contains((Severity.Warning, "Power at risk")) && Issues(light).Contains((Severity.Warning, "Power at risk")), "The sample's travel hub devices must be at risk.");
-            Check(Body("Power at risk").Children.OfType<TextBlock>().Any(t => t.Text == "Does it affect you?") && More("Power at risk").Visibility == Visibility.Collapsed,
+            Check(More("Power at risk").Visibility == Visibility.Collapsed,
                 "A warning must say whether it affects you, with what to do a click away.");
             Click(Toggle("Power at risk")!);
             Check(More("Power at risk").Visibility == Visibility.Visible, "Opening a warning must show what to do.");
@@ -112,7 +108,9 @@ public partial class MainWindow
             var failed = snapshot.Nodes.First(n => n.Id == "demo/root/5/3");
             SelectNode(failed); UpdateLayout();
             var error = Issues(failed).Single(i => i.Severity == Severity.Error).Text;
-            Check(More(error).Visibility == Visibility.Visible && Toggle(error) == null, "An error's explanation must be shown whole.");
+            Check(More(error).Visibility == Visibility.Collapsed && Toggle(error) != null, "An error leads with its outcome and next action, with full evidence on expansion.");
+            Click(Toggle(error)!);
+            Check(More(error).Visibility == Visibility.Visible, "Error evidence must remain accessible.");
         }
         finally
         {

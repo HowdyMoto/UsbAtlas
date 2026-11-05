@@ -8,7 +8,7 @@ public partial class MainWindow
     private void VerifyCharging()
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
-        string FieldText(string label) => Details.Children.OfType<Grid>().Where(g => Equals(g.Tag, "field"))
+        string FieldText(string label) => InspectorElements(Details).OfType<Grid>().Where(g => Equals(g.Tag, "field"))
             .Select(g => g.Children.OfType<TextBlock>().ToList()).FirstOrDefault(t => t.Count == 2 && t[0].Text == label)?[1].Text ?? "";
         List<string> Evidence() => Details.Children.OfType<Expander>().FirstOrDefault(x => Equals(x.Header, "Detection details"))?.Content is StackPanel p
             ? p.Children.OfType<TextBlock>().Select(t => t.Text).ToList() : [];

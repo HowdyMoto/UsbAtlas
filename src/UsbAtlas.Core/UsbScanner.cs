@@ -13,7 +13,7 @@ public sealed class UsbScanner
     // Every present devnode by instance ID: its parent, its driver service and, for a HID collection, its
     // usages; its name, driver key and any Device Manager problem code.
     internal sealed record DevNode(string Parent, string Service, List<string> Usages, string Name = "", string DriverKey = "", int Problem = 0, string ContainerId = "", string LocationPath = "",
-        string[]? UpperFilters = null, string[]? LowerFilters = null, string ClassGuid = "");
+        string[]? UpperFilters = null, string[]? LowerFilters = null, string ClassGuid = "", uint? Address = null);
     private readonly Dictionary<string, DevNode> devices = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> hidUsages = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
@@ -83,6 +83,7 @@ public sealed class UsbScanner
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }
+        MatchFailedPorts(snapshot, devices);
         HubRelationships.ResolveCompanions(snapshot);
         DeviceIdentity.ClassifySockets(snapshot);
         foreach (var node in snapshot.Nodes.Reverse().Where(n => n.Kind is "Controller" or "Root hub" or "Hub")) DeviceIdentity.SummarizeProtocols(node);
@@ -433,6 +434,22 @@ public sealed class UsbScanner
 
     // Names every present device by driver key, and records each devnode's parent and service so HID
     // collections and power settings can be traced back to the USB device they belong to.
+    // Failed enumeration has no driver key. Match only a unique present USB devnode on
+    // the exact parent hub and port; never guess from a remembered device or ID suffix.
+    internal static void MatchFailedPorts(Snapshot scan, Dictionary<string, DevNode> present)
+    {
+        foreach (var parent in scan.Nodes.Where(n => n.InstanceId.Length > 0))
+        foreach (var port in parent.Children.Where(n => n.Kind == "Unavailable" && n.InstanceId.Length == 0 && n.Port > 0))
+        {
+            var matches = present.Where(p => IsUsbDevice(p.Key)
+                && p.Value.Parent.Equals(parent.InstanceId, StringComparison.OrdinalIgnoreCase)
+                && p.Value.Address == (uint)port.Port).Take(2).ToList();
+            if (matches.Count != 1) continue;
+            port.InstanceId = matches[0].Key;
+            port.WindowsName = matches[0].Value.Name;
+        }
+    }
+
     private void ReadDevices()
     {
         var set = Native.SetupDiGetClassDevsNoGuid(IntPtr.Zero, null, IntPtr.Zero, 6);
@@ -458,7 +475,7 @@ public sealed class UsbScanner
                 string location = instance.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase) ? MultiProperty(set, ref d, 35).FirstOrDefault() ?? "" : "";
                 // SPDRP_UPPERFILTERS, SPDRP_LOWERFILTERS and SPDRP_CLASSGUID: filters on this devnode and on its class.
                 devices[instance] = new(parent, Property(set, ref d, 4) ?? "", usages, name ?? "", key ?? "", problem, ContainerProperty(set, ref d), location,
-                    MultiProperty(set, ref d, 17), MultiProperty(set, ref d, 18), Property(set, ref d, 8) ?? "");
+                    MultiProperty(set, ref d, 17), MultiProperty(set, ref d, 18), Property(set, ref d, 8) ?? "", DwordProperty(set, ref d, 28));
             }
         }
         finally { Native.SetupDiDestroyDeviceInfoList(set); }

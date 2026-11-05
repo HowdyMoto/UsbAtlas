@@ -162,7 +162,43 @@
        <TextBlock Text="PROPERTIES" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
       </DockPanel>
      </Border>
-     <ScrollViewer x:Name="DetailsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="Details" Margin="14,12,18,16"/></ScrollViewer>
+     <ScrollViewer x:Name="DetailsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel x:Name="Details" Margin="14,12,18,16">
+       <StackPanel.Resources>
+        <Style TargetType="Expander">
+         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+         <Setter Property="Template">
+          <Setter.Value>
+           <ControlTemplate TargetType="Expander">
+            <StackPanel>
+             <ToggleButton x:Name="Disclosure" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" Content="{TemplateBinding Header}" Foreground="{TemplateBinding Foreground}" FontSize="{TemplateBinding FontSize}" HorizontalContentAlignment="Stretch" Padding="2,6" Background="Transparent" BorderThickness="0">
+              <ToggleButton.Template>
+               <ControlTemplate TargetType="ToggleButton">
+                <Border x:Name="HeaderSurface" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                 <DockPanel>
+                  <Path x:Name="Chevron" Data="M 0,0 L 4,4 L 0,8" Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.5" Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform Angle="0"/></Path.RenderTransform></Path>
+                  <ContentPresenter VerticalAlignment="Center"/>
+                 </DockPanel>
+                </Border>
+                <ControlTemplate.Triggers>
+                 <Trigger Property="IsChecked" Value="True"><Setter TargetName="Chevron" Property="RenderTransform"><Setter.Value><RotateTransform Angle="90"/></Setter.Value></Setter></Trigger>
+                 <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="HeaderSurface" Property="Background" Value="{DynamicResource Subtle}"/></Trigger>
+                 <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="HeaderSurface" Property="Background" Value="{DynamicResource Selection}"/></Trigger>
+                </ControlTemplate.Triggers>
+               </ControlTemplate>
+              </ToggleButton.Template>
+             </ToggleButton>
+             <ContentPresenter x:Name="DisclosureBody" ContentSource="Content" Visibility="Collapsed" Margin="0,5,0,0"/>
+            </StackPanel>
+            <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="DisclosureBody" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
+           </ControlTemplate>
+          </Setter.Value>
+         </Setter>
+        </Style>
+       </StackPanel.Resources>
+      </StackPanel>
+     </ScrollViewer>
     </Grid>
    </Border>
   </Grid>

@@ -118,7 +118,7 @@ public partial class MainWindow
             SelectNode(snapshot.Nodes.First(n => n.Id == "demo/root/7")); UpdateLayout();
             var panel = Details.Children.OfType<FrameworkElement>().FirstOrDefault(x => x.Tag is string t && t.StartsWith("warning:USB 3 side of", StringComparison.Ordinal));
             var show = Details.Children.OfType<Button>().FirstOrDefault(b => Equals(b.Tag, ShowLostHubTag));
-            Check(panel != null && show != null && Details.Children.IndexOf(panel) < Details.Children.IndexOf(Details.Children.OfType<FrameworkElement>().First(x => Equals(x.Tag, "field"))),
+            Check(panel != null && show != null && Details.Children.IndexOf(panel) < Details.Children.IndexOf(Details.Children.OfType<FrameworkElement>().First(x => Equals(x.Tag, "connection-overview"))),
                 "An empty socket half where a hub's USB 3 side belongs must explain that before its rows, with a way to the hub.");
             show!.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
             Check(selected == monitor, "Show hub must select the hub.");
@@ -127,7 +127,7 @@ public partial class MainWindow
             foreach (var node in new[] { snapshot.Controllers[0], monitor, monitor.Children[0], snapshot.Nodes.First(n => n.Id == "demo/root/7") })
             {
                 SelectNode(node); UpdateLayout();
-                foreach (var row in Details.Children.OfType<Grid>().Where(g => Equals(g.Tag, "field")))
+                foreach (var row in InspectorElements(Details).OfType<Grid>().Where(g => Equals(g.Tag, "field")))
                 {
                     var label = row.Children.OfType<TextBlock>().First();
                     Check(label.ToolTip is string { Length: > 0 }, $"The Properties row “{label.Text}” for {node.Kind} must explain itself on hover.");
