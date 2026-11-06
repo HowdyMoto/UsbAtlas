@@ -273,6 +273,7 @@ public partial class MainWindow
         // Laid out from the left, a tree is shallow and tall, so width is the spare dimension: a card widens
         // for its name, by up to 100 px, before the name has to wrap or be shortened.
         if (horizontalTree) card = Math.Clamp(Math.Max(NameWidth(n) + TitleChrome(n) + 2, detail == CardDetail.Full ? LinkRowsWidth(n) : 0), card, card + 100);
+        if (horizontalTree && unitGroups.ContainsKey(n.Id)) card = Math.Max(210, card - 95);
         return horizontalTree ? card + StripDepth(n) : Math.Max(card, EdgePorts(n).Count * SocketPitch + 20);
     }
     // A card's name at its title size, measured once per drawing pass.
@@ -314,11 +315,11 @@ public partial class MainWindow
         if (detail == CardDetail.Far) return horizontalTree ? Math.Max(FarHeight, Children(n).Count * 10 + 2) : FarHeight;
         if (detail == CardDetail.Compact)
         {
-            double compact = UnitChainHeight(n) + 2 + 8 + TitleRowHeight(n) + 8 + (n.Kind is "Controller" or "Root hub" ? 20 : CardFigures(n).Parts.Count > 0 ? 17 : 0);
+            double compact = 2 + 8 + TitleRowHeight(n) + 8 + (n.Kind is "Controller" or "Root hub" ? 20 : CardFigures(n).Parts.Count > 0 ? 17 : 0);
             int sockets = EdgePorts(n).Count;
             return sockets == 0 ? compact : horizontalTree ? Math.Max(compact, sockets * SocketStep + 12) : compact + StripDepth(n);
         }
-        double height = UnitChainHeight(n) + 2 + 8 + TitleRowHeight(n) + 8;
+        double height = 2 + 8 + TitleRowHeight(n) + 8;
         if (n.UserLabel.Length > 0) height += 16;
         if (HubRelationships.CardLabel(n).Length > 0 || unitGroups.ContainsKey(n.Id)) height += 19;
         if (mergedSides.ContainsKey(n.Id)) height += 2 * LinkRowHeight;
@@ -374,7 +375,7 @@ public partial class MainWindow
             if (hit is FrameworkElement { Tag: UsbNode n }) { focusId = n.Id; break; }
         PrepareGraph(); PrepareFocus(); PrepareMerges(); PrepareUnitCards();
         UpdateDeviceTree();
-        Graph.Children.Clear(); meterSegments.Clear(); partRing = null; cards.Clear(); wires.Clear(); wireHits.Clear(); wireRoutes.Clear(); cables.Clear(); idleLinks.Clear(); internalLinks.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear(); portTags.Clear(); hoveredPortId = null; tagFoldTimer?.Stop();
+        Graph.Children.Clear(); unitEmphasis.Clear(); hoveredUnitChip = null; meterSegments.Clear(); partRing = null; cards.Clear(); wires.Clear(); wireHits.Clear(); wireRoutes.Clear(); cables.Clear(); idleLinks.Clear(); internalLinks.Clear(); snappedWires.Clear(); portSlots.Clear(); connectedPorts.Clear(); portAnchors.Clear(); portTags.Clear(); hoveredPortId = null; tagFoldTimer?.Stop();
         var roots = snapshot.Controllers.Where(n => Visible(n) && (focusedIds == null || focusedIds.Contains(n.Id))).ToList();
         const double margin = 16, controllerGap = 24;
         var layouts = ArrangeLayouts(roots);
@@ -465,7 +466,6 @@ public partial class MainWindow
         if (detail == CardDetail.Full) AddCardRows(node, panel, figures, host);
         else if (detail == CardDetail.Compact)
         {
-            AddUnitChain(node, panel);
             if (host) panel.Children.Add(new TextBlock { Text = pathLabels[node.Id] + " · " + ProtocolSummary(node), FontSize = 12, Foreground = Brush("TextSecondary"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0) });
             else if (figures.Parts.Count > 0)
             {
@@ -625,7 +625,6 @@ public partial class MainWindow
         if (relationship.Length > 0)
             panel.Children.Add(new TextBlock { Text = relationship, FontSize = 12, Foreground = Brush("TextSecondary"), Height = 19, TextTrimming = TextTrimming.CharacterEllipsis, Tag = merged ? PairLabelTag : null,
                 ToolTip = merged ? CableHelp(node, usb2Side!) : HubRelationships.Description(node, snapshot) });
-        AddUnitChain(node, panel);
         if (merged)
             foreach (var side in new[] { node, usb2Side! })
             {
@@ -752,6 +751,7 @@ public partial class MainWindow
         var aboveCard = above == null ? null : mergedHubs.GetValueOrDefault(above.Id) ?? above;
         var chips = UnitChips(usb3);
         string owner = above?.Kind is "Root hub" or "Controller" ? "PC" : aboveCard != null && chips.Count > 1 && chips.Contains(aboveCard) ? $"chip {chips.IndexOf(aboveCard) + 1}" : "hub";
+        if (unitGroups.ContainsKey(usb3.Id)) return $"{(side.IsUsb2Companion ? "USB 2" : "USB 3")} · {ShortSpeed(side)} · {carries}";
         return $"{(side.IsUsb2Companion ? "USB 2" : "USB 3")} link · {owner} port {side.Port:00} · {ShortSpeed(side)} · {carries}";
     }
     private static string Devices(int n) => n == 1 ? "1 device" : $"{n} devices";
@@ -914,6 +914,7 @@ public partial class MainWindow
             slot.BorderThickness = NodeVisuals.SocketBorder(socketParts.GetValueOrDefault(id), horizontalTree, chosen || match ? 2 : 1);
         }
         UpdateTags();
+        UpdateUnitEmphasis();
         int index = matches.FindIndex(n => n.Id == selected?.Id);
         MatchCount.Text = appliedQuery.Length == 0 ? "" : index >= 0 ? $"{index + 1} / {matches.Count} matches" : $"{matches.Count} matches";
         NextMatchButton.Visibility = appliedQuery.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
