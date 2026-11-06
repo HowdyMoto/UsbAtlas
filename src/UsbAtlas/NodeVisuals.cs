@@ -333,11 +333,11 @@ internal static class NodeVisuals
             entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             return entry;
         }
-        // Hub chips wired together inside one unit, as the graph frames them.
+        // Multiple built-in hub chips share one product card.
         FrameworkElement Unit(string label, string help)
         {
             var entry = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent, ToolTip = help };
-            entry.Children.Add(new Border { Width = 22, Height = 13, Margin = new Thickness(0, 0, 4, 0), CornerRadius = new CornerRadius(4), Background = Ink("UnitFill"), VerticalAlignment = VerticalAlignment.Center });
+            entry.Children.Add(new Border { Width = 22, Height = 13, Margin = new Thickness(0, 0, 4, 0), CornerRadius = new CornerRadius(4), Background = Ink("NeutralFill"), BorderBrush = Ink("NeutralEdge"), BorderThickness = new Thickness(1), VerticalAlignment = VerticalAlignment.Center });
             entry.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = Ink("TextSecondary"), Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             return entry;
         }
@@ -365,8 +365,8 @@ internal static class NodeVisuals
             Link("Idle, nothing on it", IdleInk, null, "Faint: nothing uses this link now, which is fine. A USB 3 hub's USB 3 link is idle when everything plugged into it is USB 2 or slower, and its USB 2 link when everything is USB 3.", WireWidth(new UsbNode { LinkMbps = 5000 })));
         // A USB 3 hub's own marks: its cable's two links and chips wired together in one unit.
         yield return Group("USB 3 hub",
-            Cable("One cable, two links", "Two lines side by side are one cable to a USB 3 hub. A USB 3 hub is two hubs in one box, a USB 3 hub and a USB 2 hub, and its cable carries a link to each, so Windows sees two connections on the two halves of one socket. The thicker line is the USB 3 link. Each device plugged into the hub uses the link that matches its speed; selecting a device lights the one it uses, and a link nothing uses stays faint. Inside a hub unit, the two lines are wiring between its chips, not a cable."),
-            Unit("Hub unit", "A band behind hub chips that are wired together inside one unit: Windows reports the port joining them as built in, with nothing to plug into. A 7- or 10-port hub is often made of several 4-port chips like this. The links between them are wiring, not cables."));
+            Cable("One cable, two links", "Two lines side by side are one cable to a USB 3 hub. A USB 3 hub is two hubs in one box, a USB 3 hub and a USB 2 hub, and its cable carries a link to each, so Windows sees two connections on the two halves of one socket. The thicker line is the USB 3 link. Each device plugged into the hub uses the link that matches its speed; selecting a device lights the one it uses, and a link nothing uses stays faint. Internal chip links stay inside the unit card and are listed in Properties."),
+            Unit("Hub unit", "One card is one physical hub, even when several chips inside it provide its ports. An internal diagram shows how its chips connect, with matching numbered groups on the socket strip. Detailed links and meters are in Properties. Windows reports the ports joining those chips as built in, with nothing to plug into."));
         yield return Group("Slower than it could be",
             Link("Slower than device", "Warning", WireDashes(), "Dashed: the link runs slower than the device supports. Amber when that slows something plugged in now; gray when nothing is slowed yet, as for a device whose speed costs it nothing.", 2),
             Stub("USB 3 link not connected", "A short dashed line ending in an open ring, on an empty socket half: a USB 3 hub's USB 3 link should connect there but didn't, so the hub runs at USB 2. Amber when that slows something plugged in now; gray when nothing is slowed yet."));

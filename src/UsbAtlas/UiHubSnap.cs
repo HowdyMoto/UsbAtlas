@@ -47,11 +47,11 @@ public partial class MainWindow
     private const string StageFrameTag = "stage-frame";
     private void AddHubSnapControls(UsbNode node)
     {
-        if (node.Kind != "Hub") return;
+        if (node.Kind != "Hub" || unitOwners.ContainsKey(node.Id)) return;
         var parent = snapshot.Nodes.FirstOrDefault(n => n.Children.Any(c => c.Id == node.Id));
         if (parent?.Kind != "Hub")
         {
-            var stages = node.Children.Where(n => n.Kind == "Hub").ToList();
+            var stages = node.Children.Where(n => n.Kind == "Hub" && !unitOwners.ContainsKey(n.Id)).ToList();
             if (stages.Count == 0) return;
             Text("Arrange hub stages", 14);
             Text("Select a downstream hub stage to snap it beside this hub or unlink it.", 12, "TextSecondary");

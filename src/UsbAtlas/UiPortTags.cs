@@ -29,7 +29,7 @@ public partial class MainWindow
         return tagRooms[n.Id] = named.Count == 0 ? 0 : TagGap + (horizontalTree ? named.Max(TagWidth) : TagHeight);
     }
     // The socket strip's depth into a card: the sockets, their clearance from the card's rows and any tag room.
-    private double StripDepth(UsbNode n) => EdgePorts(n).Count == 0 ? 0 : (horizontalTree ? SocketWidth : SocketHeight) + 6 + TagRoom(n);
+    private double StripDepth(UsbNode n) => EdgePorts(n).Count == 0 ? 0 : (horizontalTree ? SocketWidth : SocketHeight) + 6 + TagRoom(n) + (unitGroups.ContainsKey(n.Id) ? 18 : 0);
     // A tag's width for its whole label: the text at the tag's size in its padding and border. At rest a tag is
     // capped, beside a socket at TagMaxWidth, which is also the room the strip makes, and elsewhere at TagRestMax.
     private double TagText(UsbNode port)
