@@ -29,7 +29,7 @@ public partial class MainWindow
         return tagRooms[n.Id] = named.Count == 0 ? 0 : TagGap + (horizontalTree ? named.Max(TagWidth) : TagHeight);
     }
     // The socket strip's depth into a card: the sockets, their clearance from the card's rows and any tag room.
-    private double StripDepth(UsbNode n) => EdgePorts(n).Count == 0 ? 0 : (horizontalTree ? SocketWidth : SocketHeight) + 6 + TagRoom(n) + (unitGroups.ContainsKey(n.Id) ? 18 : 0);
+    private double StripDepth(UsbNode n) => EdgePorts(n).Count == 0 ? 0 : (horizontalTree ? SocketWidth : SocketHeight) + 6 + TagRoom(n) + (unitGroups.ContainsKey(n.Id) ? horizontalTree ? 120 : 68 : 0);
     // A tag's width for its whole label: the text at the tag's size in its padding and border. At rest a tag is
     // capped, beside a socket at TagMaxWidth, which is also the room the strip makes, and elsewhere at TagRestMax.
     private double TagText(UsbNode port)
@@ -127,6 +127,7 @@ public partial class MainWindow
     // its tag, or between two halves of one socket, does not fold the tag and open it again.
     private void HoverPort(string id, bool over)
     {
+        if (UnitChipFor(snapshot.Nodes.FirstOrDefault(n => n.Id == id)) is UsbNode chip) HoverUnitChip(chip, over);
         if (over) { tagFoldTimer?.Stop(); if (hoveredPortId != id) { hoveredPortId = id; UpdateTags(); } return; }
         if (hoveredPortId != id) return;
         if (tagFoldTimer == null) { tagFoldTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) }; tagFoldTimer.Tick += (_, _) => FoldHoveredTag(); }

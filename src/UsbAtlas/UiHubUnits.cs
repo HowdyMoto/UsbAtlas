@@ -94,83 +94,140 @@ public partial class MainWindow
     private int ChipPortCount(UsbNode chip) => Sides(chip).SelectMany(s => s.Children)
         .Where(p => !unitOwners.ContainsKey(p.Id) && !EmptyInternalPort(p))
         .GroupBy(p => SocketPartner(p) is UsbNode other && string.CompareOrdinal(other.Id, p.Id) < 0 ? other.Id : p.Id).Count();
-    private int UnitLeaves(UsbNode chip, List<UsbNode> chips)
+    // Chips sit beside their own sockets rather than in a disconnected diagram/key.
+    private readonly Dictionary<string, List<Action<bool>>> unitEmphasis = [];
+    private string? hoveredUnitChip;
+    private UsbNode? UnitChipFor(UsbNode? node)
     {
-        var children = chips.Where(c => UnitParent(c) == chip).ToList();
-        return children.Count == 0 ? 1 : children.Sum(c => UnitLeaves(c, chips));
+        if (node == null) return null;
+        var chip = node.Kind == "Hub" ? HubSide(node) : nodeParents.TryGetValue(node.Id, out var parent) ? HubSide(parent) : null;
+        return chip != null && unitGroups.Values.Any(chips => chips.Contains(chip)) ? chip : null;
     }
-    private double UnitChainHeight(UsbNode n) => unitGroups.TryGetValue(n.Id, out var chips)
-        ? UnitLeaves(n, chips) * (detail == CardDetail.Full ? 42 : 28) + (detail == CardDetail.Full ? 19 : 4) : 0;
-    private void AddUnitChain(UsbNode n, StackPanel panel)
+    private void UpdateUnitEmphasis()
     {
-        if (!unitGroups.TryGetValue(n.Id, out var chips)) return;
-        bool full = detail == CardDetail.Full;
-        double caption = full ? 17 : 2, row = full ? 42 : 28, boxHeight = full ? 32 : 22;
-        double width = WidthFor(n) - (horizontalTree ? StripDepth(n) : 0) - 24;
-        int Depth(UsbNode chip) => chip == n || UnitParent(chip) is not UsbNode parent ? 0 : 1 + Depth(parent);
-        int depth = chips.Max(Depth);
-        double boxWidth = Math.Min(full ? 68 : 48, width / (depth + 1) - 12);
-        double step = depth == 0 ? 0 : (width - boxWidth) / depth;
-        var canvas = new Canvas { Height = UnitChainHeight(n), Tag = UnitChainTag, ClipToBounds = true,
-            ToolTip = "Hub chips wired together inside this one enclosure. Arrows show the actual upstream-to-downstream connections; the numbered socket groups belong to these chips." };
-        if (full) canvas.Children.Add(new TextBlock { Text = "INSIDE THIS HUB", FontSize = 10,
-            Foreground = Brush("TextMuted"), FontWeight = FontWeights.SemiBold });
-        var points = new Dictionary<string, Point>();
-        int leaf = 0;
-        double Place(UsbNode chip)
-        {
-            var children = chips.Where(c => UnitParent(c) == chip).ToList();
-            double y = children.Count == 0 ? leaf++ * row : children.Select(Place).Average();
-            points[chip.Id] = new Point(Depth(chip) * step, caption + y);
-            return y;
-        }
-        Place(n);
-        foreach (var chip in chips.Where(c => c != n))
-        {
-            var from = points[UnitParent(chip)!.Id]; var to = points[chip.Id];
-            double start = from.X + boxWidth, end = to.X, a = from.Y + boxHeight / 2, b = to.Y + boxHeight / 2;
-            double mid = (start + end) / 2;
-            var geometry = new StreamGeometry();
-            using (var context = geometry.Open())
-            {
-                context.BeginFigure(new Point(start, a), false, false);
-                context.PolyLineTo([new Point(mid, a), new Point(mid, b), new Point(end - 3, b)], true, false);
-            }
-            canvas.Children.Add(new System.Windows.Shapes.Path { Data = geometry, Stroke = Brush("TextMuted"), StrokeThickness = 1.2 });
-            canvas.Children.Add(new System.Windows.Shapes.Polygon { Points = [new Point(end - 4, b - 3), new Point(end, b), new Point(end - 4, b + 3)], Fill = Brush("TextMuted") });
-        }
-        foreach (var (chip, i) in chips.Select((c, i) => (c, i + 1)))
-        {
-            var label = new StackPanel();
-            label.Children.Add(new TextBlock { Text = boxWidth < 44 ? i.ToString() : $"Chip {i}", FontSize = full ? 11 : 10, Foreground = Brush("TextPrimary"), HorizontalAlignment = HorizontalAlignment.Center });
-            if (full) label.Children.Add(new TextBlock { Text = boxWidth < 44 ? $"{ChipPortCount(chip)}p" : $"{ChipPortCount(chip)} ports", FontSize = 10, Foreground = Brush("TextSecondary"), HorizontalAlignment = HorizontalAlignment.Center });
-            var button = new Button { Content = label, Width = boxWidth, Height = boxHeight, Padding = new Thickness(0),
-                Tag = UnitChipTag, Uid = chip.Id, Background = Brush("Surface"), BorderBrush = Brush("UnitEdge"),
-                ToolTip = $"Chip {i} inside {UnitName(n)} · {ChipPortCount(chip)} external ports. " +
-                    (chip == n ? "Receives the cable from the PC or upstream hub." : $"Wired to chip {chips.IndexOf(UnitParent(chip)!) + 1}, port {chip.Port:00}.") + " Click for this chip's links and issues." };
-            button.Click += (_, e) => { SelectNode(chip); e.Handled = true; };
-            Canvas.SetLeft(button, points[chip.Id].X); Canvas.SetTop(button, points[chip.Id].Y);
-            canvas.Children.Add(button);
-        }
-        panel.Children.Add(canvas);
+        string? chosen = hoveredUnitChip ?? UnitChipFor(selected)?.Id;
+        foreach (var (id, actions) in unitEmphasis) foreach (var apply in actions) apply(id == chosen);
+    }
+    private void HoverUnitChip(UsbNode chip, bool on)
+    {
+        if (on) hoveredUnitChip = chip.Id;
+        else if (hoveredUnitChip == chip.Id) hoveredUnitChip = null;
+        UpdateUnitEmphasis();
     }
     private void AddUnitPortLabels(UsbNode n, List<UsbNode> ports, Rect bounds)
     {
-        if (!unitGroups.TryGetValue(n.Id, out var chips)) return;
-        foreach (var group in ports.GroupBy(p => UnitPortGroup(n, p)))
+        if (!unitGroups.TryGetValue(n.Id, out var chips) || !DrawsSockets) return;
+        bool horizontal = horizontalTree;
+        double boxWidth = detail == CardDetail.Full ? 58 : 46, boxHeight = detail == CardDetail.Full ? 32 : 23;
+        int Depth(UsbNode chip) => chip == n || UnitParent(chip) is not UsbNode parent ? 0 : Depth(parent) + 1;
+        int maxDepth = chips.Max(Depth);
+        var canvas = new Canvas { Width = bounds.Width, Height = bounds.Height, Tag = UnitChainTag,
+            ToolTip = "Inside one hub: each chip is aligned with the bracket around its own sockets. The arrows between chips show their internal wiring. Point at a chip or port to highlight its whole group." };
+        var boxes = new Dictionary<string, Rect>();
+        var groups = ports.GroupBy(p => UnitPortGroup(n, p)).ToDictionary(g => g.Key, g => g.ToList());
+        foreach (var (chip, index) in chips.Select((c, i) => (c, i)))
         {
-            var chip = chips[group.Key];
-            double mid = group.Average(p => PortOffset(n, p) ?? 0);
-            var label = new Border { Width = 15, Height = 14, CornerRadius = new CornerRadius(3),
-                Background = Brush("Surface"), BorderBrush = Brush("UnitEdge"), BorderThickness = new Thickness(1),
-                Tag = "unit-chip-group", Cursor = System.Windows.Input.Cursors.Hand,
-                ToolTip = $"Chip {group.Key + 1} · {ChipPortCount(chip)} ports. Matches chip {group.Key + 1} in the internal diagram. Click to inspect.",
-                Child = new TextBlock { Text = (group.Key + 1).ToString(), FontSize = 10, Foreground = Brush("TextSecondary"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
-            label.MouseLeftButtonDown += (_, e) => { SelectNode(chip); e.Handled = true; };
-            Canvas.SetLeft(label, horizontalTree ? bounds.Right - SocketWidth - TagRoom(n) - 18 : bounds.X + mid - label.Width / 2);
-            Canvas.SetTop(label, horizontalTree ? bounds.Y + mid - label.Height / 2 : bounds.Bottom - SocketHeight - TagRoom(n) - 17);
-            Panel.SetZIndex(label, 2); Graph.Children.Add(label);
+            var own = groups.GetValueOrDefault(index) ?? [];
+            double mid = own.Count > 0 ? own.Average(p => PortOffset(n, p) ?? 0)
+                : (horizontal ? bounds.Height : bounds.Width) * (index + .5) / chips.Count;
+            double low = own.Count > 0 ? own.Min(p => PortOffset(n, p) ?? 0) - (horizontal ? SocketHeight : SocketWidth) / 2 - 3 : mid - 18;
+            double high = own.Count > 0 ? own.Max(p => PortOffset(n, p) ?? 0) + (horizontal ? SocketHeight : SocketWidth) / 2 + 3 : mid + 18;
+            double inset = horizontal ? bounds.Width - SocketWidth - TagRoom(n) - 106 : bounds.Height - SocketHeight - TagRoom(n) - 49;
+            var rect = horizontal
+                ? new Rect(inset + Depth(chip) * 5, mid - boxHeight / 2, boxWidth, boxHeight)
+                : new Rect(mid - boxWidth / 2, inset - Depth(chip) * 5, boxWidth, boxHeight);
+            boxes[chip.Id] = rect;
+            var area = horizontal
+                ? new Rect(inset - 5, Math.Max(3, low), bounds.Width - inset + 2, Math.Min(bounds.Height - 3, high) - Math.Max(3, low))
+                : new Rect(Math.Max(3, low), inset - maxDepth * 5 - 3, Math.Min(bounds.Width - 3, high) - Math.Max(3, low), bounds.Height - inset + maxDepth * 5);
+            string help = $"Chip {index + 1} · {ChipPortCount(chip)} ports inside {UnitName(n)}. " +
+                (chip == n ? "Receives the upstream cable." : $"Wired to chip {chips.IndexOf(UnitParent(chip)!) + 1}, port {chip.Port:00}.") + " Click to inspect this chip.";
+            var band = new Border { Width = area.Width, Height = area.Height, CornerRadius = new CornerRadius(6),
+                Background = Brush("Surface"), Opacity = .28, Tag = "unit-chip-group", Uid = chip.Id, ToolTip = help };
+            band.MouseEnter += (_, _) => HoverUnitChip(chip, true);
+            band.MouseLeave += (_, _) => HoverUnitChip(chip, false);
+            band.MouseLeftButtonDown += (_, e) => { SelectNode(chip); e.Handled = true; };
+            Canvas.SetLeft(band, area.X); Canvas.SetTop(band, area.Y); canvas.Children.Add(band);
+            var label = new StackPanel();
+            label.Children.Add(new TextBlock { Text = $"Chip {index + 1}", FontSize = 11, Foreground = Brush("TextPrimary"), HorizontalAlignment = HorizontalAlignment.Center });
+            if (detail == CardDetail.Full) label.Children.Add(new TextBlock { Text = $"{ChipPortCount(chip)} ports", FontSize = 10, Foreground = Brush("TextSecondary"), HorizontalAlignment = HorizontalAlignment.Center });
+            var button = new Button { Content = label, Width = rect.Width, Height = rect.Height, Padding = new Thickness(0),
+                Background = Brush("Surface"), BorderBrush = Brush("UnitEdge"), Tag = UnitChipTag, Uid = chip.Id, ToolTip = help };
+            button.Click += (_, e) => { SelectNode(chip); e.Handled = true; };
+            button.MouseEnter += (_, _) => HoverUnitChip(chip, true);
+            button.MouseLeave += (_, _) => HoverUnitChip(chip, false);
+            Canvas.SetLeft(button, rect.X); Canvas.SetTop(button, rect.Y); Panel.SetZIndex(button, 2); canvas.Children.Add(button);
+            // A short leader joins the chip to a bracket spanning precisely its own sockets.
+            var geometry = new StreamGeometry();
+            using (var context = geometry.Open())
+            {
+                if (horizontal)
+                {
+                    double x = bounds.Width - SocketWidth - TagRoom(n) - 7;
+                    context.BeginFigure(new Point(rect.Right, mid), false, false); context.LineTo(new Point(x, mid), true, false);
+                    context.BeginFigure(new Point(x + 4, low), false, false);
+                    context.PolyLineTo([new Point(x, low), new Point(x, high), new Point(x + 4, high)], true, false);
+                }
+                else
+                {
+                    double y = bounds.Height - SocketHeight - TagRoom(n) - 7;
+                    context.BeginFigure(new Point(mid, rect.Bottom), false, false); context.LineTo(new Point(mid, y), true, false);
+                    context.BeginFigure(new Point(low, y + 4), false, false);
+                    context.PolyLineTo([new Point(low, y), new Point(high, y), new Point(high, y + 4)], true, false);
+                }
+            }
+            var bracket = new System.Windows.Shapes.Path { Data = geometry, Stroke = Brush("UnitEdge"), StrokeThickness = 1, IsHitTestVisible = false, Tag = "unit-port-bracket", Uid = chip.Id };
+            canvas.Children.Add(bracket);
+            unitEmphasis[chip.Id] = [on => { button.BorderBrush = bracket.Stroke = Brush(on ? "Accent" : "UnitEdge");
+                bracket.StrokeThickness = on ? 1.8 : 1; band.Opacity = on ? .7 : .28; }];
         }
+        foreach (var chip in chips.Where(c => c != n))
+        {
+            var parent = UnitParent(chip)!; var from = boxes[parent.Id]; var to = boxes[chip.Id];
+            var geometry = new StreamGeometry();
+            Point end;
+            bool adjacent = chips.IndexOf(chip) == chips.IndexOf(parent) + 1;
+            bool arrowDown = horizontal ? adjacent : !adjacent;
+            using (var context = geometry.Open())
+            {
+                if (horizontal && adjacent)
+                {
+                    var start = new Point(from.Left + from.Width / 2, from.Bottom);
+                    end = new Point(to.Left + to.Width / 2, to.Top);
+                    double track = (start.Y + end.Y) / 2;
+                    context.BeginFigure(start, false, false);
+                    context.PolyLineTo([new Point(start.X, track), new Point(end.X, track), new Point(end.X, end.Y - 3)], true, false);
+                }
+                else if (!horizontal && adjacent)
+                {
+                    var start = new Point(from.Right, from.Top + from.Height / 2);
+                    end = new Point(to.Left, to.Top + to.Height / 2);
+                    double track = (start.X + end.X) / 2;
+                    context.BeginFigure(start, false, false);
+                    context.PolyLineTo([new Point(track, start.Y), new Point(track, end.Y), new Point(end.X - 3, end.Y)], true, false);
+                }
+                else if (horizontal)
+                {
+                    double track = boxes.Values.Min(r => r.Left) - 10 - Depth(parent) * 5;
+                    var start = new Point(from.Left, from.Top + from.Height / 2); end = new Point(to.Left, to.Top + to.Height / 2);
+                    context.BeginFigure(start, false, false);
+                    context.PolyLineTo([new Point(track, start.Y), new Point(track, end.Y), new Point(end.X - 3, end.Y)], true, false);
+                }
+                else
+                {
+                    double track = boxes.Values.Min(r => r.Top) - 8 - Depth(parent) * 5;
+                    var start = new Point(from.Left + from.Width / 2, from.Top); end = new Point(to.Left + to.Width / 2, to.Top);
+                    context.BeginFigure(start, false, false);
+                    context.PolyLineTo([new Point(start.X, track), new Point(end.X, track), new Point(end.X, end.Y - 3)], true, false);
+                }
+            }
+            canvas.Children.Add(new System.Windows.Shapes.Path { Data = geometry, Stroke = Brush("TextMuted"), StrokeThickness = 1,
+                IsHitTestVisible = false, Tag = "unit-chip-link", Uid = chip.Id });
+            canvas.Children.Add(new System.Windows.Shapes.Polygon { Points = arrowDown
+                ? [new Point(end.X - 3, end.Y - 4), end, new Point(end.X + 3, end.Y - 4)]
+                : [new Point(end.X - 4, end.Y - 3), end, new Point(end.X - 4, end.Y + 3)], Fill = Brush("TextMuted"), IsHitTestVisible = false });
+        }
+        Canvas.SetLeft(canvas, bounds.X); Canvas.SetTop(canvas, bounds.Y); Panel.SetZIndex(canvas, 1); Graph.Children.Add(canvas);
     }
     private void AddUnitDetails(UsbNode node)
     {

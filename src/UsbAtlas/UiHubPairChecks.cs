@@ -178,16 +178,31 @@ public partial class MainWindow
                 Check(EdgePorts(outer3).Count == 20 && Graph.Children.OfType<FrameworkElement>().Count(e => Equals(e.Tag, "unit-divider")) == 2,
                     "The ten sockets keep both logical halves and chip-group dividers.");
                 Check(EdgePorts(outer3).All(p => portAnchors.ContainsKey(p.Id)), "Every unit port must keep its own anchor.");
-                var diagram = VisualDescendants(cards[outer3.Id].Card).OfType<System.Windows.Controls.Canvas>().Single(c => Equals(c.Tag, UnitChainTag));
+                var diagram = Graph.Children.OfType<System.Windows.Controls.Canvas>().Single(c => Equals(c.Tag, UnitChainTag));
                 var chipControls = diagram.Children.OfType<System.Windows.Controls.Button>().Where(b => Equals(b.Tag, UnitChipTag)).ToList();
-                Check(chipControls.Count == 3 && diagram.Children.OfType<System.Windows.Shapes.Path>().Count() == 2,
+                Check(chipControls.Count == 3 && diagram.Children.OfType<System.Windows.Shapes.Path>().Count(p => Equals(p.Tag, "unit-chip-link")) == 2,
                     "The single unit card must draw all three internal chips and their actual connections.");
-                Check(Graph.Children.OfType<FrameworkElement>().Count(e => Equals(e.Tag, "unit-chip-group")) == 3,
+                Check(VisualDescendants(Graph).OfType<FrameworkElement>().Count(e => Equals(e.Tag, "unit-chip-group")) == 3,
                     "Each socket group must carry the number of its chip.");
+                foreach (var chipControl in chipControls)
+                {
+                    var chip = snapshot.Nodes.Single(n => n.Id == chipControl.Uid);
+                    var own = EdgePorts(outer3).Where(p => HubSide(nodeParents[p.Id]) == chip).ToList();
+                    double center = horizontal ? System.Windows.Controls.Canvas.GetTop(chipControl) + chipControl.Height / 2
+                        : System.Windows.Controls.Canvas.GetLeft(chipControl) + chipControl.Width / 2;
+                    Check(Math.Abs(center - own.Average(p => PortOffset(outer3, p)!.Value)) < .01, "Each chip must align with the center of its own socket group.");
+                }
+                Check(diagram.Children.OfType<System.Windows.Shapes.Path>().Count(p => Equals(p.Tag, "unit-port-bracket")) == 3,
+                    "Each chip must have a leader and bracket connecting its own sockets.");
+                HoverPort(last3.Children.Last().Id, true);
+                Check(chipControls[2].BorderBrush == Brush("Accent"), "Hovering a socket must emphasize its chip and bracket.");
+                HoverPort(last3.Children.Last().Id, false);
                 chipControls[2].RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                 Check(selected == last3, "The internal diagram must select the actual chip, without selecting a different unit.");
 
             }
+            if (!horizontal && level == CardDetail.Full) CaptureUi("hub-unit-vertical-preview.png");
+            if (horizontal && level == CardDetail.Compact) CaptureUi("hub-unit-compact-preview.png");
             SelectNode(last2); UpdateLayout();
             Check(selected == last2 && GraphBounds(last2) == GraphBounds(outer3) && cards[outer3.Id].Card.Effect != null,
                 "Selecting an internal chip from the tree must keep its identity and highlight the unit.");
@@ -219,7 +234,7 @@ public partial class MainWindow
         outer2.Children.Remove(free2); outer3.Children.Remove(free3);
         last2.Port = last3.Port = 3; outer2.Children.Add(last2); outer3.Children.Add(last3);
         HubRelationships.Analyze(snapshot); Draw(); UpdateLayout();
-        var branched = VisualDescendants(cards[outer3.Id].Card).OfType<System.Windows.Controls.Canvas>().Single(c => Equals(c.Tag, UnitChainTag));
+        var branched = Graph.Children.OfType<System.Windows.Controls.Canvas>().Single(c => Equals(c.Tag, UnitChainTag));
         var siblings = branched.Children.OfType<System.Windows.Controls.Button>().Where(b => b.Uid == inner3.Id || b.Uid == last3.Id).ToList();
         Check(siblings.Count == 2 && Math.Abs(System.Windows.Controls.Canvas.GetLeft(siblings[0]) - System.Windows.Controls.Canvas.GetLeft(siblings[1])) < .01
             && Math.Abs(System.Windows.Controls.Canvas.GetTop(siblings[0]) - System.Windows.Controls.Canvas.GetTop(siblings[1])) > 20,
