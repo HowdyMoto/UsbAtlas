@@ -128,7 +128,7 @@ $checks = New-Item -ItemType Directory -Force (Join-Path $out 'checks')
 if ($LASTEXITCODE -ne 0) { throw "$cli self-test failed." }
 function App($arguments, $result) {
     Remove-Item "$checks\$result" -ErrorAction SilentlyContinue
-    Start-Process "$stage\UsbAtlas.exe" $arguments -WorkingDirectory $checks -Wait
+    Start-Process "$stage\UsbAtlas.exe" $arguments -WorkingDirectory $checks -WindowStyle Hidden -Wait
     $text = Get-Content "$checks\$result" -Raw -ErrorAction SilentlyContinue
     if (-not $text -or -not ($text.StartsWith('All checks passed') -or $text.StartsWith('UI checks passed'))) { throw "UsbAtlas $arguments failed: $text" }
     Write-Host "  UsbAtlas $arguments passed"
